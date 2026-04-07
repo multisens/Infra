@@ -275,8 +275,10 @@ The table below present the topics together with its associated QoS and retain p
 | `aop/<serviceId>/currentApp`          | 1   | True     | Integer | Application in execution                   |
 | `aop/<serviceId>/<appId>/path`        | 1   | True     | URL     | Path to application data                   |
 | `aop/<serviceId>/<appId>/doc/nodes`   | 1   | True     | JSON    | JSON vector of document node data          |
+| `aop/devices`                         | 0   | True     | JSON    | JSON vector of registered device handles   |
+| `aop/devices/<devclass>`              | 0   | True     | JSON    | Devices of a specific device class         |
 
-When constructing the topic, parameter `<serviceId>` holds the current service id, while `<appId>` holds the current application id.
+When constructing the topic, parameter `<serviceId>` holds the current service id, while `<appId>` holds the current application id. Parameter `<devclass>` holds the device class name.
 The diagram below presents the topic structure in a tree structure. In the diagram solid nodes represent retained topics and dashed node the ones not retained.
 
 ```mermaid
@@ -292,6 +294,7 @@ graph LR
     TV30 --> CURRENTUSER(**currentUser**)
     TV30 --> SERVICES(**services**)
     TV30 --> CURRENTSERVICE(**currentService**)
+    TV30 --> DEVICES(**devices**) --> DEVCLASS(\<**devclass**\>)
     
     TV30 --> SERVICE1(\<**serviceId**\>) --> APPS(**apps**)
              SERVICE1 --> CURRENTAPP(**currentApp**)
@@ -369,6 +372,54 @@ graph LR
     ATTRIBUTION --> ATTACTION(**actionNotification**):::nret
     ATTRIBUTION --> ATTEVENT(**eventNotification**):::nret
 ```
+
+## Display layer topics
+
+The display layer topics control the AoP user interface rendering. They are used to manage video playback, graphical overlays, and popup interactions between the CCWS and the AoP display.
+
+| Topic                                          | QoS | Retained | Format  | Description                                         |
+|------------------------------------------------|-----|----------|---------|-----------------------------------------------------|
+| `aop/display/layers/rxgui`                     | 0   | False    | String  | GUI screen/page to display on the receiver          |
+| `aop/display/layers/graphics`                  | 0   | False    | String  | Graphics application proxy URL (or empty to clear)  |
+| `aop/display/layers/video/url`                 | 0   | False    | String  | Video stream URL (m3u8, mpd, or direct)             |
+| `aop/display/layers/video/size`                | 0   | False    | JSON    | Video player position and size (top, left, w, h)    |
+| `aop/display/layers/popup/yesno/message`       | 0   | False    | JSON    | Yes/No popup request (value and timeout)            |
+| `aop/display/layers/popup/yesno/response`      | 0   | False    | String  | User response to Yes/No popup ("true" or "false")   |
+| `aop/display/layers/popup/qrcode`              | 0   | False    | JSON    | QR code popup request (value and timeout)           |
+| `aop/display/layers/popup/pin`                 | 0   | False    | JSON    | PIN input popup request (value and timeout)         |
+
+The diagram below presents the display layer topic structure.
+
+```mermaid
+---
+config:
+  look: handDrawn
+  theme: neutral
+---
+graph LR
+    classDef nret stroke-dasharray: 5
+
+    DISPLAY(**aop/display/layers**) --> RXGUI(**rxgui**):::nret
+    DISPLAY --> GRAPHICS(**graphics**):::nret
+    DISPLAY --> VIDEO(**video**) --> VIDEOURL(**url**):::nret
+                VIDEO --> VIDEOSIZE(**size**):::nret
+    DISPLAY --> POPUP(**popup**) --> YESNO(**yesno**) --> YESNOMSG(**message**):::nret
+                                     YESNO --> YESNORESP(**response**):::nret
+                POPUP --> QRCODE(**qrcode**):::nret
+                POPUP --> PIN(**pin**):::nret
+```
+
+## Broadcast metadata topics (TLM)
+
+The TLM (Telemetry) topics carry broadcast signaling metadata received from the DTV transport layer. They use wildcard subscriptions and the `noLocal` flag.
+
+| Topic              | QoS | Retained | Format  | Description                                              |
+|--------------------|-----|----------|---------|----------------------------------------------------------|
+| `tlm/lls/#`        | 0   | False    | JSON    | LLS (Low Level Signaling) metadata — BAM table entries   |
+| `tlm/sls/+/#`      | 0   | False    | JSON    | SLS (Service Layer Signaling) per service — ESG and BALD |
+| `video/event`       | 0   | False    | String  | Video player events (playback state changes)             |
+
+In the SLS topic `tlm/sls/+/#`, the `+` wildcard matches the service ID, allowing per-service subscription.
 
 ### Service Information Metadata
 
