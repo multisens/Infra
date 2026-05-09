@@ -1,11 +1,54 @@
-name: Bump submodule infra em TV30
+name: Build, push e bump submodule infra em TV30
 
 on:
   push:
     branches: [main]
 
 jobs:
+  build-images:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: tv30-mosquitto
+            context: ./mosquitto_plugin
+            dockerfile: ./mosquitto_plugin/infra/Dockerfile
+          - name: tv30-validation-middleware
+            context: ./middleware
+            dockerfile: ./middleware/Dockerfile
+          - name: tv30-middleware-internal
+            context: ./middleware_internal
+            dockerfile: ./middleware_internal/Dockerfile
+          - name: tv30-krakend-external
+            context: ./krakenD_external
+            dockerfile: ./dockerfiles/krakend-external.Dockerfile
+          - name: tv30-krakend-internal
+            context: ./krakenD_internal
+            dockerfile: ./dockerfiles/krakend-internal.Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login no Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build e push ${{ matrix.name }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.name }}:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.name }}:latest
+
   bump:
+    needs: build-images
     runs-on: ubuntu-latest
     steps:
       - name: Checkout TV30 (super-projeto)
@@ -34,4 +77,12 @@ jobs:
           git update-index --cacheinfo 160000 "$INFRA_SHA" infra
 
           git commit -m "chore: bump submodule infra pra ${INFRA_SHA:0:7}"
-          git push origin main
+
+          # Pull --rebase + push retry pra mitigar race com outras actions
+          # (varias podem pushar simultaneamente em main do TV30)
+          for i in 1 2 3; do
+            if git push origin main; then exit 0; fi
+            git pull --rebase origin main
+          done
+          echo "Push falhou apos 3 tentativas"
+          exit 1

@@ -2,14 +2,13 @@ version: '3.8'
 
 services:
   krakend-external:
-    image: devopsfaith/krakend:2.7
+    image: ${DOCKERHUB_NS:-tv30}/tv30-krakend-external:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: ../dockerfiles/krakend-external.Dockerfile
     container_name: krakend-external
     ports:
       - "44643:8080"
-    volumes:
-      - ./${KRAKEND_EXT_CFG:-krakend.json}:/etc/krakend/krakend.json
-      - ./plugins:/etc/krakend/plugins
-    command: ["run", "-c", "/etc/krakend/krakend.json"]
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"

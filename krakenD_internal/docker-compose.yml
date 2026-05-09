@@ -2,14 +2,13 @@ version: '3.8'
 
 services:
   krakend-internal:
-    image: devopsfaith/krakend:2.7
+    image: ${DOCKERHUB_NS:-tv30}/tv30-krakend-internal:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: ../dockerfiles/krakend-internal.Dockerfile
     container_name: krakend-internal
     ports:
       - "44642:8080"
-    volumes:
-      # Default: krakend.json (Windows com relay). Linux full-container: defina KRAKEND_INT_CFG=krakend.linux.json
-      - ./${KRAKEND_INT_CFG:-krakend.json}:/etc/krakend/krakend.json
-    command: ["run", "-c", "/etc/krakend/krakend.json"]
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
