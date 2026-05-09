@@ -15,7 +15,7 @@
         {
           "url_pattern": "/health",
           "host": [
-            "http://host.docker.internal:44654"
+            "http://ccws:44652"
           ]
         }
       ]
@@ -36,7 +36,7 @@
         {
           "url_pattern": "/tv3/authorize",
           "host": [
-            "http://host.docker.internal:44654"
+            "http://ccws:44652"
           ]
         }
       ]
@@ -57,7 +57,7 @@
         {
           "url_pattern": "/tv3/token",
           "host": [
-            "http://host.docker.internal:44654"
+            "http://ccws:44652"
           ]
         }
       ]
@@ -73,7 +73,7 @@
         {
           "url_pattern": "/tv3/current-service",
           "host": [
-            "http://host.docker.internal:44654"
+            "http://ccws:44652"
           ]
         }
       ]
@@ -90,7 +90,7 @@
         {
           "url_pattern": "/tv3/current-service/users",
           "host": [
-            "http://host.docker.internal:44654"
+            "http://ccws:44652"
           ]
         }
       ]
@@ -106,7 +106,7 @@
         {
           "url_pattern": "/tv3/current-service/users/current-user",
           "host": [
-            "http://host.docker.internal:44654"
+            "http://ccws:44652"
           ]
         }
       ]
@@ -123,7 +123,7 @@
         {
           "url_pattern": "/tv3/current-service/users/current-user",
           "host": [
-            "http://host.docker.internal:44654"
+            "http://ccws:44652"
           ]
         }
       ]
@@ -142,7 +142,7 @@
         {
           "url_pattern": "/tv3/current-service/users/files",
           "host": [
-            "http://host.docker.internal:44654"
+            "http://ccws:44652"
           ]
         }
       ]
@@ -161,7 +161,7 @@
         {
           "url_pattern": "/tv3/current-service/users/{userid}",
           "host": [
-            "http://host.docker.internal:44654"
+            "http://ccws:44652"
           ]
         }
       ]
@@ -178,7 +178,7 @@
         {
           "url_pattern": "/tv3/{serviceContextId}/users",
           "host": [
-            "http://host.docker.internal:44654"
+            "http://ccws:44652"
           ]
         }
       ]
@@ -194,7 +194,7 @@
         {
           "url_pattern": "/tv3/{serviceContextId}/users/{userid}/broadcaster-attrs",
           "host": [
-            "http://host.docker.internal:44654"
+            "http://ccws:44652"
           ]
         }
       ]
@@ -211,7 +211,7 @@
         {
           "url_pattern": "/tv3/{serviceContextId}/users/{userid}/broadcaster-attrs",
           "host": [
-            "http://host.docker.internal:44654"
+            "http://ccws:44652"
           ]
         }
       ]
@@ -231,7 +231,7 @@
         {
           "url_pattern": "/tv3/current-service/apps/{appid}/files",
           "host": [
-            "http://host.docker.internal:44654"
+            "http://ccws:44652"
           ]
         }
       ]
@@ -248,7 +248,7 @@
         {
           "url_pattern": "/tv3/remote-device",
           "host": [
-            "http://host.docker.internal:44654"
+            "http://ccws:44652"
           ]
         }
       ]
@@ -264,7 +264,7 @@
         {
           "url_pattern": "/tv3/remote-device/{handle}",
           "host": [
-            "http://host.docker.internal:44654"
+            "http://ccws:44652"
           ]
         }
       ]
@@ -280,7 +280,7 @@
         {
           "url_pattern": "/tv3/remote-device/devices/{classId}",
           "host": [
-            "http://host.docker.internal:44654"
+            "http://ccws:44652"
           ]
         }
       ]
@@ -296,7 +296,7 @@
         {
           "url_pattern": "/tv3/remote-device/device/{handle}",
           "host": [
-            "http://host.docker.internal:44654"
+            "http://ccws:44652"
           ]
         }
       ]
@@ -312,7 +312,7 @@
         {
           "url_pattern": "/tv3/remote-device/device/{handle}",
           "host": [
-            "http://host.docker.internal:44654"
+            "http://ccws:44652"
           ]
         }
       ]
@@ -328,7 +328,7 @@
         {
           "url_pattern": "/tv3/sensory-effect-renderers",
           "host": [
-            "http://host.docker.internal:44654"
+            "http://ccws:44652"
           ]
         }
       ]
@@ -344,7 +344,7 @@
         {
           "url_pattern": "/tv3/sensory-effect-renderers/{rendererId}",
           "host": [
-            "http://host.docker.internal:44654"
+            "http://ccws:44652"
           ]
         }
       ]
@@ -361,7 +361,7 @@
         {
           "url_pattern": "/tv3/sensory-effect-renderers/{rendererId}",
           "host": [
-            "http://host.docker.internal:44654"
+            "http://ccws:44652"
           ]
         }
       ]

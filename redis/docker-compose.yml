@@ -18,7 +18,7 @@ services:
     environment:
       - REDIS_HOSTS=local:redis:6379
     ports:
-      - "8081:8081"
+      - "18081:8081"   # 8081 reservada pro bcast
     depends_on:
       - redis
     networks:
@@ -29,5 +29,5 @@ volumes:
 
 networks:
   ginga_net:
-    external: true
     name: ginga_net
+    driver: bridge

@@ -2,6 +2,7 @@ version: '3.8'
 
 services:
   validation-middleware:
+    image: ${DOCKERHUB_NS:-tv30}/tv30-validation-middleware:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile
@@ -33,5 +34,5 @@ services:
 
 networks:
   ginga_net:
-    external: true
     name: ginga_net
+    driver: bridge

@@ -1,2 +1,8 @@
 # Repositório git independente — ignorado para não virar submódulo
 GingaDistrib/
+
+# Documentos e arquivos locais
+ABNT_NBR_25608.md
+files infra tv30 docs.zip
+prompt.md
+redis-persistence-strategy.md

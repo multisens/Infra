@@ -15,6 +15,10 @@
     "clienteexemplo7": ["PublisherResponseTime+/#", "PluginResponseTime+/#"],
     "clienteexemplo8": ["PublisherResponseTime+/#", "PluginResponseTime+/#"],
     "clienteexemplo9": ["PublisherResponseTime+/#", "PluginResponseTime+/#"],
-    "clienteexemplo10": ["PublisherResponseTime+/#", "PluginResponseTime+/#"]
+    "clienteexemplo10": ["PublisherResponseTime+/#", "PluginResponseTime+/#"],
+    "aop-core":         ["aop/#", "tlm/#"],
+    "rp-display":       ["aop/display/#", "aop/currentUser", "aop/currentService", "aop/users", "aop/devices"],
+    "tv3ws-client":     ["aop/#", "tlm/#"],
+    "broadcaster-app":  ["tlm/#", "aop/#"]
   }
 }

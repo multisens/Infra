@@ -20,12 +20,13 @@ services:
       - ./mosquitto_plugin/plugin/config:/mosquitto/config:ro
       - ./mosquitto_plugin/infra/migrate_to_redis.py:/migrate.py:ro
     depends_on:
-      - redis-auth
+      - redis
     networks:
       - ginga_net
     restart: "no"
 
   mosquitto:
+    image: ${DOCKERHUB_NS:-tv30}/tv30-mosquitto:${IMAGE_TAG:-latest}
     build:
       context: ./mosquitto_plugin
       dockerfile: infra/Dockerfile
@@ -34,7 +35,7 @@ services:
       - mqtt
     ports:
       - "1883:1883"
-      - "9001:9001"
+      - "9003:9001"   # 9001/9002 ocupadas no host (mirrored networking)
     volumes:
       - mosquitto_data:/mosquitto/data
       - mosquitto_logs:/mosquitto/log
@@ -42,7 +43,8 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     depends_on:
-      - redis-seed
+      redis-seed:
+        condition: service_completed_successfully
     networks:
       - ginga_net
 
@@ -54,7 +56,3 @@ networks:
   ginga_net:
     name: ginga_net
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.27.0.0/16
-          gateway: 172.27.0.1

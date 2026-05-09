@@ -111,23 +111,32 @@ static bool validate_consent(const char *user_id, const char *service_id) {
     char key[256];
     snprintf(key, sizeof(key), "user:%s:consent", user_id);
     
+    // Wildcard "*" no consent set = cliente de serviço confiável (bypass)
+    redisReply *wc = redisCommand(redis_conn, "SISMEMBER %s *", key);
+    if (wc && wc->type == REDIS_REPLY_INTEGER && wc->integer == 1) {
+        mosquitto_log_printf(MOSQ_LOG_DEBUG, "Consent bypass (service client): %s", user_id);
+        freeReplyObject(wc);
+        return true;
+    }
+    if (wc) freeReplyObject(wc);
+
     redisReply *reply = redisCommand(redis_conn, "SISMEMBER %s %s", key, service_id);
     if (!reply) {
         mosquitto_log_printf(MOSQ_LOG_ERR, "Redis error checking consent");
         return false;
     }
-    
+
     bool granted = (reply->type == REDIS_REPLY_INTEGER && reply->integer == 1);
     freeReplyObject(reply);
-    
+
     if (granted) {
-        mosquitto_log_printf(MOSQ_LOG_DEBUG, "Consent granted: %s -> service %s", 
+        mosquitto_log_printf(MOSQ_LOG_DEBUG, "Consent granted: %s -> service %s",
                            user_id, service_id);
     } else {
-        mosquitto_log_printf(MOSQ_LOG_INFO, "Consent denied: %s -> service %s", 
+        mosquitto_log_printf(MOSQ_LOG_INFO, "Consent denied: %s -> service %s",
                            user_id, service_id);
     }
-    
+
     return granted;
 }
 

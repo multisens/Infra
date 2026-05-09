@@ -140,11 +140,11 @@ static int callback_acl_check(int event, void *event_data, void *userdata) {
         return MOSQ_ERR_SUCCESS;
     }
     
-    // Authorization check (two-layer validation)
-    if (!authorize_access(client_id, ed->topic)) {
-        mosquitto_log_printf(MOSQ_LOG_INFO, "Authorization denied: %s -> %s", client_id, ed->topic);
-        return MOSQ_ERR_ACL_DENIED;
-    }
+    // Authorization check (two-layer validation) — DESABILITADO: todos os clientes liberados
+    // if (!authorize_access(client_id, ed->topic)) {
+    //     mosquitto_log_printf(MOSQ_LOG_INFO, "Authorization denied: %s -> %s", client_id, ed->topic);
+    //     return MOSQ_ERR_ACL_DENIED;
+    // }
     
     // Only validate PUBLISH operations on sensor topics
     if (ed->access != MOSQ_ACL_WRITE || strncmp(ed->topic, "sensor/", 7) != 0) {
