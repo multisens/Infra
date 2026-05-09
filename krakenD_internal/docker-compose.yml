@@ -2,10 +2,10 @@ version: '3.8'
 
 services:
   krakend-internal:
-    image: ${DOCKERHUB_NS:-tv30}/tv30-krakend-internal:${IMAGE_TAG:-latest}
+    image: ${DOCKERHUB_NS:-tv30}/tv30-gatewayhttp:${IMAGE_TAG:-latest}
     build:
       context: .
-      dockerfile: ../dockerfiles/krakend-internal.Dockerfile
+      dockerfile: ../dockerfiles/gatewayhttp.Dockerfile
     container_name: krakend-internal
     ports:
       - "44642:8080"

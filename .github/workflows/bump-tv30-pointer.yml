@@ -20,12 +20,12 @@ jobs:
           - name: tv30-middleware-internal
             context: ./middleware_internal
             dockerfile: ./middleware_internal/Dockerfile
-          - name: tv30-krakend-external
+          - name: tv30-gatewayhttps
             context: ./krakenD_external
-            dockerfile: ./dockerfiles/krakend-external.Dockerfile
-          - name: tv30-krakend-internal
+            dockerfile: ./dockerfiles/gatewayhttps.Dockerfile
+          - name: tv30-gatewayhttp
             context: ./krakenD_internal
-            dockerfile: ./dockerfiles/krakend-internal.Dockerfile
+            dockerfile: ./dockerfiles/gatewayhttp.Dockerfile
     steps:
       - uses: actions/checkout@v4
 
