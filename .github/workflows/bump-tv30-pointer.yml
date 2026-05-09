@@ -1,0 +1,37 @@
+name: Bump submodule infra em TV30
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout TV30 (super-projeto)
+        uses: actions/checkout@v4
+        with:
+          repository: multisens/TV30
+          token: ${{ secrets.TV30_REPO_TOKEN }}
+          submodules: false
+          fetch-depth: 0
+
+      - name: Atualizar ponteiro do submodule infra
+        env:
+          INFRA_SHA: ${{ github.sha }}
+        run: |
+          set -e
+          git config user.name  "Luis Claudio Ribeiro Junior"
+          git config user.email "luis.claudio.r.jr@gmail.com"
+
+          CURRENT=$(git ls-tree HEAD infra | awk '{print $3}')
+          if [ "$CURRENT" = "$INFRA_SHA" ]; then
+            echo "Ponteiro ja em $INFRA_SHA — sem mudancas"
+            exit 0
+          fi
+
+          echo "Atualizando ponteiro do submodule infra: $CURRENT -> $INFRA_SHA"
+          git update-index --cacheinfo 160000 "$INFRA_SHA" infra
+
+          git commit -m "chore: bump submodule infra pra ${INFRA_SHA:0:7}"
+          git push origin main
