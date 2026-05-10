@@ -1,0 +1,5 @@
+# Garante LF em scripts shell (caso contrario, CRLF do Windows Git quebra
+# o shebang dentro de containers Linux: "exec /entrypoint.sh: no such file").
+*.sh         text eol=lf
+*.Dockerfile text eol=lf
+Dockerfile   text eol=lf
