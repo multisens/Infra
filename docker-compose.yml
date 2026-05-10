@@ -35,7 +35,9 @@ services:
       - mqtt
     ports:
       - "1883:1883"
-      - "9003:9001"   # 9001/9002 ocupadas no host (mirrored networking)
+      # MQTT_WS_PORT default 9001 (Linux puro). Em Windows+WSL com 9001/9002
+      # ocupadas no host, definir MQTT_WS_PORT=9003 no .env da raiz do TV30.
+      - "${MQTT_WS_PORT:-9001}:9001"
     volumes:
       - mosquitto_data:/mosquitto/data
       - mosquitto_logs:/mosquitto/log
@@ -47,6 +49,7 @@ services:
         condition: service_completed_successfully
     networks:
       - ginga_net
+    restart: unless-stopped
 
 volumes:
   mosquitto_data:
