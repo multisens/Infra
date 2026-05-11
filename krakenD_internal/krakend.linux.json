@@ -141,6 +141,23 @@
       ]
     },
     {
+      "endpoint": "/tv3/users",
+      "method": "POST",
+      "input_headers": [
+        "Authorization",
+        "Accept-Version",
+        "Content-Type"
+      ],
+      "backend": [
+        {
+          "url_pattern": "/tv3/users",
+          "host": [
+            "http://ccws:44652"
+          ]
+        }
+      ]
+    },
+    {
       "endpoint": "/tv3/current-service/users/files",
       "method": "GET",
       "input_headers": [
