@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   krakend-internal:
     image: ${DOCKERHUB_NS:-tv30}/tv30-gatewayhttp:${IMAGE_TAG:-latest}
