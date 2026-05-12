@@ -17,7 +17,11 @@ services:
     container_name: redis-seed
     command: sh -c "pip install redis -q && python /migrate.py"
     volumes:
-      - ./mosquitto_plugin/plugin/config:/mosquitto/config:ro
+      # ACL fica no mosquitto_plugin (config nativo do broker); userData vem do
+      # user-files-template — fonte unica de verdade, mesmo arquivo embarcado
+      # nas imagens do AoP e CCWS (evita drift entre seeds).
+      - ./mosquitto_plugin/plugin/config/acl.json:/mosquitto/config/acl.json:ro
+      - ./user-files-template/userData.json:/mosquitto/config/userData.json:ro
       - ./mosquitto_plugin/infra/migrate_to_redis.py:/migrate.py:ro
     depends_on:
       - redis

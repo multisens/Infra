@@ -41,7 +41,7 @@ RUN useradd -r -s /bin/false mosquitto && \
     mkdir -p /mosquitto/config /mosquitto/data /mosquitto/log && \
     chown -R mosquitto:mosquitto /mosquitto
 
-COPY plugin/config/mosquitto.conf plugin/config/schemas.json plugin/config/acl.json plugin/config/userData.json /mosquitto/config/
+COPY plugin/config/mosquitto.conf plugin/config/schemas.json plugin/config/acl.json /mosquitto/config/
 COPY infra/migrate_to_redis.py /usr/local/bin/migrate_to_redis.py
 COPY infra/entrypoint.sh /usr/local/bin/entrypoint.sh
 
