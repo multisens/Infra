@@ -1,467 +1,72 @@
-# AOP — Infraestrutura
+# TV30 — `infra/` (submodule)
 
-Infraestrutura distribuída que simula um **receptor de TV 3.0** (padrão Ginga, TV digital brasileira) usando microserviços.
+Submodule do monorepo [TV30](https://github.com/multisens/TV30) que reúne os componentes de **infraestrutura compartilhada** do testbed TV 3.0 (ABNT NBR 25608): Redis, broker MQTT (Mosquitto + plugin C de ACL/consentimento), gateways KrakenD (externo e interno) e middlewares de validação JWT/OpenAPI.
 
-## Visão geral
-
-```
-Browser / App
-    ↓ HTTP :8092
-KrakenD (API Gateway)         ← plugin consent-validator intercepta todas as rotas
-    ↓ HTTPS :44645
-ccws-relay.js (WSL)           ← relay TCP transparente
-    ↓ HTTPS :44643
-CCWS (Windows, nativo)        ← API TV 3.0 em TypeScript
-    ↓ MQTT
-Mosquitto + Plugin C          ← valida ACL, consentimento e schema via Redis
-    ↓
-AoP (porta 8080)              ← interface do receptor (Node.js)
-```
+> **Não suba este `docker-compose.yml` isolado.** Ele é incluído via `include:` pelo compose da raiz do TV30 — toda a stack sobe de uma vez com `docker compose up -d` **na raiz do monorepo**. Subir aqui dentro sem o compose raiz não traz os serviços `aop`, `ccws` e `bcast`, e a rede `ginga_net` fica órfã.
 
 ---
 
-## Pré-requisitos
+## Serviços expostos
 
-- **Windows 11** com WSL2 (Ubuntu recomendado)
-- **Docker** instalado no WSL (não Docker Desktop)
-- **Node.js** no Windows (para o CCWS)
-- **Node.js** no WSL (para o ccws-relay)
+Portas listadas são as do **host** quando a stack sobe pela raiz do TV30.
 
----
+| Serviço                | Porta host        | Função                                                                |
+|------------------------|-------------------|-----------------------------------------------------------------------|
+| `redis`                | `6379`            | Cache/estado compartilhado (ACL, consentimento, perfis de usuário).   |
+| `redis-commander`      | `18081`           | UI web do Redis (8081 do host fica reservada pro `bcast`).            |
+| `redis-seed`           | —                 | One-shot. Popula Redis a partir de `acl.json` + `userData.json`.      |
+| `mosquitto`            | `1883`, `9001`    | Broker MQTT + WebSocket. Plugin C valida ACL/consent/schema via Redis. Profile `mqtt`. |
+| `krakend-external`     | `44643` (HTTPS)   | API Gateway externo. Plugin Go `consent-validator` em todas as rotas. |
+| `krakend-internal`     | `44642`           | API Gateway interno (serviço-a-serviço).                              |
+| `validation-middleware`| `3000`            | Validação JWT + geração do spec OpenAPI a partir do `krakend.json`.   |
+| `swagger-ui`           | `8085`            | Swagger UI do gateway externo.                                        |
+| `middleware-internal`  | `3001`            | Validação + OpenAPI do gateway interno.                               |
+| `swagger-ui-internal`  | `8086`            | Swagger UI do gateway interno.                                        |
 
-## Início rápido
-
-```powershell
-# Cenário padrão (com networkingMode=mirrored)
-.\start.ps1
-
-# Com Mosquitto (fluxo MQTT completo)
-.\start.ps1 -Mosquitto
-
-# Sem networkingMode=mirrored (usa proxy-win + proxy-wsl)
-.\start.ps1 -Proxies
-
-# Tudo
-.\start.ps1 -Proxies -Mosquitto
-```
-
-O script:
-- Verifica Docker no WSL
-- Sobe Redis, Middleware, KrakenD na ordem correta
-- Detecta e corrige automaticamente o IP do bridge Docker no `docker-compose.yml` do KrakenD
-- Inicia o `ccws-relay.js` no WSL
-- Abre o CCWS em nova janela Windows
-- Com `-Proxies`: detecta o IP do WSL, atualiza e sobe `proxy-win.js` e `proxy-wsl.js`
-- Com `-Mosquitto`: sobe o Mosquitto
-- Faz health check ao final e exibe o resumo das URLs
+O serviço `sysctl-init` mencionado em alguns docs **não vive aqui** — está no `docker-compose.yml` da raiz do TV30. Ele é um one-shot privilegiado (`alpine:3`, `network_mode: host`, `profiles: [linux]`) que executa `sysctl -w net.bridge.bridge-nf-call-iptables=0` no host Linux antes do resto da stack subir. Sem isso, em alguns kernels o tráfego entre containers pela bridge é interceptado por regras `iptables` do host e MQTT/Redis ficam intermitentes. Em hosts onde o `sysctl` é read-only (ex.: Docker Desktop), o comando falha silenciosamente — o `|| echo 'sysctl skipped...'` cobre esse caso.
 
 ---
 
-## Configuração de rede (fazer uma vez)
+## Build local das imagens (opcional)
 
-### Opção A — com `networkingMode=mirrored` (recomendado)
-
-Elimina a necessidade dos proxies e estabiliza os IPs. Adicionar em `~/.wslconfig` (Windows):
-
-```ini
-[wsl2]
-networkingMode=mirrored
-```
-
-Aplicar: `wsl --shutdown` e reabrir o terminal WSL.
-
-### Opção B — sem mirrored (IPs mudam a cada boot)
-
-Ver seção [Sem mirrored networking](#sem-mirrored-networking) ao final.
-
----
-
-## Subindo o stack
-
-### 1. Clonar / garantir estrutura
-
-```
-aop_infra/
-  GingaDistrib/ccws/     ← repositório separado, clonar aqui
-  redis/
-  krakenD/
-  middleware/
-  start.ps1
-  ccws-relay.js
-```
-
-### 2. Usar o script de inicialização
-
-```powershell
-.\start.ps1
-```
-
-O script cuida de tudo automaticamente: detecta IPs, sobe os serviços na ordem correta, popula o Redis com ACL e usuários, inicia o relay e abre o CCWS.
-
-Ver seção [Início rápido](#início-rápido) para todas as opções de flags.
-
-### 3. Verificar saúde do stack
+Em deploy normal as imagens vêm prontas do Docker Hub. Se quiser buildar localmente sem subir nada:
 
 ```bash
-# Containers rodando
-wsl -- bash -c "docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'"
-
-# Relay ativo
-wsl -- bash -c "ss -tlnp | grep 44645"
-
-# Teste end-to-end (aguardar ~10s para o CCWS inicializar)
-curl http://localhost:8092/health
-# Esperado: 200 OK
+docker compose -f infra/docker-compose.yml build
 ```
 
-### Subida manual (alternativa ao script)
-
-<details>
-<summary>Expandir comandos manuais</summary>
-
-```bash
-# 1. Redis — cria a rede ginga_net
-wsl -- bash -c "cd /mnt/d/ProjCEFET/aop_infra/redis && docker compose up -d"
-
-# 2. Middleware + Swagger UI
-wsl -- bash -c "cd /mnt/d/ProjCEFET/aop_infra/middleware && docker compose up -d"
-
-# 3. ccws-relay
-wsl -- bash -c "node /mnt/d/ProjCEFET/aop_infra/ccws-relay.js &>/tmp/ccws-relay.log & disown"
-
-# 4. KrakenD
-wsl -- bash -c "cd /mnt/d/ProjCEFET/aop_infra/krakenD && docker compose up -d"
-
-# 5. CCWS (nativo Windows — nova janela)
-powershell -Command "Start-Process cmd -ArgumentList '/c cd /d D:\ProjCEFET\aop_infra\GingaDistrib\ccws && npm run dev' -WindowStyle Normal"
-
-# 6. Mosquitto (opcional)
-wsl -- bash -c "cd /mnt/d/ProjCEFET/aop_infra/mosquitto_plugin/infra && docker compose up -d"
-```
-
-</details>
+Isso **apenas builda** as imagens definidas neste compose (mosquitto, krakend-external, krakend-internal, validation-middleware, middleware-internal). Para de fato rodar a stack, use `docker compose up -d` na raiz do TV30.
 
 ---
 
-## Serviços e portas
-
-| Serviço | Porta | Descrição |
-|---|---|---|
-| KrakenD | `8092` | API Gateway — entrada de todas as requisições |
-| CCWS | `44643` (HTTPS) | API TV 3.0 — roda nativo no Windows |
-| ccws-relay | `44645` (WSL) | Relay TCP Docker → CCWS |
-| Middleware | `3000` | Validação JWT + geração do OpenAPI spec |
-| Swagger UI | `8085` | Documentação interativa das rotas |
-| Redis | `6379` | Cache e estado compartilhado |
-| Redis Commander | `8081` | UI web do Redis |
-| Mosquitto | `1883` / `9001` | Broker MQTT |
-| AoP | `8080` | Interface do receptor TV |
-
----
-
-## Documentação das rotas
-
-Acesse **`http://localhost:8085`** para o Swagger UI com todas as rotas do KrakenD.
-
-O spec é gerado dinamicamente pelo middleware a partir do `krakenD/krakend.json`.
-
----
-
-## Fluxo de autenticação
-
-As rotas protegidas exigem um JWT no header `Authorization` (sem prefixo "Bearer"):
+## Estrutura
 
 ```
-Authorization: <token>
-```
-
-**Passo 1 — Autorizar cliente** (exibe popup na AoP por 10s):
-```bash
-GET http://localhost:8092/tv3/authorize?clientid=myapp&display-name=MeuApp&pm=qrcode
-# Retorna: { "challenge": "<base64>" }
-```
-
-**Passo 2 — Obter token** (após resolver o challenge):
-```bash
-GET http://localhost:8092/tv3/token?clientid=myapp&challenge-response=<base64>
-# Retorna: { "accessToken": "...", "refreshToken": "...", "expiresIn": ... }
-```
-
-**Passo 3 — Usar token nas rotas protegidas**:
-```bash
-curl -H "Authorization: <accessToken>" http://localhost:8092/tv3/current-service
-curl -H "Authorization: <accessToken>" http://localhost:8092/tv3/current-service/users/current-user
+infra/
+  docker-compose.yml         # incluido via `include:` pelo compose raiz
+  redis/                     # Redis + Redis Commander
+  mosquitto_plugin/          # Broker MQTT + plugin C (ACL/consent/schema)
+  krakenD_external/          # Gateway HTTPS publico + plugin Go
+  krakenD_internal/          # Gateway HTTP interno (serv-a-serv)
+  middleware/                # Validacao JWT + OpenAPI (externo) + Swagger UI
+  middleware_internal/       # Validacao + OpenAPI (interno) + Swagger UI
+  dockerfiles/               # Dockerfiles dos containers que vivem na raiz (aop, ccws, bcast, ...)
+  user-files-template/       # Seed embarcado em CCWS/AoP — userData.json baseline
+  docs/                      # Documentacao tecnica (fonte de verdade)
 ```
 
 ---
 
-## Sem mirrored networking
+## Documentação
 
-Se o `networkingMode=mirrored` não estiver ativo, é necessário usar os proxies e atualizar IPs a cada boot.
+A fonte de verdade técnica está em [`docs/`](./docs/README.md):
 
-### A cada boot
+- [`01-visao-geral.md`](./docs/01-visao-geral.md) — Visão geral da stack
+- [`02-rede-docker.md`](./docs/02-rede-docker.md) — Rede `ginga_net` e portas
+- [`03-pipeline-mqtt.md`](./docs/03-pipeline-mqtt.md) — Plugin MQTT (ACL/consent/schema)
+- [`04-pipeline-http.md`](./docs/04-pipeline-http.md) — KrakenD + middleware Node
+- [`05-autenticacao.md`](./docs/05-autenticacao.md) — Fluxos TV 3.0
+- [`06-modelo-redis.md`](./docs/06-modelo-redis.md) — Modelo de dados Redis
+- [`08-mqtt-map.md`](./docs/08-mqtt-map.md) — Mapa completo de tópicos MQTT
 
-**1. Descobrir IP atual do WSL:**
-```bash
-wsl -- bash -c "hostname -I | awk '{print $1}'"
-```
-
-**2. Atualizar `proxy-win.js`** com o IP obtido:
-```js
-const WSL_IP = '<IP_DO_WSL>';
-```
-
-**3. Verificar gateway Docker** e atualizar `krakenD/docker-compose.yml` se necessário:
-```bash
-wsl -- bash -c "docker network inspect ginga_net | grep Gateway"
-```
-
-### Subir proxies (além da ordem normal)
-
-```bash
-# WSL — antes de subir o KrakenD
-wsl -- bash -c "node /mnt/d/ProjCEFET/aop_infra/proxy-wsl.js &>/tmp/proxy-wsl.log & disown"
-
-# Windows — terminal separado
-node D:\ProjCEFET\aop_infra\proxy-win.js
-```
-
-Com os proxies, o fluxo de rede é:
-```
-Browser :8090 (Windows)
-  → proxy-win.js → proxy-wsl.js
-    → KrakenD Docker :8090
-```
-
-> Neste cenário a porta 8090 está disponível para o KrakenD (alterar `docker-compose.yml` de 8092 para 8090).
-
----
-
-## Estrutura do repositório
-
-```
-aop_infra/
-  GingaDistrib/               # Repo separado — aplicações do receptor
-    ccws/                     # API TV 3.0 (TypeScript, Windows nativo)
-    aop/                      # Interface do receptor (Node.js)
-    user-files/               # Dados de usuários
-  redis/                      # Redis + Redis Commander
-  krakenD/                    # API Gateway + plugin Go
-    plugin/                   # Código-fonte do plugin consent-validator
-    plugins/                  # Plugin compilado (.so)
-    krakend.json              # Configuração de endpoints
-  middleware/                 # Validação JWT + OpenAPI spec + Swagger UI
-  mosquitto_plugin/           # Broker MQTT com plugin C
-  ccws-relay.js               # Relay WSL: Docker → CCWS Windows
-  proxy-win.js                # Proxy Windows (sem mirrored)
-  proxy-wsl.js                # Proxy WSL (sem mirrored)
-```
-
----
-
-# Broker Documentation
-
-## Topic structure
-
-The table below present the topics together with its associated QoS and retain parameters, topic format, and description. In the table, subtopics marked as `<subtopic>` represent parameterized parts of a topic.
-
-| Topic                                 | QoS | Retained | Format  | Description                                |
-|---------------------------------------|-----|----------|---------|--------------------------------------------|
-| `aop/users`                           | 1   | True     | URL     | Path to user data file and thumbs          |
-| `aop/currentUser`                     | 1   | True     | UUID    | User currently selected                    |
-| `aop/services`                        | 1   | True     | JSON    | JSON vector of services information        |
-| `aop/currentService`                  | 1   | True     | Integer | Service currently in use                   |
-| `aop/<serviceId>/apps`                | 1   | True     | JSON    | JSON vector of applications information    |
-| `aop/<serviceId>/currentApp`          | 1   | True     | Integer | Application in execution                   |
-| `aop/<serviceId>/<appId>/path`        | 1   | True     | URL     | Path to application data                   |
-| `aop/<serviceId>/<appId>/doc/nodes`   | 1   | True     | JSON    | JSON vector of document node data          |
-| `aop/devices`                         | 0   | True     | JSON    | JSON vector of registered device handles   |
-| `aop/devices/<devclass>`              | 0   | True     | JSON    | Devices of a specific device class         |
-
-When constructing the topic, parameter `<serviceId>` holds the current service id, while `<appId>` holds the current application id. Parameter `<devclass>` holds the device class name.
-The diagram below presents the topic structure in a tree structure. In the diagram solid nodes represent retained topics and dashed node the ones not retained.
-
-```mermaid
----
-config:
-  look: handDrawn
-  theme: neutral
----
-graph LR
-    classDef nret stroke-dasharray: 5
-
-    TV30(**AoP**) --> USERS(**users**)
-    TV30 --> CURRENTUSER(**currentUser**)
-    TV30 --> SERVICES(**services**)
-    TV30 --> CURRENTSERVICE(**currentService**)
-    TV30 --> DEVICES(**devices**) --> DEVCLASS(\<**devclass**\>)
-    
-    TV30 --> SERVICE1(\<**serviceId**\>) --> APPS(**apps**)
-             SERVICE1 --> CURRENTAPP(**currentApp**)
-             SERVICE1 --> APP1(\<**appId**\>) --> APPPATH(**path**)
-                          APP1 --> APPDOC(**doc**) --> NODES(**nodes**)
-                                   APPDOC --> NODE1(\<**nodeId**\>) --> INTERFACES(**interfaces**)
-                                              NODE1 --> NODE2(\<**nodeId**\>)
-                                              NODE1 --> IFACE1(\<**ifaceId**\>)
-```
-
-The prefix `aop/<serviceId>/<appId>/doc` regards topics that present information about an application node. They shall indicate the document structure regarding node identifires. For example, topic `aop/<serviceId>/<appId>/doc/nid1/nid2/nid3` access information about node with id *nid3* that is a child node of *nid2* that is a child node of node *nid1*. The same way, topic `aop/<serviceId>/<appId>/doc/nid1/iid1` access information about interface *iid1*, child of node *nid1*. Node structure is available in topic `aop/<serviceId>/<appId>/doc/nodes` as seen in the table above, while interface information is provided together within a node set of topics as presented in the table below. One should notice that, in the table, each topic considers a prefix to take to that node as discussed above.
-
-| Topic                                                             | QoS | Retained | Format  | Description                                |
-|-------------------------------------------------------------------|-----|----------|---------|--------------------------------------------|
-| `/<nodeId>/interfaces`                                            | 1   | True     | JSON    | JSON vector of node interfaces             |
-| `/<nodeId>/(presentation\|preparation)Event/state`                | 1   | True     | String  | NCL event statemachine state               |
-| `/<nodeId>/(presentation\|preparation)Event/occurrences`          | 1   | True     | Integer | Number of occurrences                      |
-| `/<nodeId>/(presentation\|preparation)Event/actionNotification`   | 1   | False    | String  | NCL action to be performed in the event    |
-| `/<nodeId>/(presentation\|preparation)Event/eventNotification`    | 1   | False    | String  | NCL transition to be notified              |
-| `/<nodeId>/preparationEvent/prepared`                             | 1   | True     | Boolean | Indicate that preparation was succesful    |
-| `/<nodeId>/selectionEvent/<key>/user`                             | 1   | False    | String  | User that performed the interaction        |
-| `/<nodeId>/selectionEvent/<key>/state`                            | 1   | True     | String  | NCL event statemachine state               |
-| `/<nodeId>/selectionEvent/<key>/occurrences`                      | 1   | True     | Integer | Number of occurrences                      |
-| `/<nodeId>/selectionEvent/<key>/actionNotification`               | 1   | False    | String  | NCL action to be performed in the event    |
-| `/<nodeId>/selectionEvent/<key>/eventNotification`                | 1   | False    | String  | NCL transition to be notified              |
-| `/<ifaceId>/attributionEvent/value`                               | 1   | True     | String  | Value of a property-type interface         |
-| `/<ifaceId>/attributionEvent/state`                               | 1   | True     | String  | NCL event statemachine state               |
-| `/<ifaceId>/attributionEvent/occurrences`                         | 1   | True     | Integer | Number of occurrences                      |
-| `/<ifaceId>/attributionEvent/actionNotification`                  | 1   | False    | String  | NCL action to be performed in the event    |
-| `/<ifaceId>/attributionEvent/eventNotification`                   | 1   | False    | String  | NCL transition to be notified              |
-
-When constructing the topic, parameter `<nodeId>` holds a node id, while `<ifaceId>` holds an interface id. The above topics access information of the supported events: *presentationEvent*, *preparationEvent*, *attributionEvent*, and *selectionEvent*. One should notice that all have the suffix *-Event*. Other events shall follow the same structure. In the case of selection events, parameter `<key>` has also to be defined.
-
-The diagram below presents the topic structure in a tree structure. In the diagram solid nodes represent retained topics and dashed node the ones not retained.
-
-```mermaid
----
-config:
-  look: handDrawn
-  theme: neutral
----
-graph LR
-    classDef nret stroke-dasharray: 5
-
-    NODE1(**prefix/to/node**)
-    NODE1 ---> PRESENTATION(**presentationEvent**)
-    NODE1 ---> PREPARATION(**preparationEvent**)
-    NODE1 ---> SELECTION(**selectionEvent**) --> KEY(\<**key**\>)
-
-    PRESENTATION --> PRESSTATE(**state**)
-    PRESENTATION --> PRESOCCUR(**occurrences**)
-    PRESENTATION --> PRESACTION(**actionNotification**):::nret
-    PRESENTATION --> PRESEVENT(**eventNotification**):::nret
-
-    PREPARATION --> PREPSTATE(**state**)
-    PREPARATION --> PREPOCCUR(**occurrences**)
-    PREPARATION --> PREPPREPARED(**prepared**)
-    PREPARATION --> PREPACTION(**actionNotification**):::nret
-    PREPARATION --> PREPEVENT(**eventNotification**):::nret
-
-    KEY --> SELSTATE(**state**)
-    KEY --> SELOCCUR(**occurrences**)
-    KEY --> SELACTION(**user**):::nret
-    KEY --> SELEVENT(**eventNotification**):::nret
-
-    NODE1 --> IFACE(\<**interfaceId**\>)
-    IFACE --> IFACEPRESENTATION(**presentationEvent**)
-    IFACE --> IFACEPREPARATION(**preparationEvent**)
-    IFACE --> IFACESELECTION(**selectionEvent**)
-    IFACE --> ATTRIBUTION(**attributionEvent**)
-
-    ATTRIBUTION --> ATTVALUE(**value**)
-    ATTRIBUTION --> ATTSTATE(**state**)
-    ATTRIBUTION --> ATTOCCUR(**occurrences**)
-    ATTRIBUTION --> ATTACTION(**actionNotification**):::nret
-    ATTRIBUTION --> ATTEVENT(**eventNotification**):::nret
-```
-
-## Display layer topics
-
-The display layer topics control the AoP user interface rendering. They are used to manage video playback, graphical overlays, and popup interactions between the CCWS and the AoP display.
-
-| Topic                                          | QoS | Retained | Format  | Description                                         |
-|------------------------------------------------|-----|----------|---------|-----------------------------------------------------|
-| `aop/display/layers/rxgui`                     | 0   | False    | String  | GUI screen/page to display on the receiver          |
-| `aop/display/layers/graphics`                  | 0   | False    | String  | Graphics application proxy URL (or empty to clear)  |
-| `aop/display/layers/video/url`                 | 0   | False    | String  | Video stream URL (m3u8, mpd, or direct)             |
-| `aop/display/layers/video/size`                | 0   | False    | JSON    | Video player position and size (top, left, w, h)    |
-| `aop/display/layers/popup/yesno/message`       | 0   | False    | JSON    | Yes/No popup request (value and timeout)            |
-| `aop/display/layers/popup/yesno/response`      | 0   | False    | String  | User response to Yes/No popup ("true" or "false")   |
-| `aop/display/layers/popup/qrcode`              | 0   | False    | JSON    | QR code popup request (value and timeout)           |
-| `aop/display/layers/popup/pin`                 | 0   | False    | JSON    | PIN input popup request (value and timeout)         |
-
-The diagram below presents the display layer topic structure.
-
-```mermaid
----
-config:
-  look: handDrawn
-  theme: neutral
----
-graph LR
-    classDef nret stroke-dasharray: 5
-
-    DISPLAY(**aop/display/layers**) --> RXGUI(**rxgui**):::nret
-    DISPLAY --> GRAPHICS(**graphics**):::nret
-    DISPLAY --> VIDEO(**video**) --> VIDEOURL(**url**):::nret
-                VIDEO --> VIDEOSIZE(**size**):::nret
-    DISPLAY --> POPUP(**popup**) --> YESNO(**yesno**) --> YESNOMSG(**message**):::nret
-                                     YESNO --> YESNORESP(**response**):::nret
-                POPUP --> QRCODE(**qrcode**):::nret
-                POPUP --> PIN(**pin**):::nret
-```
-
-## Broadcast metadata topics (TLM)
-
-The TLM (Telemetry) topics carry broadcast signaling metadata received from the DTV transport layer. They use wildcard subscriptions and the `noLocal` flag.
-
-| Topic              | QoS | Retained | Format  | Description                                              |
-|--------------------|-----|----------|---------|----------------------------------------------------------|
-| `tlm/lls/#`        | 0   | False    | JSON    | LLS (Low Level Signaling) metadata — BAM table entries   |
-| `tlm/sls/+/#`      | 0   | False    | JSON    | SLS (Service Layer Signaling) per service — ESG and BALD |
-| `video/event`       | 0   | False    | String  | Video player events (playback state changes)             |
-
-In the SLS topic `tlm/sls/+/#`, the `+` wildcard matches the service ID, allowing per-service subscription.
-
-### Service Information Metadata
-
-The JSON vector of objects representing service information presents the attributes described in the table below.
-
-| Attribute         | Format  | Description                                                  |
-|-------------------|---------|--------------------------------------------------------------|
-| `serviceId`       | Integer | Identifies the corresponding DTV service                     |
-| `serviceName`     | String  | DTV service name                                             |
-| `serviceIcon`     | SVG     | DTV service logo in svg                                      |
-| `initialMediaURL` | URL     | Linear service URL to be used in the bootstrap application   |
-
-### Application Information Metadata
-
-The JSON vector of objects representing application information presents the attributes described in the table below.
-
-| Attribute     | Format  | Description                                                             |
-|---------------|---------|-------------------------------------------------------------------------|
-| `appId`       | Integer | Identifies the corresponding application                                |
-| `appName`     | String  | Human-readable name for the application                                 |
-| `appType`     | String  | Application type: *TV30-Ginga-HTML5* or *TV30-Ginga-NCL*                |
-| `controlCode` | String  | Specifies the dynamic control of application life cycle                 |
-| `state`       | String  | Application state: *running*, *stored*, *unloaded*, *loading*, *loaded* |
-| `entryPoint`  | URL     | Application's path                                                      |
-
-### Node data structure
-
-The table below present the attributes of the JSON object that store node data.
-
-| Attribute     | Format  | Description                                           |
-|---------------|---------|-------------------------------------------------------|
-| `id`          | ID      | The node unique identifier in the document            |
-| `type`        | String  | Type of the NCL node: *media*, *context*, or *switch* |
-| `mimeType`    | MIME    | MIME Type according to IANA for media type node       |
-| `device`      | String  | An optional device where to render the node           |
-
-
-### Interface data structure
-
-The table below present the attributes of the JSON object that store node interface data.
-
-| Attribute     | Format  | Description                                                   |
-|---------------|---------|---------------------------------------------------------------|
-| `id`          | ID      | The interface unique identifier in the document               |
-| `type`        | String  | Type of the NCL node interface: *area*, *property*, or *port* |
+Para subir a stack completa (incluindo `aop`, `ccws`, `bcast`) e configurar `.env`, ver o [README do TV30](../README.md).
