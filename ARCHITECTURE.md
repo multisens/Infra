@@ -14,7 +14,7 @@ Todos os containers se comunicam pela rede Docker compartilhada `ginga_net`.
 - **Plugin builder image `devopsfaith/krakend-plugin-builder:2.7` não existe** — usar `golang:1.22.7-alpine` com CGO e gcc
 - **Authorization header no CCWS não usa prefixo "Bearer"** — bug conhecido no `authorization.ts` que passa o header completo para `jwt.decode`. O token deve ser enviado RAW, sem "Bearer "
 - **CCWS trata expiração de forma diferente** — `exp` check está comentado em `manager.ts` linhas 100-108. O middleware Node.js usa `ignoreExpiration: true` para compatibilidade
-- **CCWS rejeita clientes HTTP não-locais com erro 106** — `krakend-external` conecta ao CCWS via HTTPS (porta 44653 via relay). `allow_insecure_connections: true` no `krakend.json` resolve o cert self-signed. `krakend-internal` conecta via HTTP (porta 44652 via relay) — sem esse problema
+- **CCWS rejeita clientes HTTP não-locais com erro 106** — `krakend-external` conecta ao CCWS via HTTPS (porta 44653 via relay). `allow_insecure_connections: true` no `krakend.json` resolve o certificado autoassinado. `krakend-internal` conecta via HTTP (porta 44652 via relay) — sem esse problema
 - **host.docker.internal NÃO funciona com Docker via WSL** (funciona só no Docker Desktop). Solução: `extra_hosts: ["host.docker.internal:<GATEWAY>"]` no `docker-compose.yml` do KrakenD. O `<GATEWAY>` correto é o **IP do bridge Docker** (`docker network inspect ginga_net | grep Gateway`), pois o `ccws-relay.js` roda no WSL — não no Windows. Usar o IP do Windows (`ip route show | grep default` no WSL) é errado aqui.
 - **WSL `networkingMode=mirrored` bloqueia porta do Docker** — com este modo ativo (`~/.wslconfig`), portas que o Windows já ocupa ficam indisponíveis para o Docker no WSL. Sintoma: `failed to bind host port: address already in use` mesmo sem nada aparente no WSL (`ss -tlnp` não mostra nada). Verificar com `netstat -ano | grep <porta>` no Windows. Solução: usar uma porta diferente no `docker-compose.yml`.
 - **Porta 8090 permanentemente bloqueada nesta máquina** — `svchost.exe` (PID variável) ocupa a 8090 no Windows via mirrored networking como resíduo de container anterior. Os KrakenDs usam portas **44643** (externo) e **44642** (interno).
@@ -121,7 +121,7 @@ Serviço interno
 ### KrakenD External (`krakenD_external/docker-compose.yml`)
 - `devopsfaith/krakend:2.7`, container `krakend-external`, porta **`44643`**
 - Plugin Go `consent-validator` intercepta **todas** as requisições — faz proxy direto ao CCWS via `host.docker.internal:44655` (relay HTTPS)
-- `allow_insecure_connections: true` — cert self-signed do CCWS
+- `allow_insecure_connections: true` — certificado autoassinado do CCWS
 - `extra_hosts: host.docker.internal:172.27.0.1` (fixo — gateway do bridge Docker)
 - Monta `./plugins:/etc/krakend/plugins`
 
@@ -312,7 +312,7 @@ curl http://localhost:44642/health   # gateway interno
 | `ccws-relay.js` com dois relays (HTTPS + HTTP) | CCWS expõe portas distintas para cada tipo de cliente |
 | `ignoreExpiration: true` no middleware | Compatibilidade com CCWS (exp check comentado) |
 | Token sem "Bearer " no Authorization | Bug no CCWS — `jwt.decode` recebe header completo |
-| `allow_insecure_connections: true` no externo | Cert self-signed no CCWS para dev |
+| `allow_insecure_connections: true` no externo | Certificado autoassinado no CCWS para dev |
 | `extra_hosts` no docker-compose dos KrakenDs | `host.docker.internal` não resolve no Docker via WSL — IP fixado manualmente com o **gateway do bridge Docker** (não o IP do Windows) |
 | KrakenDs nas portas 44643/44642 | Portas convenientes que não conflitam com svchost.exe |
 | `proxy-win.js` e `proxy-wsl.js` não usados | `networkingMode=mirrored` no WSL espelha portas Docker diretamente para `localhost` no Windows |
