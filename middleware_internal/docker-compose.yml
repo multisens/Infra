@@ -16,18 +16,6 @@ services:
     networks:
       - ginga_net
 
-  swagger-ui-internal:
-    image: swaggerapi/swagger-ui
-    container_name: swagger-ui-internal
-    ports:
-      - "8086:8080"
-    environment:
-      - URL=http://localhost:3001/openapi.json
-      - CORS=true
-    restart: unless-stopped
-    networks:
-      - ginga_net
-
 networks:
   ginga_net:
     name: ginga_net

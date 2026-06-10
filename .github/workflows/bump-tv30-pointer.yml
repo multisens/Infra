@@ -26,6 +26,9 @@ jobs:
           - name: tv30-gatewayhttp
             context: ./krakenD_internal
             dockerfile: ./dockerfiles/gatewayhttp.Dockerfile
+          - name: tv30-swagger
+            context: ./swagger
+            dockerfile: ./swagger/Dockerfile
     steps:
       - uses: actions/checkout@v4
 

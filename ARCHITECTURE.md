@@ -48,12 +48,15 @@ aop_infra/
     index.js                  # POST /validate — valida JWT; GET /openapi.json — spec do krakenD_external
     package.json
     Dockerfile
-    docker-compose.yml        # containers: validation-middleware (3000) + swagger-ui (8085)
-  middleware_internal/        # Middleware/Swagger para o gateway interno (Node.js)
+    docker-compose.yml        # container: validation-middleware (3000)
+  middleware_internal/        # Middleware (OpenAPI) para o gateway interno (Node.js)
     index.js                  # Mesma base do middleware externo
     package.json
     Dockerfile
-    docker-compose.yml        # containers: middleware-internal (3001) + swagger-ui-internal (8086)
+    docker-compose.yml        # container: middleware-internal (3001)
+  swagger/                    # Swagger UI unico (imagem tv30-swagger) — dropdown external/internal
+    Dockerfile
+    docker-compose.yml        # container: swagger (8085)
   mosquitto_plugin/           # Broker MQTT com plugin de segurança em C
     plugin/                   # Código-fonte do plugin C
       src/                    # mosquitto_plugin.c, authorize.c, schema_validator.c, response_time_tester.c
@@ -132,7 +135,7 @@ Serviço interno
 - Backend de cada endpoint aponta para `http://host.docker.internal:44654` (relay HTTP)
 
 ### Middleware Externo (`middleware/docker-compose.yml`)
-Sobe dois containers:
+Sobe um container:
 
 **`validation-middleware`** (porta `3000`):
 - `POST /validate` — valida JWT (secret/issuer via env)
@@ -140,20 +143,19 @@ Sobe dois containers:
 - `GET /health` — health check
 - `ignoreExpiration: true` para compatibilidade com CCWS
 
-**`swagger-ui`** (porta `8085`):
-- Consome `http://localhost:3000/openapi.json`
-- Acessar em: `http://localhost:8085`
-
 ### Middleware Interno (`middleware_internal/docker-compose.yml`)
-Sobe dois containers:
+Sobe um container:
 
 **`middleware-internal`** (porta `3001`):
 - Mesma base do middleware externo, sem JWT_SECRET/JWT_ISSUER
 - `GET /openapi.json` — gera spec OpenAPI 3.0 lendo `krakenD_internal/krakend.json` (volume readonly)
 
-**`swagger-ui-internal`** (porta `8086`):
-- Consome `http://localhost:3001/openapi.json`
-- Acessar em: `http://localhost:8086`
+### Swagger UI (`swagger/docker-compose.yml`)
+
+**`swagger`** (porta `8085`):
+- Swagger UI único para os dois gateways (imagem `tv30-swagger`, baseada em `swaggerapi/swagger-ui`)
+- `URLS` aponta para `http://localhost:3000/openapi.json` (external) e `http://localhost:3001/openapi.json` (internal) — dropdown no topo
+- Acessar em: `http://localhost:8085`
 
 ### Mosquitto Plugin (`mosquitto_plugin/infra/docker-compose.yml`)
 - Mosquitto 2.0.22, portas `1883` e `9001`
@@ -248,12 +250,13 @@ wsl bash -c "cd /mnt/d/ProjCEFET/aop_infra && docker compose --profile mqtt up -
 
 O `docker-compose.yml` da raiz orquestra via `include:`:
 1. `redis/docker-compose.yml` — Redis + redis-commander
-2. `middleware/docker-compose.yml` — validation-middleware + swagger-ui (externo)
-3. `middleware_internal/docker-compose.yml` — middleware-internal + swagger-ui-internal
+2. `middleware/docker-compose.yml` — validation-middleware (externo)
+3. `middleware_internal/docker-compose.yml` — middleware-internal (interno)
 4. `krakenD_external/docker-compose.yml` — krakend-external
 5. `krakenD_internal/docker-compose.yml` — krakend-internal
-6. Serviço `redis-seed` integrado — popula Redis com ACL/usuários de `mosquitto_plugin/plugin/config/`
-7. `mosquitto` via `--profile mqtt` — opcional
+6. `swagger/docker-compose.yml` — swagger (UI único dos dois gateways)
+7. Serviço `redis-seed` integrado — popula Redis com ACL/usuários de `mosquitto_plugin/plugin/config/`
+8. `mosquitto` via `--profile mqtt` — opcional
 
 Antes de subir, iniciar o relay no WSL:
 ```bash

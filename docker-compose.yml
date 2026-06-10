@@ -10,6 +10,7 @@ include:
   - path: ./middleware_internal/docker-compose.yml
   - path: ./krakenD_external/docker-compose.yml
   - path: ./krakenD_internal/docker-compose.yml
+  - path: ./swagger/docker-compose.yml
 
 services:
   redis-seed:

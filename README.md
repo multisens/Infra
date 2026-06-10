@@ -19,9 +19,8 @@ Portas listadas são as do **host** quando a stack sobe pela raiz do TV30.
 | `krakend-external`     | `44643` (HTTPS)   | API Gateway externo. Plugin Go `consent-validator` em todas as rotas. |
 | `krakend-internal`     | `44642`           | API Gateway interno (serviço-a-serviço).                              |
 | `validation-middleware`| `3000`            | Validação JWT + geração do spec OpenAPI a partir do `krakend.json`.   |
-| `swagger-ui`           | `8085`            | Swagger UI do gateway externo.                                        |
 | `middleware-internal`  | `3001`            | Validação + OpenAPI do gateway interno.                               |
-| `swagger-ui-internal`  | `8086`            | Swagger UI do gateway interno.                                        |
+| `swagger`              | `8085`            | Swagger UI único — dropdown external/internal (consome os dois `/openapi.json`). |
 
 O serviço `sysctl-init` mencionado em alguns docs **não vive aqui** — está no `docker-compose.yml` da raiz do TV30. Ele é um one-shot privilegiado (`alpine:3`, `network_mode: host`, `profiles: [linux]`) que executa `sysctl -w net.bridge.bridge-nf-call-iptables=0` no host Linux antes do resto da stack subir. Sem isso, em alguns kernels o tráfego entre containers pela bridge é interceptado por regras `iptables` do host e MQTT/Redis ficam intermitentes. Em hosts onde o `sysctl` é read-only (ex.: Docker Desktop), o comando falha silenciosamente — o `|| echo 'sysctl skipped...'` cobre esse caso.
 
@@ -35,7 +34,7 @@ Em deploy normal as imagens vêm prontas do Docker Hub. Se quiser buildar localm
 docker compose -f infra/docker-compose.yml build
 ```
 
-Isso **apenas builda** as imagens definidas neste compose (mosquitto, krakend-external, krakend-internal, validation-middleware, middleware-internal). Para de fato rodar a stack, use `docker compose up -d` na raiz do TV30.
+Isso **apenas builda** as imagens definidas neste compose (mosquitto, krakend-external, krakend-internal, validation-middleware, middleware-internal, swagger). Para de fato rodar a stack, use `docker compose up -d` na raiz do TV30.
 
 ---
 
@@ -48,8 +47,9 @@ infra/
   mosquitto_plugin/          # Broker MQTT + plugin C (ACL/consent/schema)
   krakenD_external/          # Gateway HTTPS publico + plugin Go
   krakenD_internal/          # Gateway HTTP interno (serv-a-serv)
-  middleware/                # Validacao JWT + OpenAPI (externo) + Swagger UI
-  middleware_internal/       # Validacao + OpenAPI (interno) + Swagger UI
+  middleware/                # Validacao JWT + OpenAPI (externo)
+  middleware_internal/       # Validacao + OpenAPI (interno)
+  swagger/                   # Swagger UI unico (dropdown external/internal)
   dockerfiles/               # Dockerfiles dos containers que vivem na raiz (aop, ccws, bcast, ...)
   user-files-template/       # Seed embarcado em CCWS/AoP — userData.json baseline
   docs/                      # Documentacao tecnica (fonte de verdade)

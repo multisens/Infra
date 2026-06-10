@@ -1,0 +1,17 @@
+services:
+  swagger:
+    image: ${DOCKERHUB_NS:-tv30}/tv30-swagger:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: swagger
+    ports:
+      - "8085:8080"
+    restart: unless-stopped
+    networks:
+      - ginga_net
+
+networks:
+  ginga_net:
+    name: ginga_net
+    driver: bridge
