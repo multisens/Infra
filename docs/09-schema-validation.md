@@ -123,7 +123,7 @@ wsl -- bash -c "cd /mnt/d/ProjCEFET/TV30/infra && \
 ### 3 · Verificar nos logs
 
 ```bash
-wsl -- docker logs mosquitto-plugin 2>&1 | grep "Schema loaded"
+wsl -- docker logs mqtt-broker 2>&1 | grep "Schema loaded"
 ```
 
 Saída esperada:

@@ -18,7 +18,7 @@ graph TB
             end
 
             subgraph mosquitto_svc["mosquitto_plugin/infra/ (docker-compose.yml)"]
-                MQ["mosquitto-plugin\n(build local)"]
+                MQ["mqtt-broker\n(build local)"]
             end
         end
 

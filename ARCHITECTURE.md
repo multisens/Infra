@@ -62,7 +62,7 @@ aop_infra/
       docs/                   # Documentação do plugin
       tests/                  # Scripts de teste
     infra/                    # Infraestrutura Docker do Mosquitto
-      docker-compose.yml      # container: mosquitto-plugin, portas 1883/9001
+      docker-compose.yml      # container: mqtt-broker, portas 1883/9001
       Dockerfile
       entrypoint.sh
       migrate_to_redis.py
@@ -228,7 +228,7 @@ node D:\ProjCEFET\aop_infra\proxy-win.js
 
 - Criada pelo `docker-compose.yml` da **raiz** (com `ipam` fixo)
 - Todos os demais declaram `external: true`
-- Hostnames: `redis-auth`, `krakend-external`, `krakend-internal`, `mosquitto-plugin`, `validation-middleware`, `middleware-internal`
+- Hostnames: `redis-auth`, `krakend-external`, `krakend-internal`, `mqtt-broker`, `validation-middleware`, `middleware-internal`
 - **Subnet fixo: `172.27.0.0/16`, gateway `172.27.0.1`** — definido via `ipam` no `docker-compose.yml` da raiz para que o `extra_hosts` do KrakenD nunca precise ser alterado
 - Se precisar recriar a rede: `docker network rm ginga_net` e subir novamente via `docker compose up -d`
 

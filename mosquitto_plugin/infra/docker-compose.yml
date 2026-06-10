@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: infra/Dockerfile
-    container_name: mosquitto-plugin
+    container_name: mqtt-broker
     ports:
       - "1883:1883"
       - "9001:9001"

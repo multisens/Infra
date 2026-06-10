@@ -34,7 +34,7 @@ services:
     build:
       context: ./mosquitto_plugin
       dockerfile: infra/Dockerfile
-    container_name: mosquitto-plugin
+    container_name: mqtt-broker
     profiles:
       - mqtt
     ports:
