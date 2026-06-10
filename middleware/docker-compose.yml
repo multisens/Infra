@@ -1,6 +1,6 @@
 services:
   validation-middleware:
-    image: ${DOCKERHUB_NS:-tv30}/tv30-validation-middleware:${IMAGE_TAG:-latest}
+    image: ${DOCKERHUB_NS:-tv30}/tv30-gateway-validation-middleware:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile

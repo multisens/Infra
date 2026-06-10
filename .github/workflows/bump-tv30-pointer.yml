@@ -14,10 +14,10 @@ jobs:
           - name: tv30-mosquitto
             context: ./mosquitto_plugin
             dockerfile: ./mosquitto_plugin/infra/Dockerfile
-          - name: tv30-validation-middleware
+          - name: tv30-gateway-validation-middleware
             context: ./middleware
             dockerfile: ./middleware/Dockerfile
-          - name: tv30-middleware-internal
+          - name: tv30-gateway-validation-middleware-internal
             context: ./middleware_internal
             dockerfile: ./middleware_internal/Dockerfile
           - name: tv30-gatewayhttps
