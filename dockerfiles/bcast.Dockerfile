@@ -17,6 +17,7 @@ ENV NODE_ENV=production
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=builder /app/dist ./dist
-COPY public ./public
+# public/ NAO e copiado pra imagem — e montado via bind-mount no
+# docker-compose (service bcast). express.static('public') serve o mount.
 EXPOSE 8081
 CMD ["node", "dist/index.js"]
