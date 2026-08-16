@@ -14,9 +14,15 @@ include:
 
 services:
   redis-seed:
-    image: python:3.11-alpine
+    # Local-only helper image (not published to Docker Hub): no `image:` name, so
+    # `docker compose pull` skips it and `up`/`build` build it from the Dockerfile.
+    build:
+      context: .
+      dockerfile: dockerfiles/redis-seed.Dockerfile
     container_name: redis-seed
-    command: sh -c "pip install redis -q && python /migrate.py"
+    # `redis` dep baked into the image (see redis-seed.Dockerfile) so this runs
+    # offline. Was `pip install redis` at runtime — needed internet every `up`.
+    command: python /migrate.py
     volumes:
       # ACL fica no mosquitto_plugin (config nativo do broker); userData vem do
       # user-files-template — fonte unica de verdade, mesmo arquivo embarcado
