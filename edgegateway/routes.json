@@ -1,11 +1,11 @@
 {
   "backends": {
     "external": {
-      "linux": "https://ccws:44653",
+      "linux": "https://tv3ws:44653",
       "windows": "https://host.docker.internal:44655"
     },
     "internal": {
-      "linux": "http://ccws:44652",
+      "linux": "http://tv3ws:44652",
       "windows": "http://host.docker.internal:44654"
     }
   },
