@@ -13,7 +13,7 @@ services:
       - PORT=3000
       - KRAKEND_CONFIG=/etc/krakend/krakend.json
     volumes:
-      - ../krakenD_external/krakend.json:/etc/krakend/krakend.json:ro
+      - ../gateway-external/krakend.json:/etc/krakend/krakend.json:ro
     restart: unless-stopped
     networks:
       - ginga_net

@@ -9,7 +9,6 @@ RUN apt-get update && apt-get install -y \
     libwebsockets-dev \
     libcjson-dev \
     libjson-c-dev \
-    libhiredis-dev \
     python3 \
     python3-pip \
     redis-tools \
@@ -34,14 +33,13 @@ RUN gcc -fPIC -shared -o /usr/local/lib/mosquitto_plugin.so \
     /tmp/src/mosquitto_plugin.c \
     /tmp/src/schema_validator.c \
     /tmp/src/response_time_tester.c \
-    /tmp/src/authorize.c \
-    -ljson-c -lhiredis -I/tmp/mosquitto-2.0.22/include -I/tmp/include
+    -ljson-c -I/tmp/mosquitto-2.0.22/include -I/tmp/include
 
 RUN useradd -r -s /bin/false mosquitto && \
     mkdir -p /mosquitto/config /mosquitto/data /mosquitto/log && \
     chown -R mosquitto:mosquitto /mosquitto
 
-COPY plugin/config/mosquitto.conf plugin/config/schemas.json plugin/config/acl.json /mosquitto/config/
+COPY plugin/config/mosquitto.conf plugin/config/schemas.json /mosquitto/config/
 COPY infra/migrate_to_redis.py /usr/local/bin/migrate_to_redis.py
 COPY infra/entrypoint.sh /usr/local/bin/entrypoint.sh
 

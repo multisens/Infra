@@ -8,8 +8,8 @@ include:
   - path: ./redis/docker-compose.yml
   - path: ./middleware/docker-compose.yml
   - path: ./middleware_internal/docker-compose.yml
-  - path: ./krakenD_external/docker-compose.yml
-  - path: ./krakenD_internal/docker-compose.yml
+  - path: ./gateway-external/docker-compose.yml
+  - path: ./gateway-internal/docker-compose.yml
   - path: ./swagger/docker-compose.yml
 
 services:
@@ -18,12 +18,10 @@ services:
     container_name: redis-seed
     command: sh -c "pip install redis -q && python /migrate.py"
     volumes:
-      # ACL fica no mosquitto_plugin (config nativo do broker); userData vem do
-      # user-files-template — fonte unica de verdade, mesmo arquivo embarcado
-      # nas imagens do AoP e CCWS (evita drift entre seeds).
-      - ./mosquitto_plugin/plugin/config/acl.json:/mosquitto/config/acl.json:ro
+      # userData vem do user-files-template — fonte unica de verdade, mesmo
+      # arquivo embarcado nas imagens do AoP e CCWS (evita drift entre seeds).
       - ./user-files-template/userData.json:/mosquitto/config/userData.json:ro
-      - ./mosquitto_plugin/infra/migrate_to_redis.py:/migrate.py:ro
+      - ./mqtt-broker/infra/migrate_to_redis.py:/migrate.py:ro
     depends_on:
       - redis
     networks:
@@ -33,7 +31,7 @@ services:
   mosquitto:
     image: ${DOCKERHUB_NS:-tv30}/tv30-mosquitto:${IMAGE_TAG:-latest}
     build:
-      context: ./mosquitto_plugin
+      context: ./mqtt-broker
       dockerfile: infra/Dockerfile
     container_name: mqtt-broker
     profiles:
@@ -46,12 +44,8 @@ services:
     volumes:
       - mosquitto_data:/mosquitto/data
       - mosquitto_logs:/mosquitto/log
-    environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-    depends_on:
-      redis-seed:
-        condition: service_completed_successfully
+    # O broker nao consulta o Redis (controle de acesso a topicos removido
+    # por decisao de desenho) — sem env de Redis e sem barreira sobre o seed.
     networks:
       - ginga_net
     restart: unless-stopped

@@ -32,7 +32,7 @@ aop_infra/
       .env                    # JWT_SECRET, HTTPS_KEY/CERT, USER_DATA_FILE (já configurado)
     user-files/               # Arquivos e dados de usuários
   redis/                      # Banco em memória compartilhado (auth, ACL, consentimento)
-  krakenD_external/           # API Gateway externo (dispositivos remotos — com plugin consent-validator)
+  gateway-external/           # API Gateway externo (dispositivos remotos — com plugin consent-validator)
     plugin/                   # Código-fonte do plugin Go
       consent-validator.go    # Plugin HTTP Server
       go.mod                  # go 1.22, sem dependências externas
@@ -41,11 +41,11 @@ aop_infra/
     plugins/                  # Output da compilação (.so) — montado no container
     krakend.json              # Config: plugin/http-server, backend HTTPS:44655, allow_insecure_connections: true
     docker-compose.yml        # container: krakend-external, porta 44643
-  krakenD_internal/           # API Gateway interno (comunicação confiável — sem plugin)
+  gateway-internal/           # API Gateway interno (comunicação confiável — sem plugin)
     krakend.json              # Config: backend HTTP:44654, allow_insecure_connections: false
     docker-compose.yml        # container: krakend-internal, porta 44642
   middleware/                 # Middleware de validação JWT para o gateway externo (Node.js)
-    index.js                  # POST /validate — valida JWT; GET /openapi.json — spec do krakenD_external
+    index.js                  # POST /validate — valida JWT; GET /openapi.json — spec do gateway-external
     package.json
     Dockerfile
     docker-compose.yml        # container: validation-middleware (3000)
@@ -57,11 +57,11 @@ aop_infra/
   swagger/                    # Swagger UI unico (imagem tv30-swagger) — dropdown external/internal
     Dockerfile
     docker-compose.yml        # container: swagger (8085)
-  mosquitto_plugin/           # Broker MQTT com plugin de segurança em C
+  mqtt-broker/                # Broker MQTT com plugin C (validacao de schema)
     plugin/                   # Código-fonte do plugin C
-      src/                    # mosquitto_plugin.c, authorize.c, schema_validator.c, response_time_tester.c
+      src/                    # mosquitto_plugin.c, schema_validator.c, response_time_tester.c
       include/                # Headers (.h)
-      config/                 # mosquitto.conf, schemas.json, acl.json, userData.json
+      config/                 # mosquitto.conf, schemas.json, userData.json
       docs/                   # Documentação do plugin
       tests/                  # Scripts de teste
     infra/                    # Infraestrutura Docker do Mosquitto
@@ -121,14 +121,14 @@ Serviço interno
 - `redis-commander` na porta `8081` (UI web)
 - Usa `ginga_net` como `external: true` — a rede agora é criada pelo `docker-compose.yml` da raiz
 
-### KrakenD External (`krakenD_external/docker-compose.yml`)
+### KrakenD External (`gateway-external/docker-compose.yml`)
 - `devopsfaith/krakend:2.7`, container `krakend-external`, porta **`44643`**
 - Plugin Go `consent-validator` intercepta **todas** as requisições — faz proxy direto ao CCWS via `host.docker.internal:44655` (relay HTTPS)
 - `allow_insecure_connections: true` — certificado autoassinado do CCWS
 - `extra_hosts: host.docker.internal:172.27.0.1` (fixo — gateway do bridge Docker)
 - Monta `./plugins:/etc/krakend/plugins`
 
-### KrakenD Internal (`krakenD_internal/docker-compose.yml`)
+### KrakenD Internal (`gateway-internal/docker-compose.yml`)
 - `devopsfaith/krakend:2.7`, container `krakend-internal`, porta **`44642`**
 - Sem plugin — comunicação confiável sem overhead de validação
 - `allow_insecure_connections: false` — backend HTTP puro
@@ -139,7 +139,7 @@ Sobe um container:
 
 **`validation-middleware`** (porta `3000`):
 - `POST /validate` — valida JWT (secret/issuer via env)
-- `GET /openapi.json` — gera spec OpenAPI 3.0 lendo `krakenD_external/krakend.json` (volume readonly)
+- `GET /openapi.json` — gera spec OpenAPI 3.0 lendo `gateway-external/krakend.json` (volume readonly)
 - `GET /health` — health check
 - `ignoreExpiration: true` para compatibilidade com CCWS
 
@@ -148,7 +148,7 @@ Sobe um container:
 
 **`middleware-internal`** (porta `3001`):
 - Mesma base do middleware externo, sem JWT_SECRET/JWT_ISSUER
-- `GET /openapi.json` — gera spec OpenAPI 3.0 lendo `krakenD_internal/krakend.json` (volume readonly)
+- `GET /openapi.json` — gera spec OpenAPI 3.0 lendo `gateway-internal/krakend.json` (volume readonly)
 
 ### Swagger UI (`swagger/docker-compose.yml`)
 
@@ -157,7 +157,7 @@ Sobe um container:
 - `URLS` aponta para `http://localhost:3000/openapi.json` (external) e `http://localhost:3001/openapi.json` (internal) — dropdown no topo
 - Acessar em: `http://localhost:8085`
 
-### Mosquitto Plugin (`mosquitto_plugin/infra/docker-compose.yml`)
+### Mosquitto Plugin (`mqtt-broker/infra/docker-compose.yml`)
 - Mosquitto 2.0.22, portas `1883` e `9001`
 - Plugin C: ACL + Consentimento + Schema Validation via Redis
 
@@ -200,7 +200,7 @@ wsl -- bash -c "hostname -I | awk '{print $1}'"
 const WSL_IP = '<IP_DO_WSL>';  // ex: 10.21.104.75
 ```
 
-**3. Verificar gateway Docker** e atualizar `krakenD_external/docker-compose.yml` e `krakenD_internal/docker-compose.yml`:
+**3. Verificar gateway Docker** e atualizar `gateway-external/docker-compose.yml` e `gateway-internal/docker-compose.yml`:
 ```bash
 wsl -- bash -c "docker network inspect ginga_net | grep Gateway"
 # Atualizar extra_hosts: host.docker.internal:<GATEWAY> nos dois arquivos
@@ -252,10 +252,10 @@ O `docker-compose.yml` da raiz orquestra via `include:`:
 1. `redis/docker-compose.yml` — Redis + redis-commander
 2. `middleware/docker-compose.yml` — validation-middleware (externo)
 3. `middleware_internal/docker-compose.yml` — middleware-internal (interno)
-4. `krakenD_external/docker-compose.yml` — krakend-external
-5. `krakenD_internal/docker-compose.yml` — krakend-internal
+4. `gateway-external/docker-compose.yml` — krakend-external
+5. `gateway-internal/docker-compose.yml` — krakend-internal
 6. `swagger/docker-compose.yml` — swagger (UI único dos dois gateways)
-7. Serviço `redis-seed` integrado — popula Redis com ACL/usuários de `mosquitto_plugin/plugin/config/`
+7. Serviço `redis-seed` integrado — popula Redis com ACL/usuários de `mqtt-broker/plugin/config/`
 8. `mosquitto` via `--profile mqtt` — opcional
 
 Antes de subir, iniciar o relay no WSL:
@@ -298,7 +298,7 @@ curl http://localhost:44642/health   # gateway interno
 
 | Plano | Porteiro | Tecnologia |
 |---|---|---|
-| MQTT | Mosquitto Plugin | C + hiredis + Redis |
+| MQTT | Mosquitto Plugin | C (validacao de schema) |
 | HTTP | KrakenD + Middleware | Go (plugin) + Node.js |
 | Dados compartilhados | Redis | ACL, consentimento, perfis |
 
@@ -327,7 +327,7 @@ curl http://localhost:44642/health   # gateway interno
 
 - [x] Criar middleware de validação Node.js
 - [x] Desenvolver HTTP Server Plugin Go
-- [x] Configurar endpoints no `krakenD_external/krakend.json`
+- [x] Configurar endpoints no `gateway-external/krakend.json`
 - [x] Compilar e testar o plugin (fluxo completo validado — 200 com token válido, 401 sem/inválido)
 - [x] Inicializar repositório Git (raiz: aop_infra, remote: github.com/luiscrjr/aop_infra)
 - [x] Separar KrakenD em gateway externo (com plugin) e interno (sem plugin)
