@@ -8,7 +8,7 @@ services:
     build:
       context: ..
       dockerfile: redis/Dockerfile
-    container_name: redis-auth
+    container_name: redis
     ports:
       - "6379:6379"   # fixa por convencao (plano, V10)
       - "18081"       # UI do commander: porta de host DINAMICA (V10)
