@@ -19,7 +19,7 @@ services:
       context: ./edgegateway
     container_name: edgegateway
     environment:
-      # linux = backends via DNS da rede (ccws); windows = host.docker.internal
+      # linux = backends via DNS da rede (tv3ws); windows = host.docker.internal
       EDGE_VARIANT: ${EDGE_VARIANT:-linux}
     ports:
       - "44642:44642"   # superficie interna — porta FIXA da norma
