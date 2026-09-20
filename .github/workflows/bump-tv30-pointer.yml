@@ -11,24 +11,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Pos-consolidacao (fases 2-3 do plano): a borda inteira e uma
+          # imagem (edgegateway) e o redis leva seed+commander embutidos.
+          # As imagens antigas (gatewayhttps/http, middlewares, swagger)
+          # deixam de ser buildadas — remocao dos repositorios no Docker
+          # Hub fica pra fase 4, junto do renome R1.
           - name: tv30-mosquitto
             context: ./mqtt-broker
             dockerfile: ./mqtt-broker/infra/Dockerfile
-          - name: tv30-gateway-validation-middleware
-            context: ./middleware
-            dockerfile: ./middleware/Dockerfile
-          - name: tv30-gateway-validation-middleware-internal
-            context: ./middleware_internal
-            dockerfile: ./middleware_internal/Dockerfile
-          - name: tv30-gatewayhttps
-            context: ./gateway-external
-            dockerfile: ./dockerfiles/gatewayhttps.Dockerfile
-          - name: tv30-gatewayhttp
-            context: ./gateway-internal
-            dockerfile: ./dockerfiles/gatewayhttp.Dockerfile
-          - name: tv30-swagger
-            context: ./swagger
-            dockerfile: ./swagger/Dockerfile
+          - name: tv30-edgegateway
+            context: ./edgegateway
+            dockerfile: ./edgegateway/Dockerfile
+          - name: tv30-redis
+            context: .
+            dockerfile: ./redis/Dockerfile
     steps:
       - uses: actions/checkout@v4
 

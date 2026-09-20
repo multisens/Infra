@@ -1,4 +1,4 @@
-# docker-compose.yml — raiz do aop_infra
+# docker-compose.yml — infra do TV30
 #
 # Uso:
 #   docker compose up -d                   # stack base
@@ -6,27 +6,33 @@
 
 include:
   - path: ./redis/docker-compose.yml
-  - path: ./middleware/docker-compose.yml
-  - path: ./middleware_internal/docker-compose.yml
-  - path: ./gateway-external/docker-compose.yml
-  - path: ./gateway-internal/docker-compose.yml
-  - path: ./swagger/docker-compose.yml
 
 services:
-  redis-seed:
-    image: python:3.11-alpine
-    container_name: redis-seed
-    command: sh -c "pip install redis -q && python /migrate.py"
-    volumes:
-      # userData vem do user-files-template — fonte unica de verdade, mesmo
-      # arquivo embarcado nas imagens do AoP e CCWS (evita drift entre seeds).
-      - ./user-files-template/userData.json:/mosquitto/config/userData.json:ro
-      - ./mqtt-broker/infra/migrate_to_redis.py:/migrate.py:ro
+  # A BORDA num container so (fase 2): superficies externa (44643) e
+  # interna (44642, fixa da norma C.3.4) + documentacao (8085), tudo
+  # gerado no build a partir da tabela unica de rotas (edgegateway/
+  # routes.json — M4). Morre-inteiro: qualquer processo interno caindo
+  # derruba o container.
+  edgegateway:
+    image: ${DOCKERHUB_NS:-tv30}/tv30-edgegateway:${IMAGE_TAG:-latest}
+    build:
+      context: ./edgegateway
+    container_name: edgegateway
+    environment:
+      # linux = backends via DNS da rede (ccws); windows = host.docker.internal
+      EDGE_VARIANT: ${EDGE_VARIANT:-linux}
+    ports:
+      - "44642:44642"   # superficie interna — porta FIXA da norma
+      - "44643:44643"   # superficie externa
+      - "8085"          # docs: porta de host dinamica (V10)
     depends_on:
-      - redis
+      # o preflight (compose raiz) BLOQUEIA a subida se a 44642 estiver
+      # ocupada por processo nativo (porta fixa da norma).
+      preflight:
+        condition: service_completed_successfully
     networks:
       - ginga_net
-    restart: "no"
+    restart: unless-stopped
 
   mosquitto:
     image: ${DOCKERHUB_NS:-tv30}/tv30-mosquitto:${IMAGE_TAG:-latest}
@@ -45,7 +51,7 @@ services:
       - mosquitto_data:/mosquitto/data
       - mosquitto_logs:/mosquitto/log
     # O broker nao consulta o Redis (controle de acesso a topicos removido
-    # por decisao de desenho) — sem env de Redis e sem barreira sobre o seed.
+    # por decisao de desenho) — sem env de Redis e sem barreira sobre a carga.
     networks:
       - ginga_net
     restart: unless-stopped
