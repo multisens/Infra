@@ -12,8 +12,8 @@ jobs:
       matrix:
         include:
           - name: tv30-mosquitto
-            context: ./mosquitto_plugin
-            dockerfile: ./mosquitto_plugin/infra/Dockerfile
+            context: ./mqtt-broker
+            dockerfile: ./mqtt-broker/infra/Dockerfile
           - name: tv30-gateway-validation-middleware
             context: ./middleware
             dockerfile: ./middleware/Dockerfile
@@ -21,10 +21,10 @@ jobs:
             context: ./middleware_internal
             dockerfile: ./middleware_internal/Dockerfile
           - name: tv30-gatewayhttps
-            context: ./krakenD_external
+            context: ./gateway-external
             dockerfile: ./dockerfiles/gatewayhttps.Dockerfile
           - name: tv30-gatewayhttp
-            context: ./krakenD_internal
+            context: ./gateway-internal
             dockerfile: ./dockerfiles/gatewayhttp.Dockerfile
           - name: tv30-swagger
             context: ./swagger

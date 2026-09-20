@@ -2,7 +2,6 @@
 """
 Migração de dados de arquivo para Redis — TV 3.0
 Popula as chaves Redis conforme o schema definido na estratégia de persistência:
-  - acl:{userId}                              SET  — padrões MQTT permitidos
   - users:index                               SET  — todos os IDs de usuário
   - user:{userId}                             HASH — atributos do perfil (ABNT NBR 25608)
   - user:{userId}:consent                     SET  — IDs de serviço com consentimento
@@ -56,21 +55,7 @@ def normalize_user(user: dict) -> dict:
     return result
 
 
-def migrate(r: redis.Redis, acl_path: str, user_data_path: str) -> None:
-    # ------------------------------------------------------------------ ACL --
-    with open(acl_path, 'r') as f:
-        acl_data = json.load(f)
-
-    pipe = r.pipeline()
-    for user_id, patterns in acl_data['acl'].items():
-        key = f'acl:{user_id}'
-        pipe.delete(key)
-        if patterns:
-            pipe.sadd(key, *patterns)
-    pipe.execute()
-
-    print(f"[ACL]     Migrated {len(acl_data['acl'])} entries")
-
+def migrate(r: redis.Redis, user_data_path: str) -> None:
     # --------------------------------------------------------------- Users --
     with open(user_data_path, 'r') as f:
         raw = json.load(f)
@@ -109,11 +94,10 @@ def migrate(r: redis.Redis, acl_path: str, user_data_path: str) -> None:
 if __name__ == '__main__':
     r = redis.Redis(host='redis', port=6379, decode_responses=True)
 
-    acl_path       = '/mosquitto/config/acl.json'
     user_data_path = '/mosquitto/config/userData.json'
 
     try:
-        migrate(r, acl_path, user_data_path)
+        migrate(r, user_data_path)
     except Exception as e:
         print(f"[Redis]   Migration failed: {e}", file=sys.stderr)
         sys.exit(1)

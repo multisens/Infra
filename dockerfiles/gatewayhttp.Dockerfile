@@ -1,5 +1,5 @@
 # KrakenD Internal — gateway interno (sem plugin).
-# Build context: infra/krakenD_internal/
+# Build context: infra/gateway-internal/
 
 # syntax=docker/dockerfile:1.6
 FROM devopsfaith/krakend:2.7

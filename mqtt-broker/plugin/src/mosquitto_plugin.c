@@ -9,7 +9,6 @@
 #include <mqtt_protocol.h>
 #include "schema_validator.h"
 #include "response_time_tester.h"
-#include "authorize.h"
 
 mosquitto_plugin_id_t *mosq_pid = NULL;
 static json_object *schemas = NULL;
@@ -140,12 +139,11 @@ static int callback_acl_check(int event, void *event_data, void *userdata) {
         return MOSQ_ERR_SUCCESS;
     }
     
-    // Authorization check (two-layer validation) — DESABILITADO: todos os clientes liberados
-    // if (!authorize_access(client_id, ed->topic)) {
-    //     mosquitto_log_printf(MOSQ_LOG_INFO, "Authorization denied: %s -> %s", client_id, ed->topic);
-    //     return MOSQ_ERR_ACL_DENIED;
-    // }
-    
+    // Controle de acesso a topicos foi removido por decisao de desenho:
+    // isolamento de transporte interno nao tem contrapartida normativa
+    // (a identidade no barramento e de microsservico; o isolamento que a
+    // norma exige e por contexto de servico DTV, na fronteira das APIs).
+
     // Only validate PUBLISH operations on sensor topics
     if (ed->access != MOSQ_ACL_WRITE || strncmp(ed->topic, "sensor/", 7) != 0) {
         return MOSQ_ERR_SUCCESS;
@@ -180,17 +178,8 @@ int mosquitto_plugin_init(mosquitto_plugin_id_t *identifier, void **user_data, s
     
     schemas = json_object_new_object();
     load_schemas_from_file("/mosquitto/config/schemas.json");
-    
-    // Initialize authorization module with Redis
-    const char *redis_host = getenv("REDIS_HOST") ? getenv("REDIS_HOST") : "redis";
-    int redis_port = getenv("REDIS_PORT") ? atoi(getenv("REDIS_PORT")) : 6379;
-    
-    if (authorize_init(redis_host, redis_port) != 0) {
-        mosquitto_log_printf(MOSQ_LOG_ERR, "Failed to initialize authorization module");
-        return MOSQ_ERR_UNKNOWN;
-    }
-    
-    mosquitto_log_printf(MOSQ_LOG_INFO, "Mosquitto plugin loaded (validation + response time tester + authorization)");
+
+    mosquitto_log_printf(MOSQ_LOG_INFO, "Mosquitto plugin loaded (schema validation + response time tester)");
     
     return mosquitto_callback_register(mosq_pid, MOSQ_EVT_ACL_CHECK, callback_acl_check, NULL, NULL);
 }
@@ -201,8 +190,6 @@ int mosquitto_plugin_cleanup(void *user_data, struct mosquitto_opt *opts, int op
         json_object_put(schemas);
         schemas = NULL;
     }
-    
-    authorize_cleanup();
     
     mosquitto_log_printf(MOSQ_LOG_INFO, "Mosquitto plugin unloaded");
     return mosquitto_callback_unregister(mosq_pid, MOSQ_EVT_ACL_CHECK, callback_acl_check, NULL);

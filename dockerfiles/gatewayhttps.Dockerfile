@@ -1,5 +1,5 @@
 # KrakenD External — gateway com plugin consent-validator embutido.
-# Build context: infra/krakenD_external/
+# Build context: infra/gateway-external/
 
 # syntax=docker/dockerfile:1.6
 FROM devopsfaith/krakend:2.7

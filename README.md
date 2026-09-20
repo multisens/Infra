@@ -14,7 +14,7 @@ Portas listadas são as do **host** quando a stack sobe pela raiz do TV30.
 |------------------------|-------------------|-----------------------------------------------------------------------|
 | `redis`                | `6379`            | Cache/estado compartilhado (ACL, consentimento, perfis de usuário).   |
 | `redis-commander`      | `18081`           | UI web do Redis (8081 do host fica reservada pro `bcast`).            |
-| `redis-seed`           | —                 | One-shot. Popula Redis a partir de `acl.json` + `userData.json`.      |
+| `redis-seed`           | —                 | One-shot. Popula Redis a partir de `userData.json`.      |
 | `mosquitto`            | `1883`, `9001`    | Broker MQTT + WebSocket. Plugin C valida ACL/consent/schema via Redis. Profile `mqtt`. |
 | `krakend-external`     | `44643` (HTTPS)   | API Gateway externo. Plugin Go `consent-validator` em todas as rotas. |
 | `krakend-internal`     | `44642`           | API Gateway interno (serviço-a-serviço).                              |
@@ -44,9 +44,9 @@ Isso **apenas builda** as imagens definidas neste compose (mosquitto, krakend-ex
 infra/
   docker-compose.yml         # incluido via `include:` pelo compose raiz
   redis/                     # Redis + Redis Commander
-  mosquitto_plugin/          # Broker MQTT + plugin C (ACL/consent/schema)
-  krakenD_external/          # Gateway HTTPS publico + plugin Go
-  krakenD_internal/          # Gateway HTTP interno (serv-a-serv)
+  mqtt-broker/               # Broker MQTT + plugin C (validacao de schema)
+  gateway-external/           # Gateway HTTPS publico + plugin Go
+  gateway-internal/           # Gateway HTTP interno (serv-a-serv)
   middleware/                # Validacao JWT + OpenAPI (externo)
   middleware_internal/       # Validacao + OpenAPI (interno)
   swagger/                   # Swagger UI unico (dropdown external/internal)
