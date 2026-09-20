@@ -1,0 +1,337 @@
+{
+  "backends": {
+    "external": {
+      "linux": "https://ccws:44653",
+      "windows": "https://host.docker.internal:44655"
+    },
+    "internal": {
+      "linux": "http://ccws:44652",
+      "windows": "http://host.docker.internal:44654"
+    }
+  },
+  "surfaces": {
+    "external": {
+      "port": 44643,
+      "title": "TV 3.0 WebServices — superficie externa"
+    },
+    "internal": {
+      "port": 44642,
+      "title": "TV 3.0 WebServices — superficie interna"
+    }
+  },
+  "cors": {
+    "allow_origins": [
+      "*"
+    ],
+    "allow_methods": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE",
+      "OPTIONS"
+    ],
+    "allow_headers": [
+      "Content-Type",
+      "Authorization",
+      "Accept-Version"
+    ],
+    "expose_headers": [
+      "Content-Length"
+    ],
+    "max_age": "12h",
+    "allow_credentials": false
+  },
+  "routes": [
+    {
+      "path": "/health",
+      "method": "GET",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Accept-Version"
+      ]
+    },
+    {
+      "path": "/tv3/authorize",
+      "method": "GET",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Accept-Version"
+      ],
+      "query": [
+        "clientid",
+        "display-name",
+        "pm",
+        "key"
+      ]
+    },
+    {
+      "path": "/tv3/token",
+      "method": "GET",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version"
+      ],
+      "query": [
+        "clientid",
+        "challenge-response",
+        "refresh-token"
+      ]
+    },
+    {
+      "path": "/tv3/current-service",
+      "method": "GET",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version"
+      ]
+    },
+    {
+      "path": "/tv3/current-service/users",
+      "method": "POST",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version",
+        "Content-Type"
+      ]
+    },
+    {
+      "path": "/tv3/current-service/users/current-user",
+      "method": "GET",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version"
+      ]
+    },
+    {
+      "path": "/tv3/current-service/users/current-user",
+      "method": "POST",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version",
+        "Content-Type"
+      ],
+      "noop": true
+    },
+    {
+      "path": "/tv3/users",
+      "method": "POST",
+      "surfaces": [
+        "internal"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version",
+        "Content-Type"
+      ]
+    },
+    {
+      "path": "/tv3/current-service/users/files",
+      "method": "GET",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version"
+      ],
+      "query": [
+        "path"
+      ],
+      "noop": true
+    },
+    {
+      "path": "/tv3/current-service/users/{userid}",
+      "method": "GET",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version"
+      ],
+      "query": [
+        "attribute"
+      ]
+    },
+    {
+      "path": "/tv3/{serviceContextId}/users",
+      "method": "POST",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version",
+        "Content-Type"
+      ]
+    },
+    {
+      "path": "/tv3/{serviceContextId}/users/{userid}/broadcaster-attrs",
+      "method": "GET",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version"
+      ]
+    },
+    {
+      "path": "/tv3/{serviceContextId}/users/{userid}/broadcaster-attrs",
+      "method": "PUT",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version",
+        "Content-Type"
+      ]
+    },
+    {
+      "path": "/tv3/current-service/apps/{appid}/files",
+      "method": "GET",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version",
+        "Range"
+      ],
+      "query": [
+        "path"
+      ]
+    },
+    {
+      "path": "/tv3/remote-device",
+      "method": "POST",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version",
+        "Content-Type"
+      ]
+    },
+    {
+      "path": "/tv3/remote-device/{handle}",
+      "method": "DELETE",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version"
+      ]
+    },
+    {
+      "path": "/tv3/remote-device/devices/{classId}",
+      "method": "GET",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version"
+      ]
+    },
+    {
+      "path": "/tv3/remote-device/device/{handle}",
+      "method": "GET",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version"
+      ]
+    },
+    {
+      "path": "/tv3/remote-device/device/{handle}",
+      "method": "DELETE",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version"
+      ]
+    },
+    {
+      "path": "/tv3/sensory-effect-renderers",
+      "method": "GET",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version"
+      ]
+    },
+    {
+      "path": "/tv3/sensory-effect-renderers/{rendererId}",
+      "method": "GET",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version"
+      ]
+    },
+    {
+      "path": "/tv3/sensory-effect-renderers/{rendererId}",
+      "method": "POST",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version",
+        "Content-Type"
+      ]
+    }
+  ]
+}

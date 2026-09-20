@@ -10,7 +10,7 @@ Executa no boot do container Mosquitto (entrypoint.sh).
 """
 
 import json
-import redis
+
 import sys
 
 # Mapeamento de campos legados para o schema ABNT NBR 25608
@@ -55,7 +55,7 @@ def normalize_user(user: dict) -> dict:
     return result
 
 
-def migrate(r: redis.Redis, user_data_path: str) -> None:
+def migrate(r, user_data_path: str) -> None:
     # --------------------------------------------------------------- Users --
     with open(user_data_path, 'r') as f:
         raw = json.load(f)
@@ -92,6 +92,7 @@ def migrate(r: redis.Redis, user_data_path: str) -> None:
 
 
 if __name__ == '__main__':
+    import redis  # so o executor precisa da lib; normalize_user importavel sem ela
     r = redis.Redis(host='redis', port=6379, decode_responses=True)
 
     user_data_path = '/mosquitto/config/userData.json'
