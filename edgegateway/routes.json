@@ -135,8 +135,7 @@
         "Authorization",
         "Accept-Version",
         "Content-Type"
-      ],
-      "noop": true
+      ]
     },
     {
       "path": "/tv3/users",
@@ -163,8 +162,7 @@
       ],
       "query": [
         "path"
-      ],
-      "noop": true
+      ]
     },
     {
       "path": "/tv3/current-service/users/{userid}",

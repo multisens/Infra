@@ -85,9 +85,12 @@ function endpointFor(r, surface, host) {
   const e = { endpoint: r.path, method: r.method };
   if (r.headers) e.input_headers = r.headers;
   if (r.query) e.input_query_strings = r.query;
-  if (r.noop) e.output_encoding = 'no-op';
-  e.backend = [Object.assign({ url_pattern: r.backendPath || r.path, host: [host] },
-                             r.noop ? { encoding: 'no-op' } : {})];
+  // Toda rota eh proxy puro (no-op): status e corpo do backend passam
+  // intactos. Sem isso o KrakenD engole o erro do tv3ws (404 + corpo
+  // C.3.2 {error, description}) e devolve 500 sem corpo — quebraria a
+  // camada comum de erro do item 6.
+  e.output_encoding = 'no-op';
+  e.backend = [{ url_pattern: r.backendPath || r.path, host: [host], encoding: 'no-op' }];
   return e;
 }
 
