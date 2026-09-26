@@ -16,11 +16,16 @@
       },
       "unit": {
         "type": "string",
-        "enum": ["celsius", "fahrenheit"],
+        "enum": [
+          "celsius",
+          "fahrenheit"
+        ],
         "description": "Temperature unit"
       }
     },
-    "required": ["value"],
+    "required": [
+      "value"
+    ],
     "additionalProperties": false
   },
   "sensor/room2/humidity": {
@@ -35,7 +40,10 @@
       },
       "unit": {
         "type": "string",
-        "enum": ["C", "F"],
+        "enum": [
+          "C",
+          "F"
+        ],
         "description": "Temperature unit: Celsius or Fahrenheit"
       },
       "sensor_id": {
@@ -44,7 +52,10 @@
         "description": "Sensor ID in format XXX-0000"
       }
     },
-    "required": ["value", "unit"],
+    "required": [
+      "value",
+      "unit"
+    ],
     "additionalProperties": false
   },
   "sensor/comprehensive/test": {
@@ -77,7 +88,11 @@
       },
       "enum_field": {
         "type": "string",
-        "enum": ["option1", "option2", "option3"],
+        "enum": [
+          "option1",
+          "option2",
+          "option3"
+        ],
         "description": "Must be one of the allowed values"
       },
       "const_field": {
@@ -109,14 +124,151 @@
             "minimum": 0
           }
         },
-        "required": ["nested_string"],
+        "required": [
+          "nested_string"
+        ],
         "additionalProperties": false,
         "minProperties": 1,
         "maxProperties": 2,
         "description": "Nested object with constraints"
       }
     },
-    "required": ["string_field", "number_field", "integer_field", "boolean_field", "enum_field", "const_field"],
+    "required": [
+      "string_field",
+      "number_field",
+      "integer_field",
+      "boolean_field",
+      "enum_field",
+      "const_field"
+    ],
     "additionalProperties": false
+  },
+  "aop/currentUser": {
+    "type": "string",
+    "maxLength": 64
+  },
+  "aop/currentService": {
+    "type": "string",
+    "maxLength": 256
+  },
+  "aop/users": {
+    "type": "string",
+    "maxLength": 512
+  },
+  "aop/display/layers/rxgui": {
+    "type": "string",
+    "maxLength": 256
+  },
+  "aop/display/layers/graphics": {
+    "type": "string",
+    "maxLength": 1024
+  },
+  "aop/display/layers/video/url": {
+    "type": "string",
+    "maxLength": 1024
+  },
+  "aop/display/layers/video/size": {
+    "type": "object",
+    "properties": {
+      "top": {
+        "type": "string",
+        "maxLength": 16
+      },
+      "left": {
+        "type": "string",
+        "maxLength": 16
+      },
+      "width": {
+        "type": "string",
+        "maxLength": 16
+      },
+      "height": {
+        "type": "string",
+        "maxLength": 16
+      }
+    },
+    "required": [
+      "top",
+      "left",
+      "width",
+      "height"
+    ],
+    "additionalProperties": false
+  },
+  "video/event": {
+    "type": "object"
+  },
+  "tlm/lls/+/bamt": {
+    "type": "array",
+    "items": {
+      "type": "object",
+      "properties": {
+        "globalServiceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "appVersion": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "appName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20
+        },
+        "appIcon": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bannerIcon": {
+          "type": "string",
+          "minLength": 1
+        },
+        "appDescription": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "backgroundColor": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "foregroundColor": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "initialMediaURLs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ecgAppDeepLink": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "globalServiceId",
+        "appVersion",
+        "appName",
+        "appIcon",
+        "bannerIcon",
+        "backgroundColor",
+        "foregroundColor"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "tlm/sls/+/esg": {
+    "type": "object",
+    "required": [
+      "Service"
+    ]
+  },
+  "tlm/sls/+/bald": {
+    "type": "array",
+    "items": {
+      "type": "object"
+    }
   }
 }
