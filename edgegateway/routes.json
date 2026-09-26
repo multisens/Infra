@@ -139,18 +139,6 @@
       ]
     },
     {
-      "path": "/tv3/users",
-      "method": "POST",
-      "surfaces": [
-        "internal"
-      ],
-      "headers": [
-        "Authorization",
-        "Accept-Version",
-        "Content-Type"
-      ]
-    },
-    {
       "path": "/tv3/current-service/users/files",
       "method": "GET",
       "surfaces": [
@@ -177,37 +165,12 @@
         "Accept-Version"
       ],
       "query": [
-        "attribute"
+        "*"
       ]
     },
     {
       "path": "/tv3/{serviceContextId}/users",
       "method": "POST",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
-      "headers": [
-        "Authorization",
-        "Accept-Version",
-        "Content-Type"
-      ]
-    },
-    {
-      "path": "/tv3/{serviceContextId}/users/{userid}/broadcaster-attrs",
-      "method": "GET",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
-      "headers": [
-        "Authorization",
-        "Accept-Version"
-      ]
-    },
-    {
-      "path": "/tv3/{serviceContextId}/users/{userid}/broadcaster-attrs",
-      "method": "PUT",
       "surfaces": [
         "internal",
         "external"
@@ -321,6 +284,34 @@
     },
     {
       "path": "/tv3/sensory-effect-renderers/{rendererId}",
+      "method": "POST",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version",
+        "Content-Type"
+      ]
+    },
+    {
+      "path": "/tv3/{serviceContextId}/users/{userid}",
+      "method": "GET",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "Accept-Version"
+      ],
+      "query": [
+        "*"
+      ]
+    },
+    {
+      "path": "/tv3/{serviceContextId}/users/{userid}",
       "method": "POST",
       "surfaces": [
         "internal",
