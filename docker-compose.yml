@@ -20,7 +20,14 @@ services:
     container_name: edgegateway
     environment:
       # linux = backends via DNS da rede (tv3ws); windows = host.docker.internal
+      # (a variante windows tambem serve pro cenario de DESENVOLVIMENTO em
+      # Linux: infra em containers + servico rodando no host via npm — ver
+      # docs/dev-local.md na raiz do TV30)
       EDGE_VARIANT: ${EDGE_VARIANT:-linux}
+    extra_hosts:
+      # habilita host.docker.internal em Linux (necessario pro cenario de
+      # desenvolvimento com backend no host; inocuo no deploy padrao)
+      - "host.docker.internal:host-gateway"
     ports:
       - "44642:44642"   # superficie interna — porta FIXA da norma
       - "44643:44643"   # superficie externa
