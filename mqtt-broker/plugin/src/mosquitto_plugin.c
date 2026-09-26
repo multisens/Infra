@@ -75,15 +75,54 @@ static void publish_error(const char* topic, const char* error_type, const char*
     }
 }
 
-// Get schema for a specific topic
+// Casamento de topico MQTT (+ e #) — o lookup por igualdade exata deixava
+// fora os topicos parametrizados de sinalizacao (tlm/sls/<sid>/esg etc).
+static int topic_matches(const char* pattern, const char* topic) {
+    while (*pattern && *topic) {
+        if (*pattern == '#') return 1;
+        if (*pattern == '+') {
+            while (*topic && *topic != '/') topic++;
+            pattern++;
+            if (*pattern == '\0' && *topic == '\0') return 1;
+            if (*pattern != '/' || *topic != '/') return 0;
+            pattern++; topic++;
+            continue;
+        }
+        if (*pattern != *topic) return 0;
+        pattern++; topic++;
+    }
+    if (*pattern == '\0' && *topic == '\0') return 1;
+    // "a/#" casa "a"
+    if (pattern[0] == '/' && pattern[1] == '#' && *topic == '\0') return 1;
+    if (pattern[0] == '#' && *topic == '\0') return 1;
+    return 0;
+}
+
+// Get schema for a topic: igualdade exata primeiro, depois padrao (P4 —
+// esquema declarado nos topicos REAIS de sinalizacao e estado).
 static json_object* get_schema_for_topic(const char* topic) {
     if (!schemas) return NULL;
-    
+
     json_object *schema;
     if (json_object_object_get_ex(schemas, topic, &schema)) {
         return schema;
     }
+
+    json_object_object_foreach(schemas, key, val) {
+        if ((strchr(key, '+') || strchr(key, '#')) && topic_matches(key, topic)) {
+            return val;
+        }
+    }
     return NULL;
+}
+
+// Schema declara type=string? (payloads de estado da plataforma sao strings
+// puras — uuid, caminho, nome de tela — que nao sao JSON valido)
+static int schema_expects_plain_string(json_object* schema) {
+    json_object *type;
+    if (!json_object_object_get_ex(schema, "type", &type)) return 0;
+    const char* t = json_object_get_string(type);
+    return t && strcmp(t, "string") == 0;
 }
 
 // Validate message against schema
@@ -94,6 +133,11 @@ static int validate_message(const char* topic, const char* payload, const char* 
     }
     
     json_object *message = json_tokener_parse(payload);
+    if (!message && schema_expects_plain_string(schema)) {
+        // payload string pura (uuid/caminho/nome de tela): embrulha como
+        // string JSON pra validar minLength/maxLength/pattern do schema
+        message = json_object_new_string(payload);
+    }
     if (!message) {
         mosquitto_log_printf(MOSQ_LOG_INFO, "Invalid JSON for topic: %s", topic);
         publish_error(topic, "INVALID_JSON", "Payload is not valid JSON", payload, client_id);
@@ -144,8 +188,11 @@ static int callback_acl_check(int event, void *event_data, void *userdata) {
     // (a identidade no barramento e de microsservico; o isolamento que a
     // norma exige e por contexto de servico DTV, na fronteira das APIs).
 
-    // Only validate PUBLISH operations on sensor topics
-    if (ed->access != MOSQ_ACL_WRITE || strncmp(ed->topic, "sensor/", 7) != 0) {
+    // Valida so PUBLISH; o antigo retorno antecipado que restringia a
+    // validacao a topicos sensor/* saiu (P4): qualquer topico com esquema
+    // declarado e validado — sinalizacao e estado da plataforma inclusive.
+    // Topico sem esquema segue passando (lookup devolve NULL).
+    if (ed->access != MOSQ_ACL_WRITE || strncmp(ed->topic, "$SYS/", 5) == 0) {
         return MOSQ_ERR_SUCCESS;
     }
     
