@@ -61,7 +61,8 @@
         "external"
       ],
       "headers": [
-        "Accept-Version"
+        "Accept-Version",
+        "Origin"
       ],
       "query": [
         "clientid",
