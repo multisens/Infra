@@ -1,139 +1,59 @@
-# Pipeline de Segurança HTTP
+# Pipeline HTTP — a borda (`edgegateway`)
 
-O KrakenD atua como API Gateway na frente do CCWS, delegando a validação de políticas
-a um middleware Node.js externo. Essa arquitetura espelha no plano HTTP o que o
-plugin C faz no plano MQTT.
+> **Estado do código em 2026-10-02.**
+>
+> A versão anterior deste documento descrevia um desenho que nunca chegou a validar nada:
+> - o KrakenD na porta 8090 delegava a validação a um middleware Node (`POST /validate`), que ninguém chamava;
+> - o plugin `consent-validator` era só um proxy de qualquer caminho até o serviço.
+>
+> As duas peças saíram (`infra@f2eb652`). Mensageria, gateways e Redis são decisões do projeto e não aparecem na norma.
 
-## Fluxo de validação por requisição
+Todo cliente acessa a **borda**, nunca a implementação interna (D10). As portas de API do tv3ws (44652 e 44653) não são publicadas no host. O `edgegateway` é um container só, com:
+- **superfície interna:** 44642, a única porta fixa da norma (C.3.4);
+- **superfície externa:** 44643;
+- **documentação:** 8085.
 
-```mermaid
-flowchart TD
-    CLIENT["Dispositivo externo\nGET/POST /tv3/..."]
+Os configs das duas superfícies e os dois OpenAPI são gerados **no build** a partir de `edgegateway/routes.json`, a tabela única de rotas (M4).
 
-    CLIENT --> KD["KrakenD :8090\nHTTP Server Plugin (Go)"]
-
-    KD -->|"POST /validate\nrepassa headers originais\n(Authorization, etc.)"| MW
-
-    subgraph MW["Middleware Node.js"]
-        CHK_JWT{"JWT válido?"}
-        CHK_FUTURE["... futuras validações ...\n(consentimento, rate limit, etc.)"]
-        OK["200 OK"]
-        FAIL["401 / 403 / 429"]
-
-        CHK_JWT -->|"Não"| FAIL
-        CHK_JWT -->|"Sim"| CHK_FUTURE
-        CHK_FUTURE -->|"Aprovado"| OK
-        CHK_FUTURE -->|"Negado"| FAIL
-    end
-
-    MW -->|"200 OK"| KD
-    MW -->|"4xx"| KD
-
-    KD -->|"Autorizado:\nencaminha requisição"| CCWS["CCWS :44642/:44643"]
-    KD -->|"Negado:\nretorna erro ao cliente"| CLIENT
-    CCWS -->|"resposta"| CLIENT
-```
-
----
-
-## Simetria com o plugin MQTT
+## Fluxo por requisição
 
 ```mermaid
-graph LR
-    subgraph MQTT["Plano MQTT"]
-        MQ_PUB["Cliente MQTT\n(user_<id>)"]
-        MQ_PLUGIN["Plugin C\nmosquitto_plugin.so"]
-        MQ_BROKER["Broker Mosquitto\n(entrega a mensagem)"]
-        MQ_PUB --> MQ_PLUGIN --> MQ_BROKER
+flowchart LR
+    C["Cliente<br/>(app, celular, TV)"] -->|"HTTP :44642 / :44643"| P
+
+    subgraph EDGE["edgegateway (KrakenD 2.7.2)"]
+        P["plugin http-server tv30-auth<br/>rota (100) -> classe (106) -><br/>access token (107) -> bind-token (104/108)"]
+        G["roteador KrakenD<br/>+ CORS<br/>proxy no-op"]
+        P -->|"liberada<br/>(ou warn)"| G
     end
 
-    subgraph HTTP["Plano HTTP"]
-        HTTP_CLIENT["Dispositivo Externo\nHTTP/HTTPS"]
-        HTTP_KD["KrakenD\n+ Plugin Go"]
-        HTTP_MW["Middleware Node.js\n(/validate)"]
-        HTTP_CCWS["CCWS\n(processa requisição)"]
-        HTTP_CLIENT --> HTTP_KD --> HTTP_MW
-        HTTP_MW --> HTTP_KD --> HTTP_CCWS
-    end
-
-    REDIS[("Redis\nACL · Consentimento\nPerfis")]
-
-    MQ_PLUGIN -.->|"consulta"| REDIS
-    HTTP_MW -.->|"consultará\n(futuro)"| REDIS
+    P -.->|"GET / SISMEMBER /<br/>HEXISTS / LRANGE"| R[("Redis")]
+    P -->|"negada (enforce)<br/>404 + {error, description}"| C
+    G -->|"interna: http://tv3ws:44652<br/>externa: https://tv3ws:44653"| T["tv3ws"]
+    T -->|"status e corpo intactos<br/>(no-op)"| C
 ```
 
----
+- **Plugin `tv30-auth`** (`edgegateway/plugin/`, em Go). Valida as credenciais segundo a política por rota de `routes.json`. Com `AUTH_ENFORCE=warn` (padrão), só registra no log e marca a resposta com `X-TV30-Auth-Warn`; com `enforce`, bloqueia.
+  - Um caminho não declarado recebe 100 sem chegar ao roteador.
+  - Um panic no roteador vira 200.
+  - Detalhes em [05-autenticacao.md](05-autenticacao.md) e no [README do plugin](../edgegateway/plugin/README.md).
+- **Roteador KrakenD.** Só repassa os cabeçalhos e as query strings declarados em cada rota. Toda rota é proxy no-op: o erro do tv3ws (404 com corpo C.3.2) chega intacto ao cliente.
+- **CORS.** `Access-Control-Allow-Origin: *`. No preflight, os cabeçalhos permitidos são `Content-Type, Authorization, bind-token, Accept, Accept-Version` (C.4.1.9.3), mais `key`, usado no `DELETE /tv3/bind-context` (C.6.8.4). O cabeçalho exposto é `X-TV30-Auth-Warn`.
+- **Variantes.** `EDGE_VARIANT=linux` aponta os backends para o DNS da rede (`tv3ws`). `EDGE_VARIANT=windows` aponta para `host.docker.internal`, no cenário dev-host. Nos dois casos o plugin lê o Redis do container.
+- **Morre-inteiro.** Os dois processos KrakenD e o httpd da documentação são vigiados pelo `entrypoint.sh`: se um cair, o container todo cai. Configuração inválida do plugin também derruba o processo.
 
-## Estrutura do HTTP Server Plugin (Go)
+## Build
 
 ```mermaid
-graph TD
-    subgraph KrakenD["KrakenD Process"]
-        REQ["Requisição recebida"]
-        PLUGIN["HTTP Server Plugin\n(Go)"]
-        ROUTER["Router KrakenD\n(encaminha ao backend)"]
-    end
-
-    subgraph MW["Middleware Node.js (serviço separado)"]
-        VALIDATE["/validate\nPOST"]
-        JWT["Valida JWT"]
-        FUTURE["Futuras validações"]
-    end
-
-    REQ --> PLUGIN
-    PLUGIN -->|"POST /validate\n+ headers"| VALIDATE
-    VALIDATE --> JWT --> FUTURE
-    FUTURE -->|"200 OK"| PLUGIN
-    FUTURE -->|"4xx"| PLUGIN
-    PLUGIN -->|"200: passa adiante"| ROUTER
-    PLUGIN -->|"4xx: rejeita"| REQ
+flowchart LR
+    RJ["routes.json"] --> GEN["generate.js build<br/>(node:20-alpine)"]
+    GEN --> CFG["krakend-{internal,external}.{linux,windows}.json<br/>+ openapi-{internal,external}.json"]
+    SRC["plugin/*.go"] --> B["krakend/builder:2.7.2<br/>go vet + go test + -buildmode=plugin"]
+    B --> SO["tv30-auth.so"]
+    CFG --> IMG["devopsfaith/krakend:2.7.2<br/>krakend check (4 configs)<br/>check-plugin + test-plugin -s"]
+    SO --> IMG
 ```
 
----
-
-## Configuração KrakenD (modelo a implementar)
-
-```json
-{
-  "$schema": "https://www.krakend.io/schema/v2.7/krakend.json",
-  "version": 3,
-  "name": "GingaDistrib API Gateway",
-  "port": 8080,
-  "extra_config": {
-    "plugin/http-server": {
-      "name": ["consent-validator"],
-      "consent-validator": {
-        "middleware_url": "http://middleware-node:3000"
-      }
-    }
-  },
-  "endpoints": [
-    {
-      "endpoint": "/tv3/{path}",
-      "backend": [
-        { "url_pattern": "/tv3/{path}", "host": ["http://ccws:44642"] }
-      ]
-    }
-  ]
-}
-```
-
----
-
-## Estado atual vs. planejado
-
-```mermaid
-timeline
-    title Evolução do Pipeline HTTP
-    Hoje
-        : KrakenD sobe mas sem endpoints configurados
-        : krakend.json vazio
-    Próximo passo
-        : Criar middleware Node.js (valida JWT)
-        : Criar HTTP Server Plugin Go
-        : Configurar endpoints no krakend.json apontando para CCWS
-    Futuro
-        : Middleware consulta Redis para validar consentimento
-        : Rate limiting por usuário/serviço
-        : Outras políticas conforme requisitos evoluem
-```
+O `.so` só carrega num binário com o mesmo Go, a mesma libc e a mesma arquitetura. Por isso:
+- o builder e a imagem final usam a **mesma versão fixa**;
+- o build falha se o plugin não carregar.

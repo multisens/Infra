@@ -9,8 +9,8 @@ Diagramas de arquitetura da solução GingaDistrib.
 | [01-visao-geral.md](01-visao-geral.md) | Visão geral do sistema e interação entre todos os serviços |
 | [02-rede-docker.md](02-rede-docker.md) | Containers, portas expostas e rede compartilhada `ginga_net` |
 | [03-pipeline-mqtt.md](03-pipeline-mqtt.md) | Pipeline de segurança do broker MQTT (plugin C) |
-| [04-pipeline-http.md](04-pipeline-http.md) | Pipeline de segurança HTTP via KrakenD + middleware Node.js |
-| [05-autenticacao.md](05-autenticacao.md) | Fluxos de autenticação TV 3.0 (local e remoto) |
+| [04-pipeline-http.md](04-pipeline-http.md) | A borda (`edgegateway`): plugin `tv30-auth` de validação de credenciais + roteador KrakenD |
+| [05-autenticacao.md](05-autenticacao.md) | Classes de cliente, emissão do access token, validação na borda (bind-token) e descoberta SSDP |
 | [06-modelo-redis.md](06-modelo-redis.md) | Modelo de dados do Redis (ACL, consentimento, perfis) |
 | [07-usuarios-perfis.md](07-usuarios-perfis.md) | Gestão de usuários e perfis — modelo Redis conforme ABNT NBR 25608 |
 | [08-mqtt-map.md](08-mqtt-map.md) | Mapa completo de publicações e subscrições MQTT (todos os serviços) |

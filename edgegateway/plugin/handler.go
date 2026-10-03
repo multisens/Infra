@@ -1,0 +1,289 @@
+package main
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"time"
+)
+
+// Textos da Tabela C.1 — os mesmos do catalogo do tv3ws (src/util/error.ts).
+var errorText = map[int]string{
+	100: "API not found",
+	104: "Access not authorized by the broadcaster",
+	106: "API unavailable for this runtime environment",
+	107: "Invalid or outdated access token",
+	108: "Invalid or revoked bind token",
+	200: "Platform resource unavailable",
+}
+
+const warnHeader = "X-TV30-Auth-Warn"
+
+// verdict eh a decisao sobre uma requisicao. Code 0 = liberada.
+type verdict struct {
+	Code   int
+	Detail string
+	Class  string
+	Route  string
+}
+
+func (v verdict) fail(code int, detail string) verdict {
+	v.Code, v.Detail = code, detail
+	return v
+}
+
+type authHandler struct {
+	cfg   *config
+	store store
+	keys  *keyCache
+	next  http.Handler
+	now   func() time.Time
+}
+
+func newHandler(cfg *config, st store, next http.Handler) *authHandler {
+	return &authHandler{cfg: cfg, store: st, keys: &keyCache{}, next: next, now: time.Now}
+}
+
+func (h *authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// C.4.1.9.2: "Access-Control-Allow-Origin: *" em TODA resposta das APIs.
+	// O modulo CORS do KrakenD so o acrescenta quando a requisicao traz
+	// Origin; definido aqui, vale tambem para cliente fora do navegador. Set
+	// (e nao Add): o modulo CORS tambem usa Set, entao o cabecalho sai uma
+	// vez so (duplicado, o Chrome recusa — por isso o tv3ws nao o envia,
+	// tv3ws/src/middleware/basic.ts).
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if r.Method == http.MethodOptions {
+		// preflight CORS (com Access-Control-Request-Method): passa sempre;
+		// o modulo CORS do KrakenD responde.
+		if r.Header.Get("Access-Control-Request-Method") != "" {
+			h.serveNext(w, r)
+			return
+		}
+		// OPTIONS que nao eh preflight numa API declarada (qualquer metodo no
+		// mesmo caminho): a C.4.1.9.3 manda responder com ACAO, ACAM e ACAH.
+		// Caminho nao declarado segue a tabela e da 100 (formato C.3.2, em
+		// vez do texto do Gin).
+		if h.cfg.Routes.pathDeclared(r.URL.Path) {
+			writeOptions(w, r, h.cfg.CORSAllowHeaders)
+			return
+		}
+	}
+	v := h.evaluate(r)
+	if v.Code != 0 {
+		class := v.Class
+		if class == "" {
+			class = "-"
+		}
+		// caminho com %q: r.URL.Path ja vem decodificado, e um %0A nele
+		// forjaria linhas [tv30-auth] no log.
+		if h.cfg.Mode == modeEnforce || v.Code == 100 {
+			logf("DENY surface=%s code=%d %s %q class=%s detalhe=%q", h.cfg.Surface, v.Code, r.Method, r.URL.Path, class, v.Detail)
+			writeError(w, r, v.Code, v.Detail)
+			return
+		}
+		logf("WARN surface=%s code=%d %s %q class=%s detalhe=%q", h.cfg.Surface, v.Code, r.Method, r.URL.Path, class, v.Detail)
+		w.Header().Set(warnHeader, strconv.Itoa(v.Code))
+	}
+	h.serveNext(w, r)
+}
+
+// serveNext repassa ao roteador do KrakenD com recover(): panic la dentro
+// vira 404 + {error:200} em vez de conexao resetada.
+func (h *authHandler) serveNext(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if p := recover(); p != nil {
+			if p == http.ErrAbortHandler {
+				panic(p)
+			}
+			logf("PANIC recuperado surface=%s %s %q: %v", h.cfg.Surface, r.Method, r.URL.Path, p)
+			writeError(w, r, 200, "falha interna do gateway")
+		}
+	}()
+	h.next.ServeHTTP(w, r)
+}
+
+// evaluate decide, na ordem da especificacao: rota (100) -> classe (106) ->
+// access token (107) -> bind-token (104/108). Falha no Redis => 200.
+func (h *authHandler) evaluate(r *http.Request) verdict {
+	rt, params := h.cfg.Routes.match(r.Method, r.URL.Path)
+	if rt == nil {
+		return verdict{Code: 100, Detail: r.Method + " " + r.URL.Path}
+	}
+	v := verdict{Route: rt.String()}
+	if rt.Auth == authNone && rt.Classes == nil {
+		return v
+	}
+	now := h.now()
+
+	// -- classe do cliente (D7) --
+	authz := r.Header.Get("Authorization")
+	var claims *accessClaims
+	var tokenErr error
+	if authz != "" {
+		if claims, tokenErr = verifyAccessToken(authz, h.cfg.Secret, h.cfg.Issuer, now); tokenErr == nil {
+			v.Class = claims.Class
+		}
+	}
+	// PENDENTE (Joel): lacuna L1 — PROVISORIO. Requisicao SEM Authorization
+	// cujo Origin esta em origins:associated eh tratada como local associado.
+	// A norma (C.4.1.7) sugere a porta de origem atribuida pelo gerenciador;
+	// e o Origin nao discrimina as apps de emissora servidas por proxy na
+	// origem do AoP (Origin eh forjavel fora do navegador).
+	// Com Authorization presente mas INVALIDO, o Origin tambem eh consultado,
+	// so para a checagem de classe (106): senao bastaria mandar qualquer
+	// Authorization para escapar do 106 da L4 (o tv3ws classifica pelo
+	// Origin). Isso nao dispensa credencial — o 107 continua valendo.
+	originAssoc := false
+	if origin := r.Header.Get("Origin"); origin != "" && claims == nil && (authz == "" || rt.Classes != nil) {
+		assoc, err := h.store.IsAssociatedOrigin(origin)
+		if err != nil {
+			return v.fail(200, "redis indisponivel ("+err.Error()+")")
+		}
+		originAssoc = assoc
+	}
+	if authz == "" && originAssoc {
+		v.Class = classAssociated
+	}
+
+	// -- classe permitida na rota (106) --
+	// PENDENTE (Joel): lacuna L4 — em /authorize e /token o 106 ao
+	// associado so bloqueia em enforce; o tv3ws continua emitindo token ao
+	// associado. Limites deste provisorio: o 106 depende do Origin (um
+	// /tv3/token chamado fora do navegador, sem Origin, passa e o tv3ws
+	// emite o token com a classe gravada do cliente), e um access token
+	// VALIDO de outra classe prevalece sobre o Origin.
+	// PENDENTE (Joel): lacuna L3 — sem TLS na borda (44643 em HTTP), o 106
+	// por protocolo (nao local fora de HTTPS, C.4.1.6) nao eh aplicado aqui.
+	classForRoute := v.Class
+	if classForRoute == "" && originAssoc {
+		classForRoute = classAssociated
+	}
+	if !rt.allows(classForRoute) {
+		who := classForRoute
+		if who == "" {
+			who = "cliente nao identificado como " + classAssociated
+		}
+		return v.fail(106, "rota nao disponivel para "+who)
+	}
+
+	// -- associado reconhecido pelo Origin: usa as APIs sem access token e
+	// sem bind-token (C.4.1.1, D8) --
+	// PENDENTE (Joel): a norma dispensa o bind-token "referencing their own
+	// service context"; o acesso do associado a contexto de OUTRA emissora
+	// (rotas /tv3/{serviceContextId}/...) nao eh restringido aqui.
+	if v.Class == classAssociated && claims == nil {
+		return v
+	}
+	if rt.Auth == authNone {
+		return v
+	}
+
+	// -- access token (107) --
+	if authz == "" {
+		return v.fail(107, "accessToken ausente")
+	}
+	if tokenErr != nil {
+		return v.fail(107, tokenErr.Error())
+	}
+	// cliente bloqueado (C.4.2.2): vale para toda credencial valida,
+	// inclusive token com class local-associated.
+	if claims.Sub != "" {
+		blocked, err := h.store.IsBlocked(claims.Sub)
+		if err != nil {
+			return v.fail(200, "redis indisponivel ("+err.Error()+")")
+		}
+		if blocked {
+			return v.fail(107, "cliente bloqueado pelo usuario (C.4.2.2)")
+		}
+	}
+	// token com class local-associated: dispensa o bind-token (D8)
+	if v.Class == classAssociated || rt.Auth == authToken {
+		return v
+	}
+
+	// -- bind-token (104/108) --
+	bt := r.Header.Get("bind-token")
+	if bt == "" {
+		return v.fail(104, "bind-token ausente")
+	}
+	if scid, ok := params["serviceContextId"]; ok && !h.isCurrentSCID(scid) {
+		return v.fail(108, "service-context-id '"+scid+"' nao corresponde ao servico corrente (provisorio, lacuna L2)")
+	}
+	sid, err := h.store.CurrentServiceID()
+	if err != nil {
+		return v.fail(200, "redis indisponivel ("+err.Error()+")")
+	}
+	if sid == "" {
+		// PENDENTE (Joel): sem servico corrente nao ha chave registrada que
+		// valide o token => 108 (a norma tambem preve 300 nessas APIs).
+		return v.fail(108, "sem servico corrente: nenhuma chave registrada")
+	}
+	raw, err := h.store.BindKeys(sid)
+	if err != nil {
+		return v.fail(200, "redis indisponivel ("+err.Error()+")")
+	}
+	// D4: so valem as chaves registradas para o SERVICO CORRENTE.
+	if err := verifyBindToken(bt, h.keys.decodeStoredKeys(sid, raw), now); err != nil {
+		return v.fail(108, err.Error())
+	}
+	return v
+}
+
+func (h *authHandler) isCurrentSCID(scid string) bool {
+	if scid == "current-service" {
+		return true
+	}
+	for _, s := range h.cfg.CurrentSCIDs {
+		if scid == s {
+			return true
+		}
+	}
+	return false
+}
+
+// writeError responde no formato C.3.2: status 404 + {error, description},
+// application/json, com Access-Control-Allow-Origin: * (o plugin roda ANTES
+// do modulo CORS do KrakenD; sem isso o navegador veria erro de CORS em vez
+// do corpo) e API-Version (C.3.6.6).
+func writeError(w http.ResponseWriter, r *http.Request, code int, detail string) {
+	desc := errorText[code]
+	if detail != "" {
+		desc += ": " + detail
+	}
+	body, _ := json.Marshal(struct {
+		Error       int    `json:"error"`
+		Description string `json:"description"`
+	}{code, desc})
+	hd := w.Header()
+	hd.Del(warnHeader)
+	hd.Set("Content-Type", "application/json")
+	hd.Set("Access-Control-Allow-Origin", "*")
+	hd.Set("API-Version", apiVersion(r))
+	hd.Set("Content-Length", strconv.Itoa(len(body)))
+	w.WriteHeader(http.StatusNotFound)
+	w.Write(body)
+}
+
+// writeOptions responde o OPTIONS que nao eh preflight numa API declarada
+// (C.4.1.9.3): os tres cabecalhos com os valores padrao da norma (ACAH com o
+// key do DELETE /tv3/bind-context, como o modulo CORS). Status 200, o de
+// sucesso da C.3.2.1; sem corpo.
+func writeOptions(w http.ResponseWriter, r *http.Request, allowHeaders string) {
+	hd := w.Header()
+	hd.Set("Access-Control-Allow-Origin", "*")
+	hd.Set("Access-Control-Allow-Methods", "*")
+	hd.Set("Access-Control-Allow-Headers", allowHeaders)
+	hd.Set("API-Version", apiVersion(r))
+	hd.Set("Content-Length", "0")
+	w.WriteHeader(http.StatusOK)
+}
+
+// apiVersion: as versoes que o tv3ws aceita (middleware/basic.ts); fora
+// delas, a versao da norma.
+func apiVersion(r *http.Request) string {
+	switch v := r.Header.Get("Accept-Version"); v {
+	case "2.0", "2.1":
+		return v
+	}
+	return "2.0"
+}

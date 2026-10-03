@@ -80,7 +80,7 @@ def migrate(r, user_data_path: str) -> None:
 
         # user:{id}:consent — Set de IDs de serviço
         # Merge (SADD sem DEL): consents concedidos fora do JSON sobrevivem
-        # ao re-seed. Mesmo comportamento do CCWS syncUsersFromFile.
+        # ao re-seed. Mesmo comportamento do syncUsersFromFile do tv3ws.
         consent = user.get('accessConsent') or user.get('consent') or []
         if consent:
             pipe.sadd(f'user:{user_id}:consent', *consent)

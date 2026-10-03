@@ -1,5 +1,7 @@
 # Modelo de Dados — Redis
 
+> **Nota (2026-10-02):** modelo anterior à consolidação. As chaves `acl:*` e a leitura de ACL/consentimento pelo plugin do broker saíram no item 3, e o middleware Node não existe. As chaves lidas pela borda (`clients:blocked`, `origins:associated`, `session:current-service-id`, `bind-context:{serviceId}`) estão em [05](05-autenticacao.md) e em `edgegateway/plugin/README.md`; ver também `docs/modelo-redis.md` na raiz do TV30. Revisão geral: pendente (backlog).
+
 O Redis é o repositório compartilhado de estado de segurança do sistema.
 Todos os serviços que precisam de ACL, consentimento ou dados de usuário consultam aqui.
 
@@ -34,14 +36,14 @@ graph TD
 graph LR
     subgraph Escritores
         PY["migrate_to_redis.py\n(boot do container Mosquitto)"]
-        CCWS["CCWS\n(sessões e tokens)"]
+        TV3WS["tv3ws\n(sessões e tokens)"]
     end
 
     subgraph Redis
         ACL["acl:<user_id>"]
         CONSENT["user:<user_id>:consent"]
         PROFILE["user:<user_id>:profile"]
-        SESSION["sessões / refresh tokens\n(gerenciado pelo CCWS)"]
+        SESSION["sessões / refresh tokens\n(gerenciado pelo tv3ws)"]
     end
 
     subgraph Leitores
@@ -52,13 +54,13 @@ graph LR
     PY -->|"SADD"| ACL
     PY -->|"SADD"| CONSENT
     PY -->|"HSET"| PROFILE
-    CCWS -->|"SET / EXPIRE"| SESSION
+    TV3WS -->|"SET / EXPIRE"| SESSION
 
     PLUGIN -->|"SMEMBERS acl:<id>"| ACL
     PLUGIN -->|"SISMEMBER consent <serviceId>"| CONSENT
     MW -.->|"consultará (futuro)"| ACL
     MW -.->|"consultará (futuro)"| CONSENT
-    CCWS -->|"GET"| SESSION
+    TV3WS -->|"GET"| SESSION
 ```
 
 ---
