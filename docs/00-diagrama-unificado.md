@@ -1,5 +1,7 @@
 # Diagrama Unificado — GingaDistrib
 
+> **Nota (2026-10-02):** diagrama anterior à consolidação. Não existem mais no código: o KrakenD na porta 8090 com middleware Node `/validate` (hoje a borda é o `edgegateway` 44642/44643 com o plugin `tv30-auth`; ver [04](04-pipeline-http.md) e [05](05-autenticacao.md)); o controle de acesso (ACL) e de consentimento no plugin do broker, que hoje só valida esquema (item 3). As portas 44642/44643 são da borda; o tv3ws escuta em 44652/44653 sem publicá-las. Revisão geral do diagrama: pendente (backlog).
+
 Visão completa do sistema: dispositivos, serviços, segurança, mensageria e dados.
 
 ```mermaid
@@ -23,7 +25,7 @@ graph TB
 
     %% ── Aplicações ────────────────────────────────────────────────────────────
     subgraph APPS["Aplicações (GingaDistrib/)"]
-        subgraph CCWS_BOX["CCWS — TV 3.0 WebServices\n:44642 (HTTP) / :44643 (HTTPS)"]
+        subgraph TV3WS_BOX["tv3ws — TV 3.0 WebServices\n:44642 (HTTP) / :44643 (HTTPS)"]
             AUTH_API["POST /tv3/authorize\nPOST /tv3/token"]
             USER_API["GET/POST /tv3/current-service/users"]
             APP_API["GET /tv3/current-service/apps"]
@@ -56,7 +58,7 @@ graph TB
             R_ACL["acl:<user_id>\nSET de padrões MQTT"]
             R_CON["user:<user_id>:consent\nSET de serviceIds"]
             R_PRF["user:<user_id>:profile\nHASH de atributos"]
-            R_SES["sessões / tokens\ngerenciado pelo CCWS"]
+            R_SES["sessões / tokens\ngerenciado pelo tv3ws"]
         end
         REDIS_UI["Redis Commander\n:8081"]
     end
@@ -78,13 +80,13 @@ graph TB
     DEV_REMOTE -->|"HTTP/HTTPS"| KD
     KD         -->|"POST /validate + headers"| MW
     MW         -->|"200 OK / 4xx"| KD
-    KD         -->|"autorizado"| CCWS_BOX
+    KD         -->|"autorizado"| TV3WS_BOX
 
     %% ── Autenticação ──────────────────────────────────────────────────────────
     AUTH_API   -->|"lê/escreve tokens"| R_SES
 
-    %% ── CCWS → MQTT ───────────────────────────────────────────────────────────
-    CCWS_BOX   -->|"publica/assina\nMQTT"| MQ
+    %% ── tv3ws → MQTT ───────────────────────────────────────────────────────────
+    TV3WS_BOX   -->|"publica/assina\nMQTT"| MQ
 
     %% ── AoP → MQTT ────────────────────────────────────────────────────────────
     AOP_BOX    -->|"publica/assina\nMQTT"| MQ
@@ -116,7 +118,7 @@ graph TB
     classDef boot     fill:#cdb4db,stroke:#9c89b8,color:#000
 
     class KD,MW gateway
-    class CCWS_BOX,AOP_BOX,AUTH_API,USER_API,APP_API,DEV_API,DISP,CAT,PRF,BTP app
+    class TV3WS_BOX,AOP_BOX,AUTH_API,USER_API,APP_API,DEV_API,DISP,CAT,PRF,BTP app
     class MQ,PLUGIN,P_ACL,P_CON,P_SCH mqtt
     class REDIS_BOX,R_ACL,R_CON,R_PRF,R_SES,REDIS_UI data
     class DEV_LOCAL,DEV_REMOTE,SSDP,BROWSER external

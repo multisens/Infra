@@ -1,7 +1,9 @@
 # Mapa de Tópicos MQTT — TV 3.0
 
 Mapeamento completo de publicações e subscrições MQTT no ecossistema TV 3.0,
-gerado a partir da análise estática dos fontes em `aop`, `ccws` e `infra`.
+gerado a partir da análise estática dos fontes em `aop`, `tv3ws` e `infra`.
+
+> Caminhos e linhas do tv3ws conferidos em 2026-10-02 (renome `ccws` → `tv3ws` e mudança de `src/modules/user-api/` para `src/api/user/`). Os do `aop` e do `infra` não foram reconferidos.
 
 ---
 
@@ -10,7 +12,7 @@ gerado a partir da análise estática dos fontes em `aop`, `ccws` e `infra`.
 | Client ID | Processo | Arquivo |
 |---|---|---|
 | `aop-core` | AoP — Application-oriented Platform | `aop/src/core.js` |
-| `tv3ws-client` | CCWS — CC WebServices | `ccws/src/mqtt-client.ts` |
+| `tv3ws-client` | tv3ws — Ginga CC WebServices | `tv3ws/src/mqtt-client.ts` |
 | `rp-display` | AoP — Display Layer (browser) | `aop/src/modules/disp-lyr/view.ejs` |
 
 ---
@@ -22,9 +24,9 @@ gerado a partir da análise estática dos fontes em `aop`, `ccws` e `infra`.
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
 | **PUB** | `aop/src/core.js` | 141 | `setCurrentUser()` — payload: UUID, retain: true |
-| **PUB** | `ccws/src/modules/user-api/service.ts` | 124 | `setCurrentUser()` — payload: UUID, retain: true |
+| **PUB** | `tv3ws/src/api/user/service.ts` | 161 | `setCurrentUser()` — payload: UUID, retain: true |
 | **SUB** | `aop/src/core.js` | 44 | handler: `loadCurrentUser()` |
-| **SUB** | `ccws/src/modules/user-api/service.ts` | 64 | handler: `updateCurrentUser()` → `session:current-user` no Redis |
+| **SUB** | `tv3ws/src/api/user/service.ts` | 106 | handler: `updateCurrentUser()` → `session:current-user` no Redis |
 
 ### `aop/currentService`
 
@@ -33,21 +35,21 @@ gerado a partir da análise estática dos fontes em `aop`, `ccws` e `infra`.
 | **PUB** | `aop/src/core.js` | 168 | `setCurrentService()` — payload: serviceId, retain: true |
 | **PUB** | `aop/src/core.js` | 174 | `unsetCurrentService()` — payload: `''`, retain: true |
 | **SUB** | `aop/src/core.js` | 45 | handler: `loadCurrentService()` |
-| **SUB** | `ccws/src/modules/user-api/service.ts` | 65 | handler: `updateCurrentService()` → `session:current-service-id` no Redis |
-| **SUB** | `ccws/src/core.ts` | 168 | handler: `currentService()` → `session:current-service` Hash no Redis |
+| **SUB** | `tv3ws/src/api/user/service.ts` | 107 | handler: `updateCurrentService()` → `session:current-service-id` no Redis |
+| **SUB** | `tv3ws/src/core.ts` | 168 | handler: `currentService()` → `session:current-service` Hash no Redis |
 
 ### `aop/users`
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
 | **PUB** | `aop/src/modules/prf-mngr/service.js` | 105 | `createUser()` — payload: caminho do `userData.json` |
-| **SUB** | `ccws/src/modules/user-api/service.ts` | 66 | handler: `syncUsersFromFile()` → sincroniza usuários para Redis |
+| **SUB** | `tv3ws/src/api/user/service.ts` | 108 | handler: `syncUsersFromFile()` → sincroniza usuários para Redis |
 
 ### `aop/services`
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **SUB** | `ccws/src/core.ts` | 176 | handler: `loadServiceData()` — parse JSON com lista de serviços |
+| **SUB** | `tv3ws/src/core.ts` | 176 | handler: `loadServiceData()` — parse JSON com lista de serviços |
 
 ---
 
@@ -57,8 +59,8 @@ gerado a partir da análise estática dos fontes em `aop`, `ccws` e `infra`.
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **PUB** | `ccws/src/modules/remotedevice-manager/manager.ts` | 39 | `addRemoteDevice()` — payload: JSON array de handles, retain: true |
-| **PUB** | `ccws/src/modules/remotedevice-manager/manager.ts` | 61 | `removeRemoteDevice()` — payload: JSON array de handles, retain: true |
+| **PUB** | `tv3ws/src/modules/remotedevice-manager/manager.ts` | 79 | `addRemoteDevice()` — payload: JSON array de handles, retain: true |
+| **PUB** | `tv3ws/src/modules/remotedevice-manager/manager.ts` | 102 | `removeRemoteDevice()` — payload: JSON array de handles, retain: true |
 
 ---
 
@@ -68,28 +70,28 @@ gerado a partir da análise estática dos fontes em `aop`, `ccws` e `infra`.
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **SUB** | `ccws/src/core.ts` | 149 | handler: `setAppId()` — registra app atual |
+| **SUB** | `tv3ws/src/core.ts` | 149 | handler: `setAppId()` — registra app atual |
 
 ### `aop/{serviceId}/{appId}/path`
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **SUB** | `ccws/src/core.ts` | 96 | handler: `setAppBaseURL()` — URL base da app |
+| **SUB** | `tv3ws/src/core.ts` | 96 | handler: `setAppBaseURL()` — URL base da app |
 
 ### `aop/{serviceId}/{appId}/doc/nodes`
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **SUB** | `ccws/src/core.ts` | 102 | handler: `setAppNodes()` — array de nós NCL/HTML5 |
+| **SUB** | `tv3ws/src/core.ts` | 102 | handler: `setAppNodes()` — array de nós NCL/HTML5 |
 
 ### `aop/{serviceId}/{appId}/doc/{nodeId}/{iface}/actionNotification`
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **PUB** | `ccws/src/modules/remotedevice-manager/remote-device.ts` | 216–222 | `publishTransitionMetadata()` — transition, user, value |
-| **SUB** | `ccws/src/modules/remotedevice-manager/remote-device.ts` | 351 | handler: `setNodeInterfaces()` — `{prefix}/interfaces` |
-| **SUB** | `ccws/src/modules/remotedevice-manager/remote-device.ts` | 353–354 | handler: `onMqttMessage()` — `preparationEvent` e `presentationEvent` |
-| **SUB** | `ccws/src/modules/remotedevice-manager/remote-device.ts` | 384 | handler: `setPropertyValue()` — `{iface}/attributionEvent/value` |
+| **PUB** | `tv3ws/src/modules/remotedevice-manager/remote-device.ts` | 216–222 | `publishTransitionMetadata()` — transition, user, value |
+| **SUB** | `tv3ws/src/modules/remotedevice-manager/remote-device.ts` | 351 | handler: `setNodeInterfaces()` — `{prefix}/interfaces` |
+| **SUB** | `tv3ws/src/modules/remotedevice-manager/remote-device.ts` | 353–354 | handler: `onMqttMessage()` — `preparationEvent` e `presentationEvent` |
+| **SUB** | `tv3ws/src/modules/remotedevice-manager/remote-device.ts` | 384 | handler: `setPropertyValue()` — `{iface}/attributionEvent/value` |
 
 ---
 
@@ -131,27 +133,28 @@ gerado a partir da análise estática dos fontes em `aop`, `ccws` e `infra`.
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **PUB** | `ccws/src/core.ts` | 263 | `showYesNoPopUpAsync()` — payload: JSON `{value, timeout}` |
+| **PUB** | `tv3ws/src/core.ts` | 266 | `showYesNoPopUpAsync()` — payload: JSON `{value, timeout}` |
 | **SUB** | `aop/src/modules/disp-lyr/view.ejs` | 154 | wildcard `aop/display/layers/popup/+/message` |
 
 ### `aop/display/layers/popup/yesno/response`
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **SUB** | `ccws/src/core.ts` | 261 | handler temporal em `showYesNoPopUpAsync()` — resolve Promise |
+| **PUB** | `aop/public/js/popup.js` | 21, 27, 33 | payload `"true"` (Sim) ou `"false"` (Não, ou timeout do pop-up) |
+| **SUB** | `tv3ws/src/core.ts` | 264 | handler temporal em `showYesNoPopUpAsync()` — resolve a Promise; só `"true"` autoriza |
 
 ### `aop/display/layers/popup/qrcode`
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **PUB** | `ccws/src/core.ts` | 270 | `showQRCodePopUp()` — payload: JSON `{value, timeout}` |
+| **PUB** | `tv3ws/src/core.ts` | 273 | `showQRCodePopUp()` — payload: JSON `{value, timeout}` |
 | **SUB** | `aop/src/modules/disp-lyr/view.ejs` | 154 | wildcard `aop/display/layers/popup/+/message` |
 
 ### `aop/display/layers/popup/pin`
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **PUB** | `ccws/src/core.ts` | 276 | `showPINPopUp()` — payload: JSON `{value, timeout}` |
+| **PUB** | `tv3ws/src/core.ts` | 279 | `showPINPopUp()` — payload: JSON `{value, timeout}` |
 | **SUB** | `aop/src/modules/disp-lyr/view.ejs` | 154 | wildcard `aop/display/layers/popup/+/message` |
 
 ---
@@ -191,9 +194,9 @@ graph TD
         AOP_SUB["Subscreve\naop/currentUser\naop/currentService\ntlm/lls/#\ntlm/sls/{svcId}/#"]
     end
 
-    subgraph CCWS["CCWS (tv3ws-client)"]
-        CCWS_PUB["Publica\naop/currentUser\naop/devices/{class}\npopup/yesno|qrcode|pin"]
-        CCWS_SUB["Subscreve\naop/currentUser\naop/currentService\naop/users\naop/services\naop/{svcId}/currentApp\naop/{svcId}/{appId}/path\naop/{svcId}/{appId}/doc/nodes"]
+    subgraph TV3WS["tv3ws (tv3ws-client)"]
+        TV3WS_PUB["Publica\naop/currentUser\naop/devices/{class}\npopup/yesno|qrcode|pin"]
+        TV3WS_SUB["Subscreve\naop/currentUser\naop/currentService\naop/users\naop/services\naop/{svcId}/currentApp\naop/{svcId}/{appId}/path\naop/{svcId}/{appId}/doc/nodes"]
     end
 
     subgraph REDIS["Redis"]
@@ -206,10 +209,10 @@ graph TD
         D_SUB["Subscreve\naop/display/layers/+\naop/display/layers/video/+\naop/display/layers/popup/+/message\nvideo/event"]
     end
 
-    AOP_PUB -->|"MQTT"| CCWS_SUB
+    AOP_PUB -->|"MQTT"| TV3WS_SUB
     AOP_PUB -->|"MQTT"| D_SUB
-    CCWS_PUB -->|"MQTT"| AOP_SUB
-    CCWS_SUB -->|"Redis write"| REDIS
+    TV3WS_PUB -->|"MQTT"| AOP_SUB
+    TV3WS_SUB -->|"Redis write"| REDIS
 ```
 
 ---

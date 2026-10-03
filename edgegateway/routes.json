@@ -19,6 +19,9 @@
       "title": "TV 3.0 WebServices — superficie interna"
     }
   },
+  "auth": {
+    "current_service_context_id": "c08b2c72-fd14-4095-adaf-2e5810850c57"
+  },
   "cors": {
     "allow_origins": [
       "*"
@@ -33,10 +36,14 @@
     "allow_headers": [
       "Content-Type",
       "Authorization",
-      "Accept-Version"
+      "bind-token",
+      "Accept",
+      "Accept-Version",
+      "key"
     ],
     "expose_headers": [
-      "Content-Length"
+      "Content-Length",
+      "X-TV30-Auth-Warn"
     ],
     "max_age": "12h",
     "allow_credentials": false
@@ -45,6 +52,19 @@
     {
       "path": "/health",
       "method": "GET",
+      "auth": "none",
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Accept-Version"
+      ]
+    },
+    {
+      "path": "/manifest",
+      "method": "GET",
+      "auth": "none",
       "surfaces": [
         "internal",
         "external"
@@ -56,6 +76,12 @@
     {
       "path": "/tv3/authorize",
       "method": "GET",
+      "auth": "none",
+      "timeout": "15s",
+      "classes": [
+        "local-autonomous",
+        "non-local"
+      ],
       "surfaces": [
         "internal",
         "external"
@@ -74,6 +100,11 @@
     {
       "path": "/tv3/token",
       "method": "GET",
+      "auth": "none",
+      "classes": [
+        "local-autonomous",
+        "non-local"
+      ],
       "surfaces": [
         "internal",
         "external"
@@ -89,8 +120,59 @@
       ]
     },
     {
+      "path": "/tv3/bind-context",
+      "method": "POST",
+      "auth": "none",
+      "classes": [
+        "local-associated"
+      ],
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Accept-Version",
+        "Content-Type"
+      ]
+    },
+    {
+      "path": "/tv3/bind-context",
+      "method": "GET",
+      "auth": "token",
+      "classes": [
+        "local-autonomous",
+        "non-local"
+      ],
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Authorization",
+        "bind-token",
+        "Accept-Version"
+      ]
+    },
+    {
+      "path": "/tv3/bind-context",
+      "method": "DELETE",
+      "auth": "none",
+      "classes": [
+        "local-associated"
+      ],
+      "surfaces": [
+        "internal",
+        "external"
+      ],
+      "headers": [
+        "Accept-Version",
+        "key"
+      ]
+    },
+    {
       "path": "/tv3/current-service",
       "method": "GET",
+      "auth": "token",
       "surfaces": [
         "internal",
         "external"
@@ -103,6 +185,7 @@
     {
       "path": "/tv3/current-service/users",
       "method": "POST",
+      "auth": "token+bind",
       "surfaces": [
         "internal",
         "external"
@@ -116,6 +199,7 @@
     {
       "path": "/tv3/current-service/users/current-user",
       "method": "GET",
+      "auth": "token+bind",
       "surfaces": [
         "internal",
         "external"
@@ -128,6 +212,7 @@
     {
       "path": "/tv3/current-service/users/current-user",
       "method": "POST",
+      "auth": "token+bind",
       "surfaces": [
         "internal",
         "external"
@@ -141,6 +226,7 @@
     {
       "path": "/tv3/current-service/users/files",
       "method": "GET",
+      "auth": "token+bind",
       "surfaces": [
         "internal",
         "external"
@@ -156,6 +242,7 @@
     {
       "path": "/tv3/current-service/users/{userid}",
       "method": "GET",
+      "auth": "token+bind",
       "surfaces": [
         "internal",
         "external"
@@ -171,6 +258,7 @@
     {
       "path": "/tv3/{serviceContextId}/users",
       "method": "POST",
+      "auth": "token+bind",
       "surfaces": [
         "internal",
         "external"
@@ -184,6 +272,7 @@
     {
       "path": "/tv3/current-service/apps/{appid}/files",
       "method": "GET",
+      "auth": "token+bind",
       "surfaces": [
         "internal",
         "external"
@@ -200,6 +289,7 @@
     {
       "path": "/tv3/remote-device",
       "method": "POST",
+      "auth": "token",
       "surfaces": [
         "internal",
         "external"
@@ -213,6 +303,7 @@
     {
       "path": "/tv3/remote-device/{handle}",
       "method": "DELETE",
+      "auth": "token",
       "surfaces": [
         "internal",
         "external"
@@ -225,6 +316,7 @@
     {
       "path": "/tv3/remote-device/devices/{classId}",
       "method": "GET",
+      "auth": "token",
       "surfaces": [
         "internal",
         "external"
@@ -237,6 +329,7 @@
     {
       "path": "/tv3/remote-device/device/{handle}",
       "method": "GET",
+      "auth": "token",
       "surfaces": [
         "internal",
         "external"
@@ -249,6 +342,7 @@
     {
       "path": "/tv3/remote-device/device/{handle}",
       "method": "DELETE",
+      "auth": "token",
       "surfaces": [
         "internal",
         "external"
@@ -261,6 +355,7 @@
     {
       "path": "/tv3/sensory-effect-renderers",
       "method": "GET",
+      "auth": "token",
       "surfaces": [
         "internal",
         "external"
@@ -273,6 +368,7 @@
     {
       "path": "/tv3/sensory-effect-renderers/{rendererId}",
       "method": "GET",
+      "auth": "token",
       "surfaces": [
         "internal",
         "external"
@@ -285,6 +381,7 @@
     {
       "path": "/tv3/sensory-effect-renderers/{rendererId}",
       "method": "POST",
+      "auth": "token+bind",
       "surfaces": [
         "internal",
         "external"
@@ -298,6 +395,7 @@
     {
       "path": "/tv3/{serviceContextId}/users/{userid}",
       "method": "GET",
+      "auth": "token+bind",
       "surfaces": [
         "internal",
         "external"
@@ -313,6 +411,7 @@
     {
       "path": "/tv3/{serviceContextId}/users/{userid}",
       "method": "POST",
+      "auth": "token+bind",
       "surfaces": [
         "internal",
         "external"

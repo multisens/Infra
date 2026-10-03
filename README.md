@@ -14,7 +14,7 @@ Portas listadas são as do **host** quando a stack sobe pela raiz do TV30.
 |---------------|--------------------------------|------------------------------------------------------------------------|
 | `redis`       | `6379`; UI em porta dinâmica   | Armazenamento (perfis, sessão, credenciais, registro de dispositivos). O container embute o **seed** (carga RESP em tempo de build via `redis-cli --pipe`, roda uma vez — healthcheck só fica saudável após a carga) e o **Redis Commander** (processo auxiliar; a morte dele NÃO derruba o banco). |
 | `mqtt-broker` | `1883`, `9001` (WS)            | Broker MQTT + plugin C de **validação de esquema** na publicação (tópicos reais de sinalização e estado + `sensor/*`; ver `mqtt-broker/plugin/config/schemas.json`). Profile `mqtt`. |
-| `edgegateway` | `44642` (interna, fixa da norma C.3.4), `44643` (externa), docs em porta dinâmica | A borda num container só: superfícies interna e externa do KrakenD (conjuntos de rota distintos) + Swagger UI com os dois specs. Tudo gerado **no build** a partir de `edgegateway/routes.json` (tabela única — M4). Proxy puro: status e corpo do backend passam intactos. Morre-inteiro: qualquer processo interno caindo derruba o container. |
+| `edgegateway` | `44642` (interna, fixa da norma C.3.4), `44643` (externa), docs em porta dinâmica | A borda num container só: superfícies interna e externa do KrakenD (a mesma tabela de rotas nas duas; cada rota declara em que superfícies existe) + Swagger UI com os dois specs. Tudo gerado **no build** a partir de `edgegateway/routes.json` (tabela única — M4). Proxy puro: status e corpo do backend passam intactos. **Validação de credenciais** (access token, bind-token, classe de cliente; erros 100/104/106/107/108 no formato C.3.2) pelo plugin Go `tv30-auth`, carregado nas duas superfícies — `AUTH_ENFORCE=warn` (padrão) só avisa nas falhas de credencial (o 100 de rota não declarada vale nos dois modos); `enforce` bloqueia. Ver [`edgegateway/plugin/README.md`](./edgegateway/plugin/README.md). Morre-inteiro: qualquer processo interno caindo derruba o container. |
 
 Descobrir as portas dinâmicas: `docker compose ps` (linhas `edgegateway` e `redis`).
 
@@ -42,6 +42,7 @@ infra/
   redis/                     # Redis consolidado (seed em build + commander embutido)
   mqtt-broker/               # Broker MQTT + plugin C (validacao de schema)
   edgegateway/               # A borda: routes.json (fonte unica) + generate.js
+                             #   + plugin/ (Go, validacao de credenciais tv30-auth)
                              #   -> gera os configs KrakenD e os OpenAPI no build
   dockerfiles/               # Dockerfiles dos containers que vivem na raiz (aop, tv3ws, bcast, ...)
   user-files-template/       # Seed do armazenamento — userData.json com o perfil padrao ("Viewer 1")
@@ -61,7 +62,7 @@ A fonte de verdade técnica está em [`docs/`](./docs/README.md):
 - [`02-rede-docker.md`](./docs/02-rede-docker.md) — Rede `ginga_net` e portas
 - [`03-pipeline-mqtt.md`](./docs/03-pipeline-mqtt.md) — Plugin MQTT (validação de esquema)
 - [`04-pipeline-http.md`](./docs/04-pipeline-http.md) — A borda (edgegateway/KrakenD)
-- [`05-autenticacao.md`](./docs/05-autenticacao.md) — Fluxos TV 3.0
+- [`05-autenticacao.md`](./docs/05-autenticacao.md) — Classes de cliente, emissão do token, validação na borda e SSDP
 - [`06-modelo-redis.md`](./docs/06-modelo-redis.md) — Modelo de dados Redis
 - [`08-mqtt-map.md`](./docs/08-mqtt-map.md) — Mapa completo de tópicos MQTT
 

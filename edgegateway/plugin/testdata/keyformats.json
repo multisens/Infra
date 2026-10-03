@@ -1,0 +1,107 @@
+{
+  "comment": "Casos cruzados de formato de chave RSA (registro C.6.8.2). MESMO arquivo em infra/edgegateway/plugin/testdata/keyformats.json (borda, keys_test.go) e tv3ws/test/fixtures/keyformats.json (tv3ws, bind-token.test.ts): os dois parsers tem de concordar em todos. So material publico (chave privada e gerada na hora pelos testes).",
+  "cases": [
+    {
+      "name": "PEM PUBLIC KEY (SPKI)",
+      "alg": "RS256",
+      "ok": true,
+      "key": "-----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC2ZBL9y+DVhwyveliMVjORDjrZ\nE4jeaOD0tOYmswV293EF0PjisjZ3OIyjgvP3v7eohahxuUrUckxZqNzHNjJXWDaW\n+BZZdvi9JINl2BAyTTnMmv9j0A4/TAGWuevPwWys5gf6m/AEtuKD0RQfV/8MoPIC\n0SiJBAZ4kSZ04ksJ1wIDAQAB\n-----END PUBLIC KEY-----\n"
+    },
+    {
+      "name": "PEM RSA PUBLIC KEY (PKCS#1)",
+      "alg": "RS256",
+      "ok": true,
+      "key": "-----BEGIN RSA PUBLIC KEY-----\nMIGJAoGBALZkEv3L4NWHDK96WIxWM5EOOtkTiN5o4PS05iazBXb3cQXQ+OKyNnc4\njKOC8/e/t6iFqHG5StRyTFmo3Mc2MldYNpb4Fll2+L0kg2XYEDJNOcya/2PQDj9M\nAZa568/BbKzmB/qb8AS24oPRFB9X/wyg8gLRKIkEBniRJnTiSwnXAgMBAAE=\n-----END RSA PUBLIC KEY-----\n"
+    },
+    {
+      "name": "PEM com espacos e quebras nas pontas",
+      "alg": "RS256",
+      "ok": true,
+      "key": "\n  -----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC2ZBL9y+DVhwyveliMVjORDjrZ\nE4jeaOD0tOYmswV293EF0PjisjZ3OIyjgvP3v7eohahxuUrUckxZqNzHNjJXWDaW\n+BZZdvi9JINl2BAyTTnMmv9j0A4/TAGWuevPwWys5gf6m/AEtuKD0RQfV/8MoPIC\n0SiJBAZ4kSZ04ksJ1wIDAQAB\n-----END PUBLIC KEY-----\n\n\n"
+    },
+    {
+      "name": "base64 padrao de DER SPKI",
+      "alg": "RS256",
+      "ok": true,
+      "key": "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC2ZBL9y+DVhwyveliMVjORDjrZE4jeaOD0tOYmswV293EF0PjisjZ3OIyjgvP3v7eohahxuUrUckxZqNzHNjJXWDaW+BZZdvi9JINl2BAyTTnMmv9j0A4/TAGWuevPwWys5gf6m/AEtuKD0RQfV/8MoPIC0SiJBAZ4kSZ04ksJ1wIDAQAB"
+    },
+    {
+      "name": "base64 padrao de DER PKCS#1, com preenchimento",
+      "alg": "RS256",
+      "ok": true,
+      "key": "MIGJAoGBALZkEv3L4NWHDK96WIxWM5EOOtkTiN5o4PS05iazBXb3cQXQ+OKyNnc4jKOC8/e/t6iFqHG5StRyTFmo3Mc2MldYNpb4Fll2+L0kg2XYEDJNOcya/2PQDj9MAZa568/BbKzmB/qb8AS24oPRFB9X/wyg8gLRKIkEBniRJnTiSwnXAgMBAAE="
+    },
+    {
+      "name": "base64 padrao sem preenchimento",
+      "alg": "RS256",
+      "ok": true,
+      "key": "MIGJAoGBALZkEv3L4NWHDK96WIxWM5EOOtkTiN5o4PS05iazBXb3cQXQ+OKyNnc4jKOC8/e/t6iFqHG5StRyTFmo3Mc2MldYNpb4Fll2+L0kg2XYEDJNOcya/2PQDj9MAZa568/BbKzmB/qb8AS24oPRFB9X/wyg8gLRKIkEBniRJnTiSwnXAgMBAAE"
+    },
+    {
+      "name": "base64url de DER SPKI, sem preenchimento",
+      "alg": "RS256",
+      "ok": true,
+      "key": "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC2ZBL9y-DVhwyveliMVjORDjrZE4jeaOD0tOYmswV293EF0PjisjZ3OIyjgvP3v7eohahxuUrUckxZqNzHNjJXWDaW-BZZdvi9JINl2BAyTTnMmv9j0A4_TAGWuevPwWys5gf6m_AEtuKD0RQfV_8MoPIC0SiJBAZ4kSZ04ksJ1wIDAQAB"
+    },
+    {
+      "name": "base64 com quebras de linha",
+      "alg": "RS256",
+      "ok": true,
+      "key": "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC2ZBL9y+DVhwyveliMVjORDjrZ\nE4jeaOD0tOYmswV293EF0PjisjZ3OIyjgvP3v7eohahxuUrUckxZqNzHNjJXWDaW\n+BZZdvi9JINl2BAyTTnMmv9j0A4/TAGWuevPwWys5gf6m/AEtuKD0RQfV/8MoPIC\n0SiJBAZ4kSZ04ksJ1wIDAQAB"
+    },
+    {
+      "name": "certificado X.509 em PEM",
+      "alg": "RS256",
+      "ok": false,
+      "key": "-----BEGIN CERTIFICATE-----\nMIICKDCCAZGgAwIBAgIUdZlmOrtY7QL1WFmZpyf5O+CNQA8wDQYJKoZIhvcNAQEL\nBQAwJjEkMCIGA1UEAwwbdHYzMC10ZXN0ZS1mb3JtYXRvLWRlLWNoYXZlMB4XDTI2\nMTAwMzAyNTMwNVoXDTM2MDkzMDAyNTMwNVowJjEkMCIGA1UEAwwbdHYzMC10ZXN0\nZS1mb3JtYXRvLWRlLWNoYXZlMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC2\nZBL9y+DVhwyveliMVjORDjrZE4jeaOD0tOYmswV293EF0PjisjZ3OIyjgvP3v7eo\nhahxuUrUckxZqNzHNjJXWDaW+BZZdvi9JINl2BAyTTnMmv9j0A4/TAGWuevPwWys\n5gf6m/AEtuKD0RQfV/8MoPIC0SiJBAZ4kSZ04ksJ1wIDAQABo1MwUTAdBgNVHQ4E\nFgQUBY3U3dFijUxDl/CFjdMJWMNh2EQwHwYDVR0jBBgwFoAUBY3U3dFijUxDl/CF\njdMJWMNh2EQwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOBgQCemqpt\nCQx+dBDkszE19+KT5KygvhDoLE4B3OEuyZhVaUX1Cm/ptOHWfau7rF6xDfSbwX1v\nhC7zwA1VT0nuQpYIKFVYoubqzPQCYyaLmb0hxvdK4uoCuN3kNR/VjEv5h4l9Xypp\nxXX7Se4+n5r5WpC90elZkIqDSrCCsnM9gN7jEQ==\n-----END CERTIFICATE-----\n"
+    },
+    {
+      "name": "texto antes do cabecalho PEM",
+      "alg": "RS256",
+      "ok": false,
+      "key": "chave da emissora:\n-----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC2ZBL9y+DVhwyveliMVjORDjrZ\nE4jeaOD0tOYmswV293EF0PjisjZ3OIyjgvP3v7eohahxuUrUckxZqNzHNjJXWDaW\n+BZZdvi9JINl2BAyTTnMmv9j0A4/TAGWuevPwWys5gf6m/AEtuKD0RQfV/8MoPIC\n0SiJBAZ4kSZ04ksJ1wIDAQAB\n-----END PUBLIC KEY-----\n"
+    },
+    {
+      "name": "PEM com rotulo fora da lista",
+      "alg": "RS256",
+      "ok": false,
+      "key": "-----BEGIN FOO KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC2ZBL9y+DVhwyveliMVjORDjrZ\nE4jeaOD0tOYmswV293EF0PjisjZ3OIyjgvP3v7eohahxuUrUckxZqNzHNjJXWDaW\n+BZZdvi9JINl2BAyTTnMmv9j0A4/TAGWuevPwWys5gf6m/AEtuKD0RQfV/8MoPIC\n0SiJBAZ4kSZ04ksJ1wIDAQAB\n-----END FOO KEY-----\n"
+    },
+    {
+      "name": "PEM de chave EC",
+      "alg": "RS256",
+      "ok": false,
+      "key": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAErfFg9sTASkJvZQxGdkcm1hQ6Ejol\nouvgYGqkZTlrr9d0w8OypwJW2rzNJh0LTPXzmO3C+hV3jlc3JTb9ZmCMiw==\n-----END PUBLIC KEY-----\n"
+    },
+    {
+      "name": "base64 misturando os alfabetos padrao e URL",
+      "alg": "RS256",
+      "ok": false,
+      "key": "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC2ZBL9y-DVhwyveliMVjORDjrZE4jeaOD0tOYmswV293EF0PjisjZ3OIyjgvP3v7eohahxuUrUckxZqNzHNjJXWDaW+BZZdvi9JINl2BAyTTnMmv9j0A4/TAGWuevPwWys5gf6m/AEtuKD0RQfV/8MoPIC0SiJBAZ4kSZ04ksJ1wIDAQAB"
+    },
+    {
+      "name": "base64 com preenchimento a mais",
+      "alg": "RS256",
+      "ok": false,
+      "key": "MIGJAoGBALZkEv3L4NWHDK96WIxWM5EOOtkTiN5o4PS05iazBXb3cQXQ+OKyNnc4jKOC8/e/t6iFqHG5StRyTFmo3Mc2MldYNpb4Fll2+L0kg2XYEDJNOcya/2PQDj9MAZa568/BbKzmB/qb8AS24oPRFB9X/wyg8gLRKIkEBniRJnTiSwnXAgMBAAE=="
+    },
+    {
+      "name": "base64 com preenchimento desnecessario",
+      "alg": "RS256",
+      "ok": false,
+      "key": "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC2ZBL9y+DVhwyveliMVjORDjrZE4jeaOD0tOYmswV293EF0PjisjZ3OIyjgvP3v7eohahxuUrUckxZqNzHNjJXWDaW+BZZdvi9JINl2BAyTTnMmv9j0A4/TAGWuevPwWys5gf6m/AEtuKD0RQfV/8MoPIC0SiJBAZ4kSZ04ksJ1wIDAQAB="
+    },
+    {
+      "name": "base64 de algo que nao e DER",
+      "alg": "RS256",
+      "ok": false,
+      "key": "bmFvIGUgY2hhdmU="
+    },
+    {
+      "name": "lixo",
+      "alg": "RS256",
+      "ok": false,
+      "key": "isto nao e chave"
+    }
+  ]
+}

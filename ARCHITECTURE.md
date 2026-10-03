@@ -1,5 +1,20 @@
 # aop_infra
 
+> **Documento histórico (2026-10-02).** Descreve o layout `aop_infra` anterior à consolidação de set/2026 e **não** o estado corrente. Os nomes de pasta, serviço e script são os da época: `ccws/` e `CCWS` são o atual `tv3ws`, e `ccws-relay.js` não existe mais. Também deixaram de valer as seguintes afirmações técnicas:
+>
+> - **Bug do "Bearer".** O tv3ws hoje remove o prefixo `Bearer` antes de validar.
+> - **`exp` comentado.** O tv3ws confere `exp`, e a borda exige `exp`.
+> - **Middleware Node e plugin `consent-validator`.** Foram removidos. O plugin nunca validou nada: fazia proxy de qualquer caminho.
+> - **ACL e consentimento no broker.** Saíram no item 3.
+>
+> O estado corrente está documentado em:
+> - [`README.md`](README.md);
+> - [`docs/04-pipeline-http.md`](docs/04-pipeline-http.md);
+> - [`docs/05-autenticacao.md`](docs/05-autenticacao.md);
+> - [`edgegateway/plugin/README.md`](edgegateway/plugin/README.md).
+>
+> O conteúdo abaixo foi mantido sem alteração, como registro.
+
 Infraestrutura distribuída do projeto GingaDistrib, desenvolvido no contexto do CEFET.
 Simula um **receptor de TV 3.0** (padrão brasileiro de TV digital) usando microserviços.
 Cada serviço vive em sua própria pasta com seu `docker-compose.yml` isolado.

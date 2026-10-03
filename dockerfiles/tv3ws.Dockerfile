@@ -1,5 +1,5 @@
-# CCWS — TV 3.0 Ginga CC WebServices (TypeScript)
-# Build context: ./ccws
+# tv3ws — TV 3.0 Ginga CC WebServices (TypeScript)
+# Build context: ./tv3ws
 # Additional contexts (via --build-context):
 #   tv30-data    -> infra/user-files-template
 #   tv30-scripts -> infra/dockerfiles
@@ -19,7 +19,7 @@ COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=builder /app/dist ./dist
 # Template embutido + entrypoint que popula /user-files se vazio
-# (CCWS le userData.json no initFromRedis se Redis estiver vazio).
+# (o tv3ws le userData.json no initFromRedis se Redis estiver vazio).
 COPY --from=tv30-data    / /opt/user-files-template
 COPY --from=tv30-scripts /entrypoint-user-files.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

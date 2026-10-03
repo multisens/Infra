@@ -24,6 +24,19 @@ services:
       # Linux: infra em containers + servico rodando no host via npm — ver
       # docs/dev-local.md na raiz do TV30)
       EDGE_VARIANT: ${EDGE_VARIANT:-linux}
+      # Validacao de credenciais na borda (plugin tv30-auth, item 9 — ver
+      # edgegateway/plugin/README.md). O access token eh emitido pelo tv3ws:
+      # JWT_SECRET/JWT_ISSUER tem que ser OS MESMOS dele (mesmo padrao de dev
+      # do compose raiz). Na variante windows (dev-host) a borda continua
+      # lendo o Redis do container (redis) — correto: e o mesmo Redis.
+      JWT_SECRET: ${JWT_SECRET:-tv30-dev-secret-nao-usar-em-producao}
+      JWT_ISSUER: ${JWT_ISSUER:-GenericIssuer}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # warn (padrao) = nada eh bloqueado, so loga e marca X-TV30-Auth-Warn
+      # (clientes como o Guarana ainda nao obtem token); enforce = bloqueia
+      # com 404 + corpo C.3.2. Valor invalido derruba o container.
+      AUTH_ENFORCE: ${AUTH_ENFORCE:-warn}
     extra_hosts:
       # habilita host.docker.internal em Linux (necessario pro cenario de
       # desenvolvimento com backend no host; inocuo no deploy padrao)
@@ -37,6 +50,10 @@ services:
       # ocupada por processo nativo (porta fixa da norma).
       preflight:
         condition: service_completed_successfully
+      # o plugin consulta o Redis (clientes bloqueados, origens associadas,
+      # servico corrente, chaves de bind-context): so sobe com ele semeado.
+      redis:
+        condition: service_healthy
     networks:
       - ginga_net
     restart: unless-stopped

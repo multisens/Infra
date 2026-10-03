@@ -1,5 +1,12 @@
 # Gestão de Usuários e Perfis — TV 3.0
 
+> **Nota (2026-10-03):** documento anterior à consolidação; só o nome do componente foi atualizado. Três trechos não correspondem ao código atual:
+> - **Criação de perfil:** o gestor de perfis do AoP grava direto no Redis (`aop/src/modules/profile-manager/service.js`, `createProfile`) e não toca o `userData.json`, ao contrário do diagrama "UI->>FS: Salva userData.json".
+> - **Sync do tv3ws:** `user:{userId}:consent` é mesclado com `SADD`, **sem** `DEL` antes (`tv3ws/src/api/user/service.ts`, "Merge (SADD sem DEL)"); o `DEL user:{userId}` vale só para o hash de atributos.
+> - **Broker:** o plugin Mosquitto **não** consulta `user:{userId}:consent` nem faz controle de acesso; ele só valida esquema de payload (`infra/mqtt-broker/plugin/src/mosquitto_plugin.c`).
+>
+> Ver `docs/modelo-redis.md` e `docs/mqtt-topicos.md` na raiz do TV30. Revisão geral: pendente (backlog).
+
 Descreve o modelo de dados de usuários e perfis conforme a **ABNT NBR 25608**,
 a estratégia de persistência no Redis e os fluxos de leitura e escrita no sistema.
 
@@ -112,18 +119,18 @@ sequenceDiagram
     participant UI as AoP — Criador de Perfil
     participant FS as Sistema de Arquivos
     participant MQTT as Broker MQTT
-    participant CCWS as CCWS
+    participant TV3WS as tv3ws
     participant REDIS as Redis
 
     UI->>FS: Salva userData.json\n(novo usuário adicionado)
     UI->>MQTT: PUBLISH aop/users\n"/path/to/userData.json"
 
-    MQTT->>CCWS: aop/users (retain)
-    CCWS->>FS: Lê userData.json
-    CCWS->>REDIS: SADD users:index {userId}
-    CCWS->>REDIS: HSET user:{userId} {atributos}
-    CCWS->>REDIS: DEL user:{userId}:consent
-    CCWS->>REDIS: SADD user:{userId}:consent {serviceIds}
+    MQTT->>TV3WS: aop/users (retain)
+    TV3WS->>FS: Lê userData.json
+    TV3WS->>REDIS: SADD users:index {userId}
+    TV3WS->>REDIS: HSET user:{userId} {atributos}
+    TV3WS->>REDIS: DEL user:{userId}:consent
+    TV3WS->>REDIS: SADD user:{userId}:consent {serviceIds}
 ```
 
 ---
@@ -183,17 +190,17 @@ O filtro de expressão suporta:
 ```mermaid
 sequenceDiagram
     participant C as Dispositivo Remoto
-    participant CCWS as CCWS
+    participant TV3WS as tv3ws
     participant REDIS as Redis
     participant MQTT as Broker MQTT
     participant AOP as AoP
 
-    C->>CCWS: POST /tv3/current-service/users/current-user\n{ "id": "uuid-do-usuario" }
-    CCWS->>REDIS: SET session:current-user {uuid}
-    CCWS->>MQTT: PUBLISH aop/currentUser {uuid} (retain)
+    C->>TV3WS: POST /tv3/current-service/users/current-user\n{ "id": "uuid-do-usuario" }
+    TV3WS->>REDIS: SET session:current-user {uuid}
+    TV3WS->>MQTT: PUBLISH aop/currentUser {uuid} (retain)
     MQTT->>AOP: aop/currentUser
     AOP->>AOP: Atualiza interface\n(seletor de perfil)
-    CCWS-->>C: 200 OK
+    TV3WS-->>C: 200 OK
 ```
 
 ---
@@ -211,7 +218,7 @@ user:{userId}:consent    Set
 
 - O plugin Mosquitto consulta `SISMEMBER user:{userId}:consent {serviceId}` para
   autorizar publicações MQTT vinculadas a serviços.
-- O CCWS aplica o mesmo filtro nas APIs REST — usuários sem consentimento para o
+- O tv3ws aplica o mesmo filtro nas APIs REST — usuários sem consentimento para o
   `currentService` não aparecem em listagens nem têm atributos expostos.
 - Centralizar no Redis elimina inconsistência entre serviços e atende à LGPD.
 
