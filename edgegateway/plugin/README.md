@@ -23,7 +23,12 @@ Toda resposta leva `Access-Control-Allow-Origin: *` (C.4.1.9.2), também a do cl
 
 Falhas de infraestrutura têm código próprio:
 - **Redis fora do ar.** Em `warn`, o plugin registra no log e deixa passar. Em `enforce`, responde 404 com `{error: 200}`.
-- **Panic no roteador.** O plugin responde 404 com `{error: 200}` em vez de deixar a conexão resetar.
+- **Backend lento ou fora do ar (resposta 5xx do KrakenD).** O KrakenD responde 500 **sem corpo** (`Content-Length: 0`) quando o backend não responde dentro do timeout do endpoint (padrão de 2 s; só as rotas com `timeout` no `routes.json` têm outro), recusa a conexão ou tem um nome que não resolve. O plugin envolve o `ResponseWriter` do roteador e retém qualquer status 5xx, sem repassar cabeçalho nem corpo. No lugar, responde 404 com `{"error": 200, "description": "Platform resource unavailable: 500 do gateway em <n> ms (backend lento ou fora do ar)"}` (C.3.2.1; Tabela C.1, erro 200: "dependence on an unavailable resource"). Os timeouts não mudam.
+  - O tempo na descrição separa os dois casos: perto do timeout do endpoint, o backend está lento; perto de zero, está fora do ar. O log registra `[tv30-auth] BACKEND ... status_gateway=500 ms=<n>`, e o motivo exato fica na linha `KRAKEND ERROR: [ENDPOINT: ...]` logo antes.
+  - O tv3ws nunca responde 5xx: a camada comum de erro (`tv3ws/src/util/error.ts`) só emite 404, e nenhum handler escreve 5xx. Todo 5xx que chega ao plugin vem, portanto, do próprio KrakenD. Como as rotas são `no-op`, um 5xx de backend também seria trocado. Respostas que não são 5xx passam intactas, inclusive o erro C.3.2 do tv3ws.
+  - Os cabeçalhos da resposta retida saem, porque não descrevem o corpo novo (`Content-Encoding`, `Content-Range`, `X-Powered-By` etc.). Ficam os de CORS (`Access-Control-*`, `Vary`), os do KrakenD (`X-Krakend*`) e, em `warn`, o `X-TV30-Auth-Warn`: ele diz o que o `enforce` faria com a requisição, e isso não muda porque o backend falhou.
+  - Medido em 03/10 num KrakenD 2.7.2 isolado: sem o plugin, timeout, conexão recusada e nome que não resolve davam 500 com `Content-Length: 0`; com o plugin, os três viram 404 + `{error: 200}` com `Content-Type: application/json`, `Access-Control-Allow-Origin: *` e `API-Version`, nos dois modos.
+- **Panic no roteador.** Se o cabeçalho ainda não saiu, o plugin responde 404 com `{error: 200}` em vez de deixar a conexão resetar. Se já saiu, a resposta não tem como virar erro: o plugin aborta a conexão (`http.ErrAbortHandler`) em vez de emendar um corpo de erro no meio da resposta.
 
 ### Bind-token: verificação em quatro frentes (C.4.1.4)
 
@@ -81,7 +86,7 @@ O plugin lê o ambiente do container, definido no serviço `edgegateway` de `inf
 | `REDIS_HOST` / `REDIS_PORT` | `redis` / `6379` | Mesmo Redis do resto da stack. A variante `windows` (dev-host) também usa este Redis. |
 | `REDIS_TIMEOUT_MS` | `500` | Timeout de cada comando. |
 
-Exceções que valem nos dois modos: o erro 100 (rota não declarada) e o 200 (panic do roteador). Nenhum cliente depende de uma rota não declarada, porque ela nunca chegou ao tv3ws. O modo `warn` existe porque clientes como o Guaraná ainda não obtêm token.
+Exceções que valem nos dois modos: o erro 100 (rota não declarada) e o 200 (panic do roteador ou resposta 5xx do KrakenD). Nenhum cliente depende de uma rota não declarada, porque ela nunca chegou ao tv3ws, nem de um 500 sem corpo, que o tv3ws nunca emite. O modo `warn` existe porque clientes como o Guaraná ainda não obtêm token.
 
 **Morre-inteiro.** O KrakenD só emite um aviso e sobe **sem** o plugin quando o registro falha. Por isso, configuração inválida derruba o processo com `os.Exit(1)` e uma linha `[tv30-auth] FATAL ...`, e o entrypoint derruba o container. Os casos são:
 - `JWT_SECRET` ausente;
@@ -115,6 +120,7 @@ Os testes (`*_test.go`) cobrem:
 - casamento de rota (literal antes de `{param}`);
 - a decisão completa por classe e rota;
 - `warn` e `enforce`, preflight `OPTIONS`, `OPTIONS` sem preflight e panic;
+- a troca do 5xx do KrakenD por 404 + `{error: 200}`: cabeçalhos que saem e que ficam, aviso do `warn` mantido, respostas não 5xx intactas, `Flush`, `Hijack` e `CloseNotify` (o `gin.ResponseWriter` do gin v1.9.1, embutido no KrakenD 2.7.2, faz type assertion sem `ok` para os três), panic antes e depois do cabeçalho, e um teste ponta a ponta com `net/http` que imita o endpoint `no-op` do KrakenD diante de um backend lento e de um fora do ar;
 - o cliente Redis (servidor RESP falso, reconexão e timeout).
 
 **Teste de integração com a stack real:** `scripts/test-auth.sh`, na raiz do TV30. Ele roda contra 44642 e 44643. Em `warn`, verifica o aviso 107 e o erro 100. Depois recria só o `edgegateway` em `enforce` e cobre:
@@ -128,14 +134,17 @@ No fim, o script volta a borda ao modo anterior e desfaz o que semeou no Redis.
 
 `testdata/jsonwebtoken.json` traz tokens gerados pelo `jsonwebtoken` (a biblioteca do tv3ws). Eles servem para conferir a interoperabilidade. O arquivo tem só material público e segredos de teste.
 
+## Decidido (Luís, 03/10)
+
+- **L1. Reconhecimento do local associado pelo `Origin`: risco aceito.** O critério continua sendo só o `Origin` presente em `origins:associated`, sem mudança de comportamento. Comentário no código: `DECIDIDO (Luis, 03/10): risco aceito`, em `handler.go`.
+  - **Risco aceito.** Fora do navegador, o `Origin` pode ser forjado. Em `enforce`, um `Origin` forjado presente em `origins:associated` passa como associado e dispensa access token e bind-token em toda rota que admite o associado, inclusive `POST` e `DELETE /tv3/bind-context`.
+  - O `Origin` também não distingue as apps de emissora servidas por proxy na origem do AoP. Como o AoP grava em `origins:associated` a origem própria da app (alvo do proxy), e não a dele, essas apps **não** são reconhecidas como associadas: em `warn` levam `X-TV30-Auth-Warn: 107`, e em `enforce` seriam bloqueadas. Isso **não** foi decidido em 03/10: a origem própria por app (P1.3) continua aberta e é pré-requisito do `enforce`.
+  - A norma (C.4.1.7, p. 206; p. 224 do PDF) manda o associado usar uma porta de origem atribuída pelo gerenciador de componentes ("A source port shall be used") e diz, na mesma seção, que o mecanismo de diferenciação é decisão de implementação. O reconhecimento pelo `Origin` é decisão de implementação deste testbed.
+
 ## PENDENTE (Joel)
 
 Comportamentos provisórios, cada um marcado no código com `PENDENTE (Joel)`:
 
-- **L1. Como reconhecer o local associado.** Hoje o critério é só o `Origin` presente em `origins:associated`.
-  - A C.4.1.7 sugere usar a porta de origem.
-  - O `Origin` não distingue as apps de emissora servidas por proxy na origem do AoP.
-  - Fora do navegador, o `Origin` pode ser forjado.
 - **L2. `{serviceContextId}` no caminho.** O tv3ws usa um `serviceContextId` constante (`tv3ws/src/core.ts`), copiado para `routes.json` em `auth.current_service_context_id`. Nas rotas `token+bind`, só `current-service` e essa constante contam como serviço corrente; qualquer outro valor dá 108.
   - A C.3.5 diz que o `<service-context-id>` segue o `globalServiceId` do SLT. Isso não foi implementado.
 - **L3. TLS na borda.** A 44643 ainda é HTTP. O 106 por protocolo (cliente não local usando HTTP) não é aplicado pela borda.
@@ -144,6 +153,5 @@ Comportamentos provisórios, cada um marcado no código com `PENDENTE (Joel)`:
 - **L7. Revogação de chave.** Revogar uma chave não libera os recursos compartilhados (C.4.4). Não foi implementado.
 - **Associado em contexto de outra emissora.** A dispensa de bind-token vale para o próprio contexto do associado. A borda não restringe o acesso dele a `/tv3/{serviceContextId}/...` de outra emissora.
 - **Sem serviço corrente** (`session:current-service-id` vazio). O resultado é 108; a norma também prevê 300 nessas APIs.
-- **Redis sem senha e publicado no host (6379).** Quem alcança a porta pode gravar chaves de bind ou origens associadas. Isso é risco, não implementação: a borda confia no Redis. Precisa de decisão antes de qualquer `enforce` (registrado também em `docs/avaliacao-item9-credenciais.md`). Opções: publicar só em `127.0.0.1` (o dev-host continua funcionando, porque usa `127.0.0.1` e `--network host`) ou exigir senha no Redis.
-- **Em `enforce`, o `Origin` é a porta de entrada sem credencial (L1).** Um `Origin` forjado fora do navegador, presente em `origins:associated`, dispensa access token e bind-token em toda rota que admite o associado, inclusive `POST` e `DELETE /tv3/bind-context`.
+- **Redis sem senha e publicado no host (6379). Decidido pelo Luís em 03/10:** a conexão com o banco fica como está, sem senha; só a interface administrativa (redis-commander) passou a exigir login. O risco continua: quem alcança a porta pode gravar chaves de bind ou origens associadas, e a borda confia no Redis (registrado em `docs/avaliacao-item9-credenciais.md`, `docs/decisoes-pendentes.md` A1 e `KNOWN-ISSUES.md`, na raiz). Não é comportamento provisório do plugin e não tem marcador no código.
 - **`/tv3/token` sem `Origin` (L4).** O 106 ao associado depende do `Origin`. Um `/tv3/token` chamado fora do navegador passa, e o tv3ws emite o token com a classe gravada do cliente. Um access token válido de outra classe também prevalece sobre o `Origin`.

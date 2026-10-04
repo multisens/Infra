@@ -24,8 +24,10 @@
 // Modo (AUTH_ENFORCE): warn (padrao) nao bloqueia nada de credencial — loga
 // "[tv30-auth] WARN ..." e acrescenta o cabecalho X-TV30-Auth-Warn: <codigo>;
 // enforce responde 404 + corpo C.3.2. O erro 100 (rota nao declarada) e o
-// 200 (panic do roteador) valem nos dois modos: nao ha cliente que dependa
-// deles (a rota nao declarada nunca chegou ao tv3ws).
+// 200 (panic do roteador, ou resposta 5xx do KrakenD — backend lento ou
+// fora do ar, que sairia como 500 sem corpo) valem nos dois modos: nao ha
+// cliente que dependa deles (a rota nao declarada nunca chegou ao tv3ws, e
+// o tv3ws nunca responde 5xx).
 //
 // SOMENTE biblioteca padrao (ver go.mod).
 package main

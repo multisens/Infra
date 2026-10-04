@@ -133,7 +133,7 @@ Serviço interno
 
 ### Redis (`redis/docker-compose.yml`)
 - `redis:7-alpine`, porta `6379`, persistência AOF
-- `redis-commander` na porta `8081` (UI web)
+- `redis-commander` (UI web de debug) embutido no container `redis`, porta `18081` no container e porta de host dinâmica (`docker port redis 18081`), com login (D-L1, Luís, 03/10; usuário e senha padrão no `README.md` da raiz do TV30)
 - Usa `ginga_net` como `external: true` — a rede agora é criada pelo `docker-compose.yml` da raiz
 
 ### KrakenD External (`gateway-external/docker-compose.yml`)
