@@ -1,12 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -403,5 +409,312 @@ func TestConfigInvalida(t *testing.T) {
 		"cors_allow_headers": []interface{}{"Content-Type", " bind-token "}}, env(ok))
 	if err != nil || c.CORSAllowHeaders != "Content-Type, bind-token" {
 		t.Fatalf("cors_allow_headers: %v %q", err, c.CORSAllowHeaders)
+	}
+}
+
+// --- P1: 5xx do gateway (backend lento ou fora do ar) vira 404 + {error:200} ---
+
+// krakend500 imita o endpoint do KrakenD quando o proxy falha (timeout,
+// conexao recusada): cabecalhos proprios e c.Status(500), sem corpo.
+var krakend500 = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	hd := w.Header()
+	hd.Set("X-Krakend", "Version 2.7.2")
+	hd.Set("X-Krakend-Completed", "false")
+	hd.Set("Access-Control-Expose-Headers", "Content-Length, X-TV30-Auth-Warn")
+	hd.Set("Vary", "Origin")
+	w.WriteHeader(http.StatusInternalServerError)
+})
+
+func c32Description(rec *httptest.ResponseRecorder) string {
+	var body struct {
+		Description string `json:"description"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	return body.Description
+}
+
+func TestGateway5xxVira200(t *testing.T) {
+	backend503 := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hd := w.Header()
+		hd.Set("Content-Type", "text/html")
+		hd.Set("Content-Encoding", "gzip")
+		hd.Set("Content-Length", "32")
+		hd.Set("X-Powered-By", "Express")
+		hd.Set("API-Version", "2.1")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("<html>Service Unavailable</html>"))
+	})
+	tok := map[string]string{"Authorization": accessFor(t, "cli-1", classNonLocal)}
+	for _, mode := range []string{modeWarn, modeEnforce} {
+		for _, c := range []struct {
+			name   string
+			next   http.Handler
+			status int
+			kept   []string
+		}{
+			{"500 sem corpo", krakend500, 500, []string{"X-Krakend", "X-Krakend-Completed", "Access-Control-Expose-Headers", "Vary"}},
+			{"503 com corpo", backend503, 503, nil},
+		} {
+			h := newTestHandler(t, mode, baseStore(), c.next)
+			rec := serve(h, "GET", "/tv3/current-service", tok)
+			checkC32(t, rec, 200)
+			want := errorText[200] + ": " + strconv.Itoa(c.status) + " do gateway em 0 ms (backend lento ou fora do ar)"
+			if d := c32Description(rec); d != want {
+				t.Errorf("%s %s: description %q, esperado %q", mode, c.name, d, want)
+			}
+			if cl := rec.Header().Get("Content-Length"); cl != strconv.Itoa(rec.Body.Len()) {
+				t.Errorf("%s %s: Content-Length %q, corpo de %d bytes", mode, c.name, cl, rec.Body.Len())
+			}
+			// cabecalhos do backend nao descrevem o corpo novo
+			for _, k := range []string{"Content-Encoding", "X-Powered-By"} {
+				if v := rec.Header().Get(k); v != "" {
+					t.Errorf("%s %s: %s=%q deveria ter saido", mode, c.name, k, v)
+				}
+			}
+			if v := rec.Header().Get("API-Version"); v != "2.0" {
+				t.Errorf("%s %s: API-Version %q, esperado o da borda (2.0)", mode, c.name, v)
+			}
+			for _, k := range c.kept {
+				if rec.Header().Get(k) == "" {
+					t.Errorf("%s %s: %s deveria ficar", mode, c.name, k)
+				}
+			}
+			if v := rec.Header().Get(warnHeader); v != "" {
+				t.Errorf("%s %s: requisicao valida recebeu aviso %q", mode, c.name, v)
+			}
+		}
+	}
+}
+
+// Em warn, a requisicao sem credencial chega ao backend; se ele falha, o erro
+// eh 200 e o aviso (o que o enforce faria) continua no cabecalho.
+func TestGateway5xxMantemAvisoDoWarn(t *testing.T) {
+	rec := serve(newTestHandler(t, modeWarn, baseStore(), krakend500), "GET", "/tv3/current-service", nil)
+	checkC32(t, rec, 200)
+	if v := rec.Header().Get(warnHeader); v != "107" {
+		t.Errorf("%s=%q, esperado 107", warnHeader, v)
+	}
+	// em enforce a mesma requisicao nem chega ao backend
+	checkC32(t, serve(newTestHandler(t, modeEnforce, baseStore(), krakend500), "GET", "/tv3/current-service", nil), 107)
+}
+
+// A descricao traz o tempo ate o 5xx: perto do timeout do endpoint (2 s) eh
+// backend lento; perto de zero, backend fora do ar.
+func TestGateway5xxDescricaoComTempo(t *testing.T) {
+	h := newTestHandler(t, modeWarn, baseStore(), krakend500)
+	calls := 0
+	h.now = func() time.Time {
+		calls++
+		if calls == 1 {
+			return t0
+		}
+		return t0.Add(2003 * time.Millisecond)
+	}
+	rec := serve(h, "GET", "/health", nil)
+	checkC32(t, rec, 200)
+	if d := c32Description(rec); !strings.Contains(d, ": 500 do gateway em 2003 ms") {
+		t.Errorf("description %q", d)
+	}
+}
+
+// Resposta que nao eh 5xx passa intacta: status, corpo e cabecalhos do
+// backend (inclusive o erro C.3.2 do proprio tv3ws).
+func TestRespostaNormalPassaIntacta(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		status int // 0 = sem WriteHeader (200 implicito)
+		body   string
+	}{
+		{"200 implicito", 0, `{"status":"ok"}`},
+		{"erro C.3.2 do tv3ws", 404, `{"error":101,"description":"Illegal argument value: clientid"}`},
+		{"206 parcial", 206, "parte"},
+		{"204 sem corpo", 204, ""},
+	} {
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Powered-By", "Express")
+			if c.status != 0 {
+				w.WriteHeader(c.status)
+			}
+			if c.body != "" {
+				w.Write([]byte(c.body))
+			}
+		})
+		rec := serve(newTestHandler(t, modeEnforce, baseStore(), next), "GET", "/health", nil)
+		want := c.status
+		if want == 0 {
+			want = 200
+		}
+		if rec.Code != want || rec.Body.String() != c.body || rec.Header().Get("X-Powered-By") != "Express" {
+			t.Errorf("%s: status %d corpo %q X-Powered-By %q", c.name, rec.Code, rec.Body.String(), rec.Header().Get("X-Powered-By"))
+		}
+	}
+}
+
+// Flush com 5xx retido nao manda o cabecalho; sem 5xx, repassa.
+func TestFlush(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+		w.(http.Flusher).Flush()
+		w.Write([]byte("descartado"))
+	})
+	checkC32(t, serve(newTestHandler(t, modeWarn, baseStore(), next), "GET", "/health", nil), 200)
+
+	next = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("a"))
+		w.(http.Flusher).Flush()
+	})
+	rec := serve(newTestHandler(t, modeWarn, baseStore(), next), "GET", "/health", nil)
+	if !rec.Flushed || rec.Code != 200 || rec.Body.String() != "a" {
+		t.Errorf("flush sem 5xx: flushed=%v status %d corpo %q", rec.Flushed, rec.Code, rec.Body.String())
+	}
+}
+
+// Panic depois que o cabecalho saiu: a resposta nao tem como virar erro;
+// a conexao eh abortada (http.ErrAbortHandler) em vez de receber um corpo
+// de erro emendado no meio.
+func TestPanicDepoisDoCabecalhoAborta(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte("parcial"))
+		panic("falha no meio")
+	})
+	h := newTestHandler(t, modeWarn, baseStore(), next)
+	rec := httptest.NewRecorder()
+	p := func() (p interface{}) {
+		defer func() { p = recover() }()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", "/health", nil))
+		return nil
+	}()
+	if p != http.ErrAbortHandler {
+		t.Fatalf("panic %v, esperado http.ErrAbortHandler", p)
+	}
+	if rec.Code != 200 || rec.Body.String() != "parcial" {
+		t.Errorf("status %d corpo %q: a resposta ja enviada nao deveria mudar", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPanicCom5xxRetido(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+		panic("invalid node type")
+	})
+	rec := serve(newTestHandler(t, modeWarn, baseStore(), next), "GET", "/health", nil)
+	checkC32(t, rec, 200)
+	if d := c32Description(rec); d != errorText[200]+": falha interna do gateway" {
+		t.Errorf("description %q", d)
+	}
+}
+
+// hijackRec: writer com Hijacker e CloseNotifier, como o do net/http.
+type hijackRec struct {
+	*httptest.ResponseRecorder
+	ch chan bool
+}
+
+func (h *hijackRec) Hijack() (net.Conn, *bufio.ReadWriter, error) { return nil, nil, nil }
+func (h *hijackRec) CloseNotify() <-chan bool                     { return h.ch }
+
+// O gin.ResponseWriter faz type assertion sem ok para Hijacker e
+// CloseNotifier: o guardWriter repassa os dois. Conexao sequestrada nao
+// recebe resposta trocada.
+func TestHijackECloseNotify(t *testing.T) {
+	rec := &hijackRec{ResponseRecorder: httptest.NewRecorder(), ch: make(chan bool)}
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if w.(http.CloseNotifier).CloseNotify() != rec.ch {
+			t.Error("CloseNotify nao repassado")
+		}
+		if _, _, err := w.(http.Hijacker).Hijack(); err != nil {
+			t.Errorf("Hijack: %v", err)
+		}
+		w.WriteHeader(500)
+	})
+	newTestHandler(t, modeWarn, baseStore(), next).ServeHTTP(rec, httptest.NewRequest("GET", "/health", nil))
+	if rec.Body.Len() != 0 {
+		t.Errorf("conexao sequestrada recebeu corpo %q", rec.Body.String())
+	}
+
+	// writer sem Hijacker/CloseNotifier (httptest.ResponseRecorder)
+	next = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, _, err := w.(http.Hijacker).Hijack(); err == nil {
+			t.Error("Hijack sem suporte deveria falhar")
+		}
+		if w.(http.CloseNotifier).CloseNotify() == nil {
+			t.Error("CloseNotify devolveu canal nulo")
+		}
+	})
+	serve(newTestHandler(t, modeWarn, baseStore(), next), "GET", "/health", nil)
+}
+
+// Ponta a ponta com net/http de verdade: o "roteador" imita o endpoint no-op
+// do KrakenD (espera o backend ate o timeout do endpoint; erro sem resposta
+// => 500 sem corpo) diante de um backend lento e de um fora do ar.
+func TestBordaComBackendLentoOuForaDoAr(t *testing.T) {
+	lento := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+	}))
+	defer lento.Close()
+	fora := httptest.NewServer(http.NotFoundHandler())
+	foraURL := fora.URL
+	fora.Close() // porta fechada: conexao recusada
+
+	const timeout = 100 * time.Millisecond
+	proxyTo := func(base string) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx, cancel := context.WithTimeout(r.Context(), timeout)
+			defer cancel()
+			req, _ := http.NewRequestWithContext(ctx, r.Method, base+r.URL.Path, nil)
+			w.Header().Set("X-Krakend", "Version 2.7.2")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				w.Header().Set("X-Krakend-Completed", "false")
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			defer resp.Body.Close()
+			w.WriteHeader(resp.StatusCode)
+			io.Copy(w, resp.Body)
+		})
+	}
+	for _, mode := range []string{modeWarn, modeEnforce} {
+		for _, c := range []struct {
+			name, base string
+			minMS      int64
+		}{
+			{"backend lento", lento.URL, timeout.Milliseconds()},
+			{"backend fora do ar", foraURL, 0},
+		} {
+			h := newTestHandler(t, mode, baseStore(), proxyTo(c.base))
+			h.now = time.Now
+			edge := httptest.NewServer(h)
+			if edge.URL == foraURL {
+				t.Fatalf("a borda de teste pegou a porta fechada do backend fora do ar (%s); rode de novo", foraURL)
+			}
+			resp, err := http.Get(edge.URL + "/health")
+			if err != nil {
+				t.Fatalf("%s %s: %v", mode, c.name, err)
+			}
+			raw, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			edge.Close()
+			var body struct {
+				Error       *int   `json:"error"`
+				Description string `json:"description"`
+			}
+			if resp.StatusCode != 404 || json.Unmarshal(raw, &body) != nil || body.Error == nil || *body.Error != 200 {
+				t.Fatalf("%s %s: status %d corpo %q, esperado 404 + {error:200}", mode, c.name, resp.StatusCode, raw)
+			}
+			for k, want := range map[string]string{"Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "API-Version": "2.0", "X-Krakend-Completed": "false"} {
+				if got := resp.Header.Get(k); got != want {
+					t.Errorf("%s %s: %s=%q, esperado %q", mode, c.name, k, got, want)
+				}
+			}
+			var ms int64
+			if _, err := fmt.Sscanf(strings.TrimPrefix(body.Description, errorText[200]+": "), "500 do gateway em %d ms", &ms); err != nil || ms < c.minMS {
+				t.Errorf("%s %s: description %q (tempo minimo %d ms)", mode, c.name, body.Description, c.minMS)
+			}
+		}
 	}
 }

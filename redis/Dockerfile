@@ -22,9 +22,14 @@ COPY user-files-template/userData.json ./
 RUN python emit_seed.py userData.json /seed.resp
 
 # --- final ---
+# redis-commander com versao FIXADA: o login da UI (D-L1, entrypoint.sh)
+# depende dos nomes HTTP_USER/HTTP_PASSWORD que a 0.9.0 mapeia em
+# config/custom-environment-variables.json. Sem usuario e senha ela sobe a
+# UI aberta, sem aviso (lib/app.js, httpAuthDisabled). Versao nova so depois
+# de conferir esse mapeamento (scripts/test-consolidacao.sh prova 401/200).
 FROM redis:7-alpine
 RUN apk add --no-cache nodejs npm dumb-init && \
-    npm install -g --omit=dev redis-commander && \
+    npm install -g --omit=dev redis-commander@0.9.0 && \
     npm cache clean --force
 
 COPY --from=seedgen /seed.resp /seed.resp

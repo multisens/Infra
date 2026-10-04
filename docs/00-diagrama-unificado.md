@@ -60,7 +60,7 @@ graph TB
             R_PRF["user:<user_id>:profile\nHASH de atributos"]
             R_SES["sessões / tokens\ngerenciado pelo tv3ws"]
         end
-        REDIS_UI["Redis Commander\n:8081"]
+        REDIS_UI["Redis Commander\n:18081 (porta de host dinamica, com login)"]
     end
 
     %% ── Boot ──────────────────────────────────────────────────────────────────

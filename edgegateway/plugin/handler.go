@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -87,19 +91,155 @@ func (h *authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.serveNext(w, r)
 }
 
-// serveNext repassa ao roteador do KrakenD com recover(): panic la dentro
-// vira 404 + {error:200} em vez de conexao resetada.
+// serveNext repassa ao roteador do KrakenD e troca por 404 + {error:200}
+// (C.3.2.1; Tabela C.1, 200 = "Platform resource unavailable", "dependence
+// on an unavailable resource") as duas falhas que sairiam fora do formato:
+//
+//   - resposta 5xx: o KrakenD responde 500 SEM corpo quando o backend nao
+//     responde dentro do timeout do endpoint (padrao de 2 s; so as rotas com
+//     "timeout" no routes.json tem outro) ou esta fora do ar (conexao
+//     recusada, nome que nao resolve). O tv3ws nunca responde 5xx: a camada
+//     comum de erro dele (src/util/error.ts) so emite 404, e nenhum handler
+//     escreve 5xx. Logo, todo 5xx aqui vem do KrakenD; como as rotas sao
+//     no-op, um 5xx de backend tambem seria trocado. Os timeouts nao mudam;
+//   - panic no roteador: em vez de conexao resetada.
+//
+// Vale nos dois modos, como o 100: nao eh decisao de credencial.
 func (h *authHandler) serveNext(w http.ResponseWriter, r *http.Request) {
+	gw := &guardWriter{ResponseWriter: w}
+	start := h.now()
 	defer func() {
-		if p := recover(); p != nil {
-			if p == http.ErrAbortHandler {
-				panic(p)
-			}
-			logf("PANIC recuperado surface=%s %s %q: %v", h.cfg.Surface, r.Method, r.URL.Path, p)
-			writeError(w, r, 200, "falha interna do gateway")
+		p := recover()
+		if p == nil {
+			return
 		}
+		if p == http.ErrAbortHandler {
+			panic(p)
+		}
+		logf("PANIC recuperado surface=%s %s %q: %v", h.cfg.Surface, r.Method, r.URL.Path, p)
+		if gw.sent || gw.hijacked {
+			// o cabecalho ja foi ao cliente: nao ha como trocar a resposta.
+			// Aborta a conexao em vez de emendar um corpo de erro no meio.
+			panic(http.ErrAbortHandler)
+		}
+		gw.replace(r, "falha interna do gateway")
 	}()
-	h.next.ServeHTTP(w, r)
+	h.next.ServeHTTP(gw, r)
+	if gw.held != 0 && !gw.hijacked {
+		ms := h.now().Sub(start).Milliseconds()
+		logf("BACKEND surface=%s code=200 %s %q status_gateway=%d ms=%d", h.cfg.Surface, r.Method, r.URL.Path, gw.held, ms)
+		gw.replace(r, fmt.Sprintf("%d do gateway em %d ms (backend lento ou fora do ar)", gw.held, ms))
+	}
+}
+
+// guardWriter fica entre o plugin e o roteador do KrakenD. Um status 5xx eh
+// RETIDO (nem cabecalho nem corpo chegam ao cliente) para o serveNext troca-
+// lo pelo erro C.3.2; qualquer outro status passa intacto, sem copia.
+type guardWriter struct {
+	// interface embutida: so Header, Write e WriteHeader sao promovidos (um
+	// ReadFrom do writer de baixo, usado pelo io.Copy, furaria a retencao)
+	http.ResponseWriter
+	status   int  // status final escrito (0 = nenhum ainda)
+	held     int  // status 5xx retido (0 = nenhum)
+	sent     bool // status final ja repassado ao cliente
+	hijacked bool
+}
+
+// O gin.ResponseWriter (gin v1.9.1, a do KrakenD 2.7.2: response_writer.go)
+// faz type assertion SEM ok para estas tres interfaces no writer de baixo:
+// faltando uma, quem a chamasse levaria panic.
+var (
+	_ http.Flusher       = (*guardWriter)(nil)
+	_ http.Hijacker      = (*guardWriter)(nil)
+	_ http.CloseNotifier = (*guardWriter)(nil)
+)
+
+func (g *guardWriter) WriteHeader(code int) {
+	if g.status != 0 {
+		if g.held == 0 {
+			g.ResponseWriter.WriteHeader(code) // superfluo: o net/http avisa
+		}
+		return
+	}
+	if code >= 100 && code < 200 && code != http.StatusSwitchingProtocols {
+		g.ResponseWriter.WriteHeader(code) // 1xx informativo: nao fecha o status
+		return
+	}
+	g.status = code
+	if code >= 500 {
+		g.held = code
+		return
+	}
+	g.sent = true
+	g.ResponseWriter.WriteHeader(code)
+}
+
+func (g *guardWriter) Write(b []byte) (int, error) {
+	if g.status == 0 {
+		g.WriteHeader(http.StatusOK)
+	}
+	if g.held != 0 {
+		return len(b), nil // descartado: o corpo do 5xx nao sai
+	}
+	return g.ResponseWriter.Write(b)
+}
+
+// Flush com 5xx retido nao faz nada: repassado, mandaria o cabecalho.
+func (g *guardWriter) Flush() {
+	if g.held != 0 {
+		return
+	}
+	if f, ok := g.ResponseWriter.(http.Flusher); ok {
+		if g.status == 0 {
+			g.WriteHeader(http.StatusOK)
+		}
+		f.Flush()
+	}
+}
+
+func (g *guardWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := g.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	c, rw, err := hj.Hijack()
+	if err == nil {
+		g.hijacked = true
+	}
+	return c, rw, err
+}
+
+func (g *guardWriter) CloseNotify() <-chan bool {
+	if cn, ok := g.ResponseWriter.(http.CloseNotifier); ok {
+		return cn.CloseNotify()
+	}
+	return make(chan bool) // nunca dispara
+}
+
+// Unwrap: para o http.ResponseController (prazos de leitura/escrita).
+func (g *guardWriter) Unwrap() http.ResponseWriter { return g.ResponseWriter }
+
+// replace escreve o erro 200 no lugar da resposta retida (ou da que o panic
+// interrompeu antes do cabecalho). Os cabecalhos ja definidos saem — os de
+// backend (Content-Encoding, Content-Range, X-Powered-By...) nao descrevem o
+// corpo novo —, menos os de CORS (o navegador precisa deles para ler o
+// corpo), os do KrakenD (X-Krakend*) e o aviso do modo warn: ele diz o que o
+// enforce faria com a requisicao, e isso nao muda porque o backend falhou.
+func (g *guardWriter) replace(r *http.Request, detail string) {
+	hd := g.ResponseWriter.Header()
+	for k := range hd {
+		if !keptOnReplace(k) {
+			delete(hd, k)
+		}
+	}
+	g.sent = true
+	writeC32(g.ResponseWriter, r, 200, detail)
+}
+
+func keptOnReplace(k string) bool {
+	k = http.CanonicalHeaderKey(k)
+	return strings.HasPrefix(k, "Access-Control-") || k == "Vary" ||
+		strings.HasPrefix(k, "X-Krakend") || k == http.CanonicalHeaderKey(warnHeader)
 }
 
 // evaluate decide, na ordem da especificacao: rota (100) -> classe (106) ->
@@ -124,11 +264,13 @@ func (h *authHandler) evaluate(r *http.Request) verdict {
 			v.Class = claims.Class
 		}
 	}
-	// PENDENTE (Joel): lacuna L1 — PROVISORIO. Requisicao SEM Authorization
-	// cujo Origin esta em origins:associated eh tratada como local associado.
-	// A norma (C.4.1.7) sugere a porta de origem atribuida pelo gerenciador;
-	// e o Origin nao discrimina as apps de emissora servidas por proxy na
-	// origem do AoP (Origin eh forjavel fora do navegador).
+	// DECIDIDO (Luis, 03/10): risco aceito — lacuna L1. Requisicao SEM
+	// Authorization cujo Origin esta em origins:associated eh tratada como
+	// local associado. Risco aceito: o Origin eh forjavel fora do navegador,
+	// e quem o forja passa como associado (sem access token nem bind-token).
+	// A norma (C.4.1.7) fala na porta de origem atribuida pelo gerenciador e
+	// deixa o mecanismo a cargo da implementacao; o Origin tambem nao
+	// discrimina as apps de emissora servidas por proxy na origem do AoP.
 	// Com Authorization presente mas INVALIDO, o Origin tambem eh consultado,
 	// so para a checagem de classe (106): senao bastaria mandar qualquer
 	// Authorization para escapar do 106 da L4 (o tv3ws classifica pelo
@@ -241,11 +383,18 @@ func (h *authHandler) isCurrentSCID(scid string) bool {
 	return false
 }
 
-// writeError responde no formato C.3.2: status 404 + {error, description},
+// writeError responde a requisicao BLOQUEADA pela decisao do plugin: sem o
+// aviso do modo warn (a resposta ja eh o erro).
+func writeError(w http.ResponseWriter, r *http.Request, code int, detail string) {
+	w.Header().Del(warnHeader)
+	writeC32(w, r, code, detail)
+}
+
+// writeC32 responde no formato C.3.2: status 404 + {error, description},
 // application/json, com Access-Control-Allow-Origin: * (o plugin roda ANTES
 // do modulo CORS do KrakenD; sem isso o navegador veria erro de CORS em vez
 // do corpo) e API-Version (C.3.6.6).
-func writeError(w http.ResponseWriter, r *http.Request, code int, detail string) {
+func writeC32(w http.ResponseWriter, r *http.Request, code int, detail string) {
 	desc := errorText[code]
 	if detail != "" {
 		desc += ": " + detail
@@ -255,7 +404,6 @@ func writeError(w http.ResponseWriter, r *http.Request, code int, detail string)
 		Description string `json:"description"`
 	}{code, desc})
 	hd := w.Header()
-	hd.Del(warnHeader)
 	hd.Set("Content-Type", "application/json")
 	hd.Set("Access-Control-Allow-Origin", "*")
 	hd.Set("API-Version", apiVersion(r))

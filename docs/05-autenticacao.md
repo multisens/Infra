@@ -1,6 +1,6 @@
 # Autenticação e validação de credenciais (TV 3.0)
 
-> **Estado do código em 2026-10-02:** tv3ws + plugin `tv30-auth` da borda.
+> **Estado do código em 2026-10-04:** tv3ws + plugin `tv30-auth` da borda.
 >
 > A versão anterior deste documento não correspondia ao código:
 > - classificava o cliente pelo IP;
@@ -19,9 +19,10 @@ A classe é decidida **uma vez**, na autorização (`GET /tv3/authorize`, em `tv
 | `local-autonomous` | sem `pm`, e `Origin` fora de `origins:associated` | access token; bind-token nas APIs protegidas |
 | `local-associated` | `Origin` presente no hash `origins:associated`, que o AoP grava (origem → id do serviço corrente: o valor de `aop/currentService`, o mesmo de `session:current-service-id`, ou `current-service` sem serviço) | nenhuma no próprio contexto (C.4.1.1) |
 
-O reconhecimento do local associado pelo `Origin` é **provisório**. É a lacuna L1, em aberto:
-- a C.4.1.7 sugere usar a porta de origem;
-- o `Origin` das apps de emissora servidas por proxy no AoP é o do próprio AoP.
+O reconhecimento do local associado pelo `Origin` é a lacuna L1. **Decidido pelo Luís em 03/10: fica como está, com o risco aceito.** Não houve mudança de comportamento. Os limites conhecidos:
+- **Risco aceito:** fora do navegador, o `Origin` pode ser forjado, e um `Origin` forjado presente em `origins:associated` passa como associado;
+- o `Origin` das apps de emissora servidas por proxy no AoP é o do próprio AoP, e o AoP grava em `origins:associated` a origem própria da app (`aop/src/core.js`, `registerAssociatedOrigin`). Essas apps não são reconhecidas como associadas: em `warn` recebem `X-TV30-Auth-Warn: 107`, e em `enforce` seriam bloqueadas. A origem própria por app (P1.3) **não** foi decidida em 03/10 e continua aberta; é pré-requisito do `enforce`;
+- a C.4.1.7 (p. 206; p. 224 do PDF) manda o associado usar uma porta de origem atribuída pelo gerenciador de componentes e diz, na mesma seção, que o mecanismo de diferenciação é decisão de implementação. O `Origin` é a decisão deste testbed.
 
 ## Emissão do access token (tv3ws)
 
@@ -29,20 +30,24 @@ O reconhecimento do local associado pelo `Origin` é **provisório**. É a lacun
 
 1. O tv3ws publica um pop-up sim/não na TV pelo tópico `aop/display/layers/popup/yesno`, com timeout de 10 s.
 2. Só a resposta `"true"` no tópico `.../yesno/response` autoriza. A AoP publica `"false"` quando o espectador recusa e também quando o pop-up expira. Nesse caso, ou sem resposta em 10 s, o cliente vai para `clients:blocked` e a resposta é **102**. Até 02/10/2026, qualquer resposta não vazia autorizava, porque `Boolean("false") === true`.
-3. **Local** (associado ou autônomo): a resposta é `{"refreshToken": ...}`. Um cliente local já autorizado recebe de novo o refresh token corrente, sem novo pop-up.
-4. **Não local:**
-   - **`qrcode`:** a TV mostra um QR code com uma chave de 32 bytes. O segredo é SHA-256(chave)[0:16].
-   - **`kex`:** ECDH P-256. A TV mostra um PIN igual a hash mod 10000, e o segredo é SHA-256(segredo ECDH)[0:16].
-   - Nos dois casos a resposta é `{"challenge": ...}`, cifrada em AES-128-ECB.
-   - **Divergência código × norma:** no `kex`, a Tabela C.3 manda responder `{challenge, key}`. O código devolve só `{challenge}`.
+3. **Local** (associado ou autônomo): a resposta é `{"refreshToken": ...}`.
+4. **`clientid` já usado:** 101, para qualquer classe e sem pop-up, tanto para o cliente já autorizado quanto para o recusado (`clients:blocked`). As duas metades têm origens diferentes:
+   - o 101 para o cliente já autorizado é decisão do Luís em 03/10 (D-L2; Tabela C.3, "if clientid has been used before", e C.6.1.4.4);
+   - o 101 para o recusado segue a nota da Tabela C.3 ("any attempt to authorize immediately returns error 101, without displaying the authorization dialog", p. 233 do PDF). É uma leitura da D-L2 feita na implementação e **ainda a confirmar pelo Luís**.
+
+   Até 03/10, o cliente local já autorizado recebia de novo o refresh token corrente, sem pop-up, e o bloqueado recebia 102.
+5. **Não local:**
+   - **`qrcode`:** a TV mostra um QR code com uma chave de 32 bytes. O segredo é SHA-256(chave)[0:16]. A resposta é `{"challenge": ...}`.
+   - **`kex`:** ECDH P-256. A TV mostra um PIN igual a hash mod 10000, e o segredo é SHA-256(segredo ECDH)[0:16]. A resposta é `{"challenge": ..., "key": ...}`, com `key` = chave parcial do servidor (ponto SEC 1 sem compressão, base64url; Tabela C.3, formato 3, e C.4.3.4). Até a integração de 04/10 o código devolvia só `{challenge}`, e o pareamento por PIN não se completava. A correção é de conformidade (Tabela C.3, formato 3; C.4.3.3, passo 1) e **espera o aval do Luís**.
+   - O `challenge` é uma string aleatória cifrada em AES-128-ECB com o segredo.
 
 Erros possíveis no `/authorize`:
 
 | Código | Situação |
 |---|---|
 | 105 | Falta `clientid`, `display-name` ou `key` (no `kex`). |
-| 101 | `pm` não suportado, ou cliente não local já autorizado. |
-| 102 | Cliente bloqueado, ou o espectador recusou. |
+| 101 | `pm` não suportado, ou `clientid` já usado (autorizado ou bloqueado), para qualquer classe. |
+| 102 | O espectador recusou no pop-up (ou o pop-up expirou). |
 
 ### `GET /tv3/token?clientid=<uuid>&(challenge-response=<...>|refresh-token=<...>)` (Tabela C.4)
 
@@ -95,7 +100,7 @@ O tv3ws ainda tem duas validações próprias, ativas nos dois modos (`warn` e `
 - o middleware `authorization.ts`, que valida o token quando ele está presente e responde 107 se ele for inválido;
 - o 106 por protocolo, em `basic.ts`: cliente não local que chega por HTTP (pela 44642, cujo backend é `http://tv3ws:44652`).
 
-Os comportamentos provisórios das lacunas (L1, L2, L4, L5) valem nos **dois** modos: em `warn` só registram e marcam `X-TV30-Auth-Warn`; em `enforce` bloqueiam ou liberam. Em `enforce`, um `Origin` forjado fora do navegador, presente em `origins:associated`, dispensa as credenciais (L1).
+Os comportamentos provisórios das lacunas (L2, L4, L5) e o reconhecimento do associado pelo `Origin` (L1, decidido em 03/10 com o risco aceito) valem nos **dois** modos: em `warn` só registram e marcam `X-TV30-Auth-Warn`; em `enforce` bloqueiam ou liberam. Em `enforce`, um `Origin` forjado fora do navegador, presente em `origins:associated`, dispensa as credenciais (L1). É o risco aceito.
 
 Toda resposta da borda leva `Access-Control-Allow-Origin: *` (C.4.1.9.2), também sem `Origin` na requisição. O `OPTIONS` que não é preflight, num caminho declarado, recebe 200 com `Access-Control-Allow-Origin`, `Access-Control-Allow-Methods` e `Access-Control-Allow-Headers` (C.4.1.9.3).
 
@@ -157,14 +162,14 @@ A tabela completa está em `edgegateway/plugin/README.md`.
 
 ### PENDENTE (Joel)
 
-Os comportamentos provisórios estão marcados no código e listados em `edgegateway/plugin/README.md`:
-- **L1:** como reconhecer o associado;
+Os comportamentos provisórios estão marcados no código e listados em `edgegateway/plugin/README.md`. A L1 (reconhecer o associado pelo `Origin`) saiu desta lista: foi decidida pelo Luís em 03/10, com o risco aceito (seção *Classes de cliente*).
 - **L2:** `{serviceContextId}` constante no tv3ws;
 - **L3:** sem TLS na borda, e portanto sem 106 por protocolo;
 - **L4:** 106 ao associado em `/authorize` e `/token` só em `enforce`;
 - **L5:** relógio do host em vez do System Time Fragment;
-- **L7:** liberação de recursos ao revogar uma chave;
-- **Redis sem senha e publicado no host (6379):** quem alcança a porta grava chaves de bind ou origens associadas e contorna a borda. Ponto para decidir antes de qualquer `enforce` (opções: publicar só em `127.0.0.1` ou exigir senha).
+- **L7:** liberação de recursos ao revogar uma chave.
+
+**Redis sem senha e publicado no host (6379): decidido pelo Luís em 03/10.** A conexão com o banco fica como está, sem senha; só a interface administrativa (redis-commander) passou a exigir login. O risco continua: quem alcança a porta grava chaves de bind ou origens associadas e contorna a borda em `enforce` (ver `KNOWN-ISSUES.md` da raiz).
 
 ## Descoberta SSDP
 
