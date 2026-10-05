@@ -173,11 +173,13 @@ Os comportamentos provisórios estão marcados no código e listados em `edgegat
 
 ## Descoberta SSDP
 
-**Código:** `tv3ws/src/ssdp-server.ts` e `tv3ws/src/ssdp-config.ts`, com a biblioteca `@lvcabral/node-ssdp`.
+**Código:** `tv3ws/src/ssdp-server.ts` (anúncio, morre-inteiro e byebye, usado pelo `ssdp-announcer.ts`, ponto de entrada do anunciante, e pelo `server.ts`), `tv3ws/src/ssdp-interface.ts` (interface do anúncio), `tv3ws/src/ssdp-config.ts` (host e portas anunciados) e `tv3ws/src/manifest.ts` (`GET /manifest`, registrado no app Express do tv3ws), com a biblioteca `@lvcabral/node-ssdp`.
 
-- **Anúncio:** o tv3ws anuncia em UDP 1900, a cada 10 s, o serviço `urn:schemas-sbtvd-org:service:TV3.0WebServices:1`.
+**Onde roda (L6, opção B; decidido, informado pelo Luís em 04/10):** o anúncio sai do container `tv3ws-ssdp`, do perfil `ssdp` do compose da raiz do TV30. Ele usa a mesma imagem do tv3ws com o comando `node dist/ssdp-announcer.js`, roda em `network_mode: host` e só anuncia: sem Express, sem Redis, sem MQTT e sem porta TCP. A borda e o tv3ws continuam na `ginga_net`. O tv3ws da bridge recebe `SSDP_ENABLED: "false"` e não anuncia. Fora do compose, `SSDP_ENABLED` vale ligado, e o tv3ws rodando sozinho no host anuncia por conta própria. A descoberta só é suportada em Linux nativo com Docker Engine (decisão do Joel, informada pelo Luís em 04/10). A norma não diz onde o anunciante roda (C.3.4) nem em que plataforma; as duas coisas são decisões do projeto.
+
+- **Anúncio:** em UDP 1900, a cada 10 s, o serviço `urn:schemas-sbtvd-org:service:TV3.0WebServices:1`. Sai só pela interface IPv4 que tem o IP do host anunciado. Se o host não for um IP da máquina, sai pela interface da rota padrão, com aviso no log. `SSDP_INTERFACE` força a interface.
 - **`LOCATION`:** `http://<host>:44642/manifest`, a superfície interna da **borda** (D10). Não aponta para a porta interna do tv3ws.
-- **Como o `<host>` é escolhido:** `SSDP_ADVERTISE_HOST`, senão `SERVER_URL`, senão o IP local do processo.
+- **Como o `<host>` é escolhido:** `SSDP_ADVERTISE_HOST`, senão `SERVER_URL`, senão o IP local do processo. No compose da raiz, o tv3ws e o `tv3ws-ssdp` recebem o mesmo `SERVER_URL` (seção `environment`) e leem o `SSDP_ADVERTISE_HOST` dos mesmos arquivos de ambiente: `tv3ws/.env` e depois o `.env` da raiz, que prevalece. Por isso, no compose, o `LOCATION` e o `Server-BaseURL` do `/manifest` saem do mesmo host. Isso foi medido em 04/10 (`docs/ssdp-verificacao.md` da raiz, teste 16), com o host passado aos dois serviços por um arquivo de teste; a ordem `tv3ws/.env` → `.env` da raiz foi conferida com `docker compose config`. Com o tv3ws rodando no host, fora do compose, isso não é garantido (`docs/dev-local.md` da raiz).
 - **Portas:** a borda usa 44642 e 44643, configuráveis por `EDGE_HTTP_PORT` e `EDGE_HTTPS_PORT`.
 
 `GET /manifest` (rota `auth=none` na borda) responde 200; o corpo não carrega informação (o Express manda o texto `OK`). A informação vai nos cabeçalhos:
@@ -186,14 +188,14 @@ Os comportamentos provisórios estão marcados no código e listados em `edgegat
 - `Server-PairingMethods` (`qrcode,kex`);
 - `Device-BrandName`, `Device-Model` e `Device-FriendlyName`.
 
-Uma falha do anunciante (bind da 1900 ou erro de socket) encerra o processo com log claro (D9). No SIGTERM, o tv3ws envia `ssdp:byebye`. No boot, o tv3ws registra `[ssdp] AVISO` quando o host anunciado é de loopback, quando `EDGE_HTTP_PORT` difere de 44642 (a C.3.4 fixa 44642 no `Server-BaseURL`) e, enquanto a L3 estiver aberta, que o `Server-SecureBaseURL` aponta para porta sem TLS.
+Uma falha do anunciante (bind da 1900 ou erro de socket) encerra o processo que anuncia, com log claro (D9). No compose, esse processo é o `tv3ws-ssdp`: só ele cai, e o `restart: unless-stopped` o traz de volta; as APIs do tv3ws ficam de pé. No tv3ws rodando sozinho com `SSDP_ENABLED` ligado, cai o processo inteiro. No SIGTERM, o anunciante envia `ssdp:byebye`. No boot, registra-se `[ssdp] AVISO` quando o host anunciado é de loopback, quando `EDGE_HTTP_PORT` difere de 44642 (a C.3.4 fixa 44642 no `Server-BaseURL`) e, enquanto a L3 estiver aberta, que o `Server-SecureBaseURL` aponta para porta sem TLS.
 
 ```mermaid
 sequenceDiagram
     participant C as Dispositivo na rede local
-    participant S as tv3ws (anunciante SSDP, UDP 1900)
+    participant S as tv3ws-ssdp (rede do host, UDP 1900)
     participant E as edgegateway :44642
-    participant T as tv3ws (API)
+    participant T as tv3ws (API, ginga_net)
 
     C->>S: M-SEARCH * HTTP/1.1<br/>ST: urn:schemas-sbtvd-org:service:TV3.0WebServices:1
     S-->>C: 200 OK<br/>LOCATION: http://<host>:44642/manifest
@@ -203,6 +205,7 @@ sequenceDiagram
     Note over C: segue para GET /tv3/authorize na borda
 ```
 
+**L6, decidida em 04/10 (opção B, informado pelo Luís).** Medido em 02/10 (`docs/ssdp-verificacao.md` na raiz do TV30), com o arranjo anterior: o NOTIFY do tv3ws aparecia na `eth0` do container e na bridge, e **não saía** da `eth0` da VM do WSL. A descoberta por outro dispositivo da LAN, com o `tv3ws-ssdp` num Linux nativo, segue sem medição.
+
 **Em aberto:**
-- **L6.** Medido em 02/10 (`docs/ssdp-verificacao.md` na raiz do TV30): o NOTIFY aparece na `eth0` do container e na bridge, e **não sai** da `eth0` da VM do WSL. A descoberta por outro dispositivo da LAN, num Linux nativo, segue sem medição. As opções são deixar o anunciante na borda em host network ou usar um anunciante separado; não há decisão.
-- **`SERVER_URL`.** O padrão do compose é `localhost`, e com esse valor o `LOCATION` e o `Server-BaseURL` só funcionam na própria máquina (o tv3ws avisa no boot). Para anunciar outro host, defina `SSDP_ADVERTISE_HOST` no `tv3ws/.env`. PENDENTE (Joel): o padrão (cair no IP local quando `SERVER_URL` for loopback, ou exigir `SSDP_ADVERTISE_HOST`).
+- **`SERVER_URL` (B2).** O padrão do compose é `localhost`, e com esse valor o `LOCATION` e o `Server-BaseURL` só funcionam na própria máquina (o boot avisa). Para anunciar outro host, defina `SSDP_ADVERTISE_HOST` no `.env` da raiz do TV30. PENDENTE (Joel): o padrão (cair no IP local quando `SERVER_URL` for loopback, ou exigir `SSDP_ADVERTISE_HOST`).
