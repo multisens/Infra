@@ -2,11 +2,13 @@
   "backends": {
     "external": {
       "linux": "https://tv3ws:44653",
-      "windows": "https://host.docker.internal:44655"
+      "windows": "https://host.docker.internal:44655",
+      "host": "https://127.0.0.1:44653"
     },
     "internal": {
       "linux": "http://tv3ws:44652",
-      "windows": "http://host.docker.internal:44654"
+      "windows": "http://host.docker.internal:44654",
+      "host": "http://127.0.0.1:44652"
     }
   },
   "surfaces": {

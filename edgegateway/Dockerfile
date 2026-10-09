@@ -23,6 +23,16 @@ RUN go vet ./... \
  && echo "MUSL-$(/lib/ld-musl-*.so.1 2>&1 | sed -n 's/^Version //p')_(alpine-$(cat /etc/alpine-release))" > /out/libc-version \
  && : > /out/go.sum
 
+# --- estagio 0b: anunciante SSDP da borda (C.3.4; L6 = opcao A, 09/10) ---
+# Binario estatico, so biblioteca padrao; roda so com SSDP_ENABLED=true (borda
+# em rede do host, docker-compose.ssdp.yml, so Linux nativo).
+FROM krakend/builder:2.7.2 AS ssdp
+WORKDIR /src
+COPY ssdp/ ./
+RUN go vet ./... \
+ && go test -count=1 ./... \
+ && CGO_ENABLED=0 go build -trimpath -o /out/ssdp-announcer .
+
 # --- estagio 1: gera configs e specs da tabela unica (M4) ---
 FROM node:20-alpine AS gen
 WORKDIR /m4
@@ -48,7 +58,9 @@ RUN krakend check-plugin -g "$(cat /tmp/plugin-check/go-version)" \
  && krakend test-plugin -s /opt/krakend/plugins/tv30-auth.so \
  && rm -rf /tmp/plugin-check
 
-# superficies (as duas variantes; o entrypoint escolhe via EDGE_VARIANT)
+COPY --from=ssdp /out/ssdp-announcer /usr/local/bin/ssdp-announcer
+
+# superficies (variantes linux, windows e host; o entrypoint escolhe via EDGE_VARIANT)
 COPY --from=gen /m4/generated/krakend-*.json /etc/krakend/
 RUN for f in /etc/krakend/krakend-*.json; do krakend check -c "$f" || exit 1; done
 
