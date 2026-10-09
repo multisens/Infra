@@ -173,14 +173,14 @@ Os comportamentos provisórios estão marcados no código e listados em `edgegat
 
 ## Descoberta SSDP
 
-**Código:** `tv3ws/src/ssdp-server.ts` (anúncio, morre-inteiro e byebye, usado pelo `ssdp-announcer.ts`, ponto de entrada do anunciante, e pelo `server.ts`), `tv3ws/src/ssdp-interface.ts` (interface do anúncio), `tv3ws/src/ssdp-config.ts` (host e portas anunciados) e `tv3ws/src/manifest.ts` (`GET /manifest`, registrado no app Express do tv3ws), com a biblioteca `@lvcabral/node-ssdp`.
+**Código:** `edgegateway/ssdp/` (o anunciante da borda, em Go, só com a biblioteca padrão: `main.go` com o laço de anúncio, o morre-inteiro e o byebye; `config.go` com o host e as portas anunciados; `iface.go` com a interface do anúncio; `ssdp.go` com as mensagens; testes em `ssdp_test.go`), `edgegateway/entrypoint.sh` (sobe e vigia o anunciante) e `tv3ws/src/manifest.ts` (`GET /manifest`, registrado no app Express do tv3ws), com o host e as portas do `tv3ws/src/ssdp-config.ts`. O tv3ws rodando sozinho no host (dev-host) ainda anuncia com `tv3ws/src/ssdp-server.ts` e `tv3ws/src/ssdp-interface.ts`, com a biblioteca `@lvcabral/node-ssdp`.
 
-**Onde roda (L6, opção B; decidido, informado pelo Luís em 04/10):** o anúncio sai do container `tv3ws-ssdp`, do perfil `ssdp` do compose da raiz do TV30. Ele usa a mesma imagem do tv3ws com o comando `node dist/ssdp-announcer.js`, roda em `network_mode: host` e só anuncia: sem Express, sem Redis, sem MQTT e sem porta TCP. A borda e o tv3ws continuam na `ginga_net`. O tv3ws da bridge recebe `SSDP_ENABLED: "false"` e não anuncia. Fora do compose, `SSDP_ENABLED` vale ligado, e o tv3ws rodando sozinho no host anuncia por conta própria. A descoberta só é suportada em Linux nativo com Docker Engine (decisão do Joel, informada pelo Luís em 04/10). A norma não diz onde o anunciante roda (C.3.4) nem em que plataforma; as duas coisas são decisões do projeto.
+**Onde roda (L6, opção A; decidido pelo Luís em 09/10):** o anúncio sai da **borda**. O anunciante é o binário `/usr/local/bin/ssdp-announcer` da imagem `tv30-edgegateway`, compilado no estágio `ssdp` do `edgegateway/Dockerfile` depois de `go vet` e `go test`. O `entrypoint.sh` só o sobe com `SSDP_ENABLED=true` (padrão desligado). Quem liga é o override `docker-compose.ssdp.yml` da raiz do TV30, que põe a borda em `network_mode: host`, com `EDGE_VARIANT=host` (backends `http://127.0.0.1:44652` e `https://127.0.0.1:44653`, em `edgegateway/routes.json`) e `REDIS_HOST=127.0.0.1`, e publica a 44652/44653 do tv3ws só em `127.0.0.1`. O tv3ws da bridge recebe `SSDP_ENABLED: "false"` e não anuncia. Fora do compose, `SSDP_ENABLED` vale ligado, e o tv3ws rodando sozinho no host anuncia por conta própria. A opção A substituiu a opção B (decidida em 04/10, informado pelo Luís): o container `tv3ws-ssdp`, com a imagem do tv3ws em rede do host, e a borda e o tv3ws na `ginga_net`. A descoberta só é suportada em Linux nativo com Docker Engine (decisão do Joel, informada pelo Luís em 04/10). A norma não diz onde o anunciante roda (C.3.4) nem em que plataforma; as duas coisas são decisões do projeto.
 
-- **Anúncio:** em UDP 1900, a cada 10 s, o serviço `urn:schemas-sbtvd-org:service:TV3.0WebServices:1`. Sai só pela interface IPv4 que tem o IP do host anunciado. Se o host não for um IP da máquina, sai pela interface da rota padrão, com aviso no log. `SSDP_INTERFACE` força a interface.
+- **Anúncio:** em UDP 1900, a cada 10 s, o serviço `urn:schemas-sbtvd-org:service:TV3.0WebServices:1` e o UDN, com o mesmo formato do anunciante anterior (`USN` `<UDN>::<URN>`). A resposta ao M-SEARCH sai com `CACHE-CONTROL: max-age=1800`, igual ao NOTIFY (até a opção B, `max-age=4`). Sai só pela interface IPv4 que tem o IP do host anunciado. Se o host não for um IP da máquina, sai pela interface da rota padrão, com aviso no log. `SSDP_INTERFACE` força a interface. Sem nenhuma interface possível, o anunciante não sobe.
 - **`LOCATION`:** `http://<host>:44642/manifest`, a superfície interna da **borda** (D10). Não aponta para a porta interna do tv3ws.
-- **Como o `<host>` é escolhido:** `SSDP_ADVERTISE_HOST`, senão `SERVER_URL`, senão o IP local do processo. No compose da raiz, o tv3ws e o `tv3ws-ssdp` recebem o mesmo `SERVER_URL` (seção `environment`) e leem o `SSDP_ADVERTISE_HOST` dos mesmos arquivos de ambiente: `tv3ws/.env` e depois o `.env` da raiz, que prevalece. Por isso, no compose, o `LOCATION` e o `Server-BaseURL` do `/manifest` saem do mesmo host. Isso foi medido em 04/10 (`docs/ssdp-verificacao.md` da raiz, teste 16), com o host passado aos dois serviços por um arquivo de teste; a ordem `tv3ws/.env` → `.env` da raiz foi conferida com `docker compose config`. Com o tv3ws rodando no host, fora do compose, isso não é garantido (`docs/dev-local.md` da raiz).
-- **Portas:** a borda usa 44642 e 44643, configuráveis por `EDGE_HTTP_PORT` e `EDGE_HTTPS_PORT`.
+- **Como o `<host>` é escolhido:** `SSDP_ADVERTISE_HOST`, senão `SERVER_URL`, senão o IP local. A regra está em Go na borda (`edgegateway/ssdp/config.go`) e em TypeScript no tv3ws (`tv3ws/src/ssdp-config.ts`), sem teste cruzado entre as duas. No compose da raiz, com o override, a borda e o tv3ws recebem o mesmo `SERVER_URL` (seção `environment`) e leem o `SSDP_ADVERTISE_HOST` dos mesmos arquivos de ambiente: `tv3ws/.env` e depois o `.env` da raiz, que prevalece. Por isso, no compose, o `LOCATION` e o `Server-BaseURL` do `/manifest` saem do mesmo host. Com a opção B, isso foi medido em 04/10 (`docs/ssdp-verificacao.md` da raiz, teste 16), e a ordem `tv3ws/.env` → `.env` da raiz foi conferida com `docker compose config`; com a opção A, não foi medido. Com o tv3ws rodando no host, fora do compose, isso não é garantido (`docs/dev-local.md` da raiz).
+- **Portas:** as anunciadas são as da borda, 44642 e 44643. `EDGE_HTTP_PORT` e `EDGE_HTTPS_PORT` mudam só o que é anunciado (no `LOCATION` e no `/manifest`), e não as portas em que o KrakenD escuta, fixas em `edgegateway/routes.json` (`surfaces.*.port`).
 
 `GET /manifest` (rota `auth=none` na borda) responde 200; o corpo não carrega informação (o Express manda o texto `OK`). A informação vai nos cabeçalhos:
 - `Server-BaseURL` (`<host>:44642`);
@@ -188,24 +188,24 @@ Os comportamentos provisórios estão marcados no código e listados em `edgegat
 - `Server-PairingMethods` (`qrcode,kex`);
 - `Device-BrandName`, `Device-Model` e `Device-FriendlyName`.
 
-Uma falha do anunciante (bind da 1900 ou erro de socket) encerra o processo que anuncia, com log claro (D9). No compose, esse processo é o `tv3ws-ssdp`: só ele cai, e o `restart: unless-stopped` o traz de volta; as APIs do tv3ws ficam de pé. No tv3ws rodando sozinho com `SSDP_ENABLED` ligado, cai o processo inteiro. No SIGTERM, o anunciante envia `ssdp:byebye`. No boot, registra-se `[ssdp] AVISO` quando o host anunciado é de loopback, quando `EDGE_HTTP_PORT` difere de 44642 (a C.3.4 fixa 44642 no `Server-BaseURL`) e, enquanto a L3 estiver aberta, que o `Server-SecureBaseURL` aponta para porta sem TLS.
+**Morre-inteiro (decidido pelo Luís em 09/10).** Uma falha do anunciante (porta inválida em `EDGE_HTTP_PORT`/`EDGE_HTTPS_PORT`, interface inexistente em `SSDP_INTERFACE` ou nenhuma interface possível, bind da 1900 recusado por um socket sem `SO_REUSEADDR`, erro no envio do NOTIFY ou na leitura do grupo) encerra o anunciante com saída 1 e o log `[ssdp] FALHA em ...` (D9). O `entrypoint.sh` vigia o anunciante junto com os dois KrakenD e o httpd da documentação: a **borda inteira cai, com todas as APIs**, e o `restart: unless-stopped` a traz de volta. Na opção B, só o `tv3ws-ssdp` caía. No tv3ws rodando sozinho com `SSDP_ENABLED` ligado, cai o processo inteiro. No SIGTERM, o `entrypoint.sh` para o anunciante primeiro, e ele envia `ssdp:byebye`. No boot, registra-se `[ssdp] AVISO` quando o host anunciado é de loopback, quando `EDGE_HTTP_PORT` difere de 44642 (a C.3.4 fixa 44642 no `Server-BaseURL`) e, enquanto a L3 estiver aberta, que o `Server-SecureBaseURL` aponta para porta sem TLS.
 
 ```mermaid
 sequenceDiagram
     participant C as Dispositivo na rede local
-    participant S as tv3ws-ssdp (rede do host, UDP 1900)
-    participant E as edgegateway :44642
-    participant T as tv3ws (API, ginga_net)
+    participant S as edgegateway / ssdp-announcer (rede do host, UDP 1900)
+    participant E as edgegateway / KrakenD :44642 (rede do host)
+    participant T as tv3ws (API; 127.0.0.1:44652)
 
     C->>S: M-SEARCH * HTTP/1.1<br/>ST: urn:schemas-sbtvd-org:service:TV3.0WebServices:1
     S-->>C: 200 OK<br/>LOCATION: http://<host>:44642/manifest
     C->>E: GET /manifest
-    E->>T: repassa (auth=none)
+    E->>T: repassa (auth=none, variante host)
     T-->>C: 200 + Server-BaseURL, Server-SecureBaseURL,<br/>Server-PairingMethods, Device-*
     Note over C: segue para GET /tv3/authorize na borda
 ```
 
-**L6, decidida em 04/10 (opção B, informado pelo Luís).** Medido em 02/10 (`docs/ssdp-verificacao.md` na raiz do TV30), com o arranjo anterior: o NOTIFY do tv3ws aparecia na `eth0` do container e na bridge, e **não saía** da `eth0` da VM do WSL. A descoberta por outro dispositivo da LAN, com o `tv3ws-ssdp` num Linux nativo, segue sem medição.
+**L6, decidida em 04/10 (opção B, informado pelo Luís) e re-decidida pelo Luís em 09/10 (opção A).** Medido em 02/10 (`docs/ssdp-verificacao.md` na raiz do TV30), com o arranjo anterior às duas: o NOTIFY do tv3ws aparecia na `eth0` do container e na bridge, e **não saía** da `eth0` da VM do WSL. Com a opção B, a descoberta por outro dispositivo da LAN foi validada num Linux nativo em 09/10 (testes 28 a 32). Com a opção A, ainda não foi medida; o teste vai ser refeito.
 
 **Em aberto:**
 - **`SERVER_URL` (B2).** O padrão do compose é `localhost`, e com esse valor o `LOCATION` e o `Server-BaseURL` só funcionam na própria máquina (o boot avisa). Para anunciar outro host, defina `SSDP_ADVERTISE_HOST` no `.env` da raiz do TV30. PENDENTE (Joel): o padrão (cair no IP local quando `SERVER_URL` for loopback, ou exigir `SSDP_ADVERTISE_HOST`).

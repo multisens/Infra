@@ -83,7 +83,7 @@ O plugin lê o ambiente do container, definido no serviço `edgegateway` de `inf
 | `AUTH_ENFORCE` | `warn` | Com `warn`, nada é bloqueado: o plugin loga `[tv30-auth] WARN ...` e acrescenta `X-TV30-Auth-Warn: <código>` à resposta. Com `enforce`, responde 404 com o corpo C.3.2. |
 | `JWT_SECRET` | sem padrão (obrigatória) | Tem de ser **o mesmo** do tv3ws, que emite o access token. O compose usa o mesmo padrão de desenvolvimento nos dois serviços. |
 | `JWT_ISSUER` | `GenericIssuer` | Igual ao tv3ws. |
-| `REDIS_HOST` / `REDIS_PORT` | `redis` / `6379` | Mesmo Redis do resto da stack. A variante `windows` (dev-host) também usa este Redis. |
+| `REDIS_HOST` / `REDIS_PORT` | `redis` / `6379` | Mesmo Redis do resto da stack. A variante `windows` (dev-host) também usa este Redis. Com a borda em rede do host (variante `host`, override `docker-compose.ssdp.yml` da raiz do TV30), `REDIS_HOST=127.0.0.1`: o mesmo Redis, pela 6379 publicada. |
 | `REDIS_TIMEOUT_MS` | `500` | Timeout de cada comando. |
 
 Exceções que valem nos dois modos: o erro 100 (rota não declarada) e o 200 (panic do roteador ou resposta 5xx do KrakenD). Nenhum cliente depende de uma rota não declarada, porque ela nunca chegou ao tv3ws, nem de um 500 sem corpo, que o tv3ws nunca emite. O modo `warn` existe porque clientes como o Guaraná ainda não obtêm token.
