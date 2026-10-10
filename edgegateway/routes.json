@@ -55,10 +55,6 @@
       "path": "/health",
       "method": "GET",
       "auth": "none",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Accept-Version"
       ]
@@ -67,10 +63,6 @@
       "path": "/manifest",
       "method": "GET",
       "auth": "none",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Accept-Version"
       ]
@@ -88,10 +80,6 @@
       "classes": [
         "local-autonomous",
         "non-local"
-      ],
-      "surfaces": [
-        "internal",
-        "external"
       ],
       "headers": [
         "Accept-Version",
@@ -117,10 +105,6 @@
         "local-autonomous",
         "non-local"
       ],
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Authorization",
         "Accept-Version"
@@ -144,10 +128,6 @@
       "classes": [
         "local-associated"
       ],
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Accept-Version",
         "Content-Type"
@@ -166,10 +146,6 @@
       "classes": [
         "local-autonomous",
         "non-local"
-      ],
-      "surfaces": [
-        "internal",
-        "external"
       ],
       "headers": [
         "Authorization",
@@ -190,10 +166,6 @@
       "classes": [
         "local-associated"
       ],
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Accept-Version",
         "key"
@@ -204,10 +176,6 @@
       "method": "GET",
       "edge": "api-list",
       "auth": "token",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Authorization",
         "Accept-Version"
@@ -226,10 +194,6 @@
       },
       "edge": "api-info",
       "auth": "token",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Authorization",
         "Accept-Version"
@@ -244,10 +208,6 @@
         "version": "2.0"
       },
       "auth": "token",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Authorization",
         "Accept-Version"
@@ -262,10 +222,6 @@
         "version": "2.0"
       },
       "auth": "token+bind",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Authorization",
         "Accept-Version",
@@ -281,10 +237,6 @@
         "version": "2.0"
       },
       "auth": "token+bind",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Authorization",
         "Accept-Version"
@@ -299,10 +251,6 @@
         "version": "2.0"
       },
       "auth": "token+bind",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Authorization",
         "Accept-Version",
@@ -318,10 +266,6 @@
         "version": "2.0"
       },
       "auth": "token+bind",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Authorization",
         "Accept-Version"
@@ -339,10 +283,6 @@
         "version": "2.0"
       },
       "auth": "token+bind",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Authorization",
         "Accept-Version"
@@ -355,10 +295,6 @@
       "path": "/tv3/{serviceContextId}/users",
       "method": "POST",
       "auth": "token+bind",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Authorization",
         "Accept-Version",
@@ -374,10 +310,6 @@
         "version": "2.0"
       },
       "auth": "token+bind",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Authorization",
         "Accept-Version",
@@ -396,10 +328,6 @@
         "version": "2.0"
       },
       "auth": "token",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Authorization",
         "Accept-Version",
@@ -415,10 +343,6 @@
         "version": "2.0"
       },
       "auth": "token",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Authorization",
         "Accept-Version"
@@ -433,10 +357,6 @@
         "version": "2.0"
       },
       "auth": "token",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Authorization",
         "Accept-Version"
@@ -446,10 +366,6 @@
       "path": "/tv3/remote-device/device/{handle}",
       "method": "GET",
       "auth": "token",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Authorization",
         "Accept-Version"
@@ -459,10 +375,6 @@
       "path": "/tv3/remote-device/device/{handle}",
       "method": "DELETE",
       "auth": "token",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Authorization",
         "Accept-Version"
@@ -477,10 +389,6 @@
         "version": "2.0"
       },
       "auth": "token",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Authorization",
         "Accept-Version"
@@ -495,10 +403,6 @@
         "version": "2.0"
       },
       "auth": "token",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Authorization",
         "Accept-Version"
@@ -513,10 +417,6 @@
         "version": "2.0"
       },
       "auth": "token+bind",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Authorization",
         "Accept-Version",
@@ -532,10 +432,6 @@
         "version": "2.0"
       },
       "auth": "token+bind",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Authorization",
         "Accept-Version"
@@ -553,10 +449,6 @@
         "version": "2.0"
       },
       "auth": "token+bind",
-      "surfaces": [
-        "internal",
-        "external"
-      ],
       "headers": [
         "Authorization",
         "Accept-Version",
