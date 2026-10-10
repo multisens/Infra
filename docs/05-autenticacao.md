@@ -1,6 +1,6 @@
 # Autenticação e validação de credenciais (TV 3.0)
 
-> **Estado do código em 2026-10-10:** tv3ws + plugin `tv30-auth` da borda, depois das decisões da reunião de 05/10 com o Joel (D-0510-1 a D-0510-4 nesta página).
+> **Estado do código em 2026-10-10:** tv3ws + plugin `tv30-auth` da borda, depois das decisões da reunião de 05/10 com o Joel (D-0510-1 a D-0510-4 nesta página) e de duas decisões do Luís em 10/10: a P1.3 (um nome de host por app de emissora) e a P1.9 (superfícies com rotas distintas).
 >
 > A versão anterior deste documento não correspondia ao código:
 > - classificava o cliente pelo IP;
@@ -17,11 +17,11 @@ A classe é decidida **uma vez**, na autorização (`GET /tv3/authorize`, em `tv
 |---|---|---|
 | `non-local` | `pm` (`qrcode` ou `kex`) presente no `/authorize` | access token; bind-token nas APIs protegidas. Fora de `/authorize` e do primeiro `/token`, a norma exige HTTPS (C.4.1.6, erro 106). No testbed, só o `/token` aplica isso hoje (renovação por HTTP dá 106); nas demais APIs, ninguém aplica desde a D-0510-1, porque a borda não tem TLS (L3). |
 | `local-autonomous` | sem `pm`, e `Origin` fora de `origins:associated` | access token; bind-token nas APIs protegidas |
-| `local-associated` | `Origin` presente no hash `origins:associated`, que o AoP grava (origem → id do serviço corrente: o valor de `aop/currentService`, o mesmo de `session:current-service-id`, ou `current-service` sem serviço) | nenhuma no próprio contexto (C.4.1.1) |
+| `local-associated` | `Origin` presente no hash `origins:associated`, que o AoP grava (origem própria da app → id do serviço corrente: o valor de `aop/currentService`, o mesmo de `session:current-service-id`, ou `current-service` sem serviço) | nenhuma no próprio contexto (C.4.1.1) |
 
 O reconhecimento do local associado pelo `Origin` é a lacuna L1. **Decidido pelo Luís em 03/10: fica como está, com o risco aceito.** Não houve mudança de comportamento. Os limites conhecidos:
 - **Risco aceito:** fora do navegador, o `Origin` pode ser forjado, e um `Origin` forjado presente em `origins:associated` passa como associado;
-- o `Origin` das apps de emissora servidas por proxy no AoP é o do próprio AoP, e o AoP grava em `origins:associated` a origem própria da app (`aop/src/core.js`, `registerAssociatedOrigin`). Essas apps não são reconhecidas como associadas: em `warn` recebem `X-TV30-Auth-Warn: 107`, e em `enforce` seriam bloqueadas. A origem própria por app (P1.3) **não** foi decidida em 03/10 e continua aberta; é pré-requisito do `enforce`;
+- **origem própria por app (P1.3, decidida pelo Luís em 10/10: um nome de host por app).** Até 10/10, as apps de emissora eram servidas por proxy na origem do AoP e chegavam à borda com o `Origin` do AoP, enquanto o AoP gravava em `origins:associated` o alvo do proxy (`http://bcast:8081`): não eram reconhecidas como associadas (em `warn`, `X-TV30-Auth-Warn: 107`; em `enforce`, seriam bloqueadas). Desde 10/10, o AoP abre cada app em `http://<rótulo>.<APPS_DOMAIN>:<AOP_PUBLIC_PORT>` (padrão `<rótulo>.apps.localhost:8080`; `aop/src/app-hosts.js`), roteia pelo cabeçalho `Host` e grava essa origem ao lançar a app (`aop/src/core.js`); é o `Origin` que o navegador manda nas chamadas dela. Verificado na stack em 10/10 (`scripts/test-auth.sh`, em `enforce`). A app aberta pelo caminho antigo `/graphicsAppProxy`, na origem do AoP, continua não reconhecida. Com a tela do AoP aberta de outra máquina, `*.localhost` não aponta para o AoP, e as apps não carregam (`APPS_DOMAIN` aceita um domínio resolvível na rede);
 - a C.4.1.7 (p. 206; p. 224 do PDF) manda o associado usar uma porta de origem atribuída pelo gerenciador de componentes e diz, na mesma seção, que o mecanismo de diferenciação é decisão de implementação. O `Origin` é a decisão deste testbed.
 
 ## Emissão do access token (tv3ws)
@@ -107,7 +107,7 @@ Toda resposta da borda leva `Access-Control-Allow-Origin: *` (C.4.1.9.2), també
 
 ```mermaid
 flowchart TD
-    R["Requisição (exceto OPTIONS: o preflight vai ao<br/>módulo CORS; o OPTIONS sem preflight num<br/>caminho declarado recebe 200 + cabeçalhos CORS)"] --> M{"método+caminho<br/>declarado em routes.json?"}
+    R["Requisição (exceto OPTIONS: o preflight vai ao<br/>módulo CORS; o OPTIONS sem preflight num<br/>caminho declarado recebe 200 + cabeçalhos CORS)"] --> M{"método+caminho declarado<br/>para esta superfície?<br/>(routes.json; P1.9)"}
     M -->|não| E100["404 {error:100}<br/>(nos dois modos)"]
     M -->|sim| CL["classe: claim class do token válido<br/>ou Origin ∈ origins:associated"]
     CL --> K{"classe permitida<br/>na rota?"}
@@ -141,6 +141,8 @@ A política está em `edgegateway/routes.json`, nos campos `auth` (`none`, `toke
 
 A tabela completa está em `edgegateway/plugin/README.md`.
 
+**Superfície de cada rota (P1.9, decisão do Luís em 10/10).** As `classes` também decidem em que superfície a rota existe (`edgegateway/generate.js`, `SURFACE_RULES`): a externa (44643) só tem as rotas que admitem `non-local`, e a interna (44642) tem todas. Pela tabela acima, só `POST` e `DELETE /tv3/bind-context` ficam fora da externa; lá elas dão 100 na etapa de rota, antes da classe, como qualquer caminho não declarado. Na 44642, o não associado continua recebendo 106 nelas (em `warn`, só o aviso).
+
 ### Bind-token (C.4.1.3, C.4.1.4, C.6.8)
 
 - **Quem emite:** o receptor **não emite** bind-token. Quem emite é a emissora (A.4.9, C.6.15.4).
@@ -172,7 +174,9 @@ Os comportamentos provisórios estão marcados no código e listados em `edgegat
 - **L4:** 106 ao associado em `/authorize` e `/token` só em `enforce`;
 - **L5:** relógio do host em vez do System Time Fragment;
 - **L7:** liberação de recursos ao revogar uma chave;
-- **C.6.7.8 e C.6.7.9** (rodada de 05/10): id da Tabela C.2 que o testbed não implementa dá 101; a versão de cada API é 2.0 em todas (a remote-device aceita 2.1, e não foi decidido se aparece assim); sem `subsystem`, a C.6.7.9 lista todas as APIs.
+- **C.6.7.8 e C.6.7.9** (rodada de 05/10): id da Tabela C.2 que o testbed não implementa dá 101; a versão de cada API é 2.0 em todas (a remote-device aceita 2.1, e não foi decidido se aparece assim); sem `subsystem`, a C.6.7.9 lista todas as APIs;
+- **100 ou 106 na 44643 com TLS** (P1.9, ligado à L3): a C.4.1.8 (p. 206-207; p. 224-225 do PDF) manda responder 106 ao não local que chama por HTTPS uma API exclusiva do cliente local, e `POST`/`DELETE /tv3/bind-context` dão 100 na 44643. Enquanto ela for HTTP, a C.4.1.8 não se aplica ao pé da letra; a mesma seção diz que a C.6.1.2 (`/tv3/authorize`) só se acessa por HTTP, e a regra a mantém na 44643, porque ela admite o não local;
+- **Lista de APIs por superfície** (P1.9): a externa lista 18 APIs, sem as duas da C.6.8 restritas ao associado (que dão 101 lá). A Tabela C.46 (p. 301 do PDF) fala em "all APIs of a given category", sem superfície; se a externa deve listar também as que não oferece não foi decidido.
 
 Também abertos pela rodada de 05/10, sem marcador no código da borda: exigir `clients:authorized` na borda e o que a futura tela da C.4.2.2 faz no desbloqueio (E5 e E6 de `docs/decisoes-pendentes.md` da raiz).
 

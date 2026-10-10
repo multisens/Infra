@@ -196,9 +196,9 @@ A derivação das superfícies é testada no próprio gerador: `node --test gene
 
 No fim, o script volta a borda ao modo anterior e desfaz o que semeou no Redis.
 
-> Com a P1.9 (10/10), o caso `[44643] POST bind-context repetido pela superficie externa` do script passa a receber 100 em vez de 200: a atualização do script fica para o teste de integração desta rodada.
+> Com a P1.9 (10/10), o script espera 100 no `POST` e no `DELETE /tv3/bind-context` pela 44643, confere que a chave continua registrada depois do `DELETE` recusado, conta as APIs da lista da 44643 direto do `routes.json` (18, contra 20 na 44642) e espera 101 no api-info de `tv3ws-bind-context-register` lá.
 
-> Depois da reunião de 05/10, os erros da C.6.8 que o script esperava do tv3ws (105, 101 e 104, identificados pelo `X-Powered-By: Express`) passam a vir da borda, e a C.6.7.8/C.6.7.9 ainda não tem casos no script. A atualização do script fica para o teste de integração desta rodada.
+> Desde a reunião de 05/10, os erros da C.6.8 (105, 101 e 104) vêm da borda, sem o `X-Powered-By: Express` do tv3ws, e o script cobre a C.6.7.8/C.6.7.9.
 
 `testdata/jsonwebtoken.json` traz tokens gerados pelo `jsonwebtoken` (a biblioteca do tv3ws). Eles servem para conferir a interoperabilidade. O arquivo tem só material público e segredos de teste.
 
@@ -206,7 +206,7 @@ No fim, o script volta a borda ao modo anterior e desfaz o que semeou no Redis.
 
 - **L1. Reconhecimento do local associado pelo `Origin`: risco aceito.** O critério continua sendo só o `Origin` presente em `origins:associated`, sem mudança de comportamento. Comentário no código: `DECIDIDO (Luis, 03/10): risco aceito`, em `handler.go`.
   - **Risco aceito.** Fora do navegador, o `Origin` pode ser forjado. Em `enforce`, um `Origin` forjado presente em `origins:associated` passa como associado e dispensa access token e bind-token em toda rota que admite o associado, inclusive `POST` e `DELETE /tv3/bind-context`.
-  - O `Origin` também não distingue as apps de emissora servidas por proxy na origem do AoP. Como o AoP grava em `origins:associated` a origem própria da app (alvo do proxy), e não a dele, essas apps **não** são reconhecidas como associadas: em `warn` levam `X-TV30-Auth-Warn: 107`, e em `enforce` seriam bloqueadas. Isso **não** foi decidido em 03/10: a origem própria por app (P1.3) continua aberta e é pré-requisito do `enforce`.
+  - Até 10/10, o `Origin` também não distinguia as apps de emissora, servidas por proxy na origem do AoP, enquanto o AoP gravava em `origins:associated` o alvo do proxy (`http://bcast:8081`): elas **não** eram reconhecidas como associadas. Isso não foi decidido em 03/10. Desde o P1.3 (decisão do Luís em 10/10), o AoP abre cada app na origem própria, `http://<rótulo>.apps.localhost:8080` (`aop/src/app-hosts.js`), e grava essa origem ao lançar a app; verificado na stack em 10/10 (`scripts/test-auth.sh`, em `enforce`). A app aberta pelo caminho antigo `/graphicsAppProxy` continua não reconhecida.
   - A norma (C.4.1.7, p. 206; p. 224 do PDF) manda o associado usar uma porta de origem atribuída pelo gerenciador de componentes ("A source port shall be used") e diz, na mesma seção, que o mecanismo de diferenciação é decisão de implementação. O reconhecimento pelo `Origin` é decisão de implementação deste testbed.
 
 ## PENDENTE (Joel)
