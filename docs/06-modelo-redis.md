@@ -6,6 +6,7 @@
 > - **Borda** (plugin `tv30-auth`): lê `clients:blocked`, `origins:associated`, `session:current-service-id` e `session:current-service`; desde a reunião de 05/10 com o Joel (D-0510-2), também **escreve** `bind-context:{serviceId}`, porque responde a C.6.8. Ver [05](05-autenticacao.md) e `edgegateway/plugin/README.md`.
 > - **Perfis** (`users:index`, `user:{id}`, `user:{id}:consent`): a dona é a plataforma (AoP), que cria, despeja e grava o `lastAccess`; o tv3ws só lê (D-0510-5, aplicação do P5). A carga inicial só escreve no banco vazio.
 > - **Clientes** (`client:{id}`, `clients:authorized`, `clients:blocked`): escritos pelo tv3ws; o `clients:authorized` entrou com a D-0510-4.
+> - **Origens associadas** (`origins:associated`, HASH origem → id do serviço corrente): escritas só pelo AoP, ao lançar e ao encerrar a app de emissora, e limpas no boot dele; lidas pela borda e pelo tv3ws. Desde o P1.3 (decisão do Luís em 10/10), a origem é a própria da app, `http://<rótulo>.<APPS_DOMAIN>:<AOP_PUBLIC_PORT>` (padrão `<rótulo>.apps.localhost:8080`), a que o navegador manda no `Origin`; até ali era o alvo do proxy, `http://bcast:8081`.
 > - Exceção ao P5 ainda sem decisão: `user:{id}:broadcaster-attrs:{scid}`, gravado pelo tv3ws e apagado pela plataforma no despejo.
 
 O Redis é o repositório compartilhado de estado de segurança do sistema.
