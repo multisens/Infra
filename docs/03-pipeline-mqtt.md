@@ -1,47 +1,43 @@
-# Pipeline de Segurança MQTT
+# Pipeline MQTT: validação de esquema
 
-O plugin C intercepta toda mensagem publicada no broker antes de entregá-la aos assinantes.
+> **Revisto em 2026-10-10 contra o código.** Até esta revisão, este documento descrevia um pipeline de segurança com três camadas (ACL por `client_id` no formato `user_<userId>`, consentimento por `serviceId` e esquema), um módulo `authorize.c` e a carga de ACL e consentimento no Redis pelo `migrate_to_redis.py` na partida. Nada disso existe mais: o controle de acesso a tópicos foi removido por decisão de desenho (comentário em `infra/mqtt-broker/plugin/src/mosquitto_plugin.c`), o plugin não consulta o Redis e só valida esquema e mede latência.
+
+O plugin C intercepta toda mensagem publicada no broker antes de entregá-la aos assinantes. Ele usa o evento `MOSQ_EVT_ACL_CHECK` do Mosquitto só para isso: valida o PUBLISH (`MOSQ_ACL_WRITE`) e deixa passar todo o resto (assinatura e entrega), sem decidir acesso por cliente.
 
 ## Fluxo de validação por mensagem
 
 ```mermaid
 flowchart TD
-    PUB["Cliente publica mensagem\nclient_id: user_<userId>\ntopic: <tópico>\npayload: <JSON>"]
+    PUB["Cliente publica mensagem\ntopic: <tópico>\npayload"]
 
     PUB --> CHK_SKIP{Tópico especial?}
 
     CHK_SKIP -->|"errors/*"| ALLOW_SKIP["Entrega direta\n(evita loop)"]
     CHK_SKIP -->|"PluginResponseTime*"| ALLOW_SKIP
-    CHK_SKIP -->|"PublisherResponseTime*"| LATENCY["Mede latência\nPublica em PluginResponseTime<id>/iteration<n>"]
-    CHK_SKIP -->|"outros"| CHK_FMT
+    CHK_SKIP -->|"PublisherResponseTime*"| LATENCY["Mede latência\nPublica em PluginResponseTime<id>/iteration<n>\n(a mensagem original é entregue)"]
+    CHK_SKIP -->|"$SYS/*"| ALLOW
+    CHK_SKIP -->|"outros"| CHK_EMPTY
 
-    CHK_FMT{"client_id no formato\nuser_<userId>?"}
-    CHK_FMT -->|"Não"| DENY["MOSQ_ERR_ACL_DENIED\n+ publica em errors/<client_id>"]
-    CHK_FMT -->|"Sim"| ACL
+    CHK_EMPTY{"Payload vazio?"}
+    CHK_EMPTY -->|"Sim"| ALLOW
+    CHK_EMPTY -->|"Não"| LOOKUP
 
-    ACL["Layer 1 — ACL\nRedis: SMEMBERS acl:<user_id>\ncompara tópico com padrões\n(wildcards + e #)"]
-    ACL -->|"Sem match"| DENY
-    ACL -->|"Match"| CHK_AOP
+    LOOKUP["Procura o esquema do tópico em schemas.json\n(igualdade exata; depois padrões com + e #)"]
+    LOOKUP -->|"Sem esquema"| ALLOW
+    LOOKUP -->|"Com esquema"| PARSE
 
-    CHK_AOP{"Tópico começa\ncom aop/?"}
-    CHK_AOP -->|"Não"| CHK_SENSOR
-    CHK_AOP -->|"Sim"| CONSENT
+    PARSE{"Payload é JSON?\n(esquema type=string aceita texto puro)"}
+    PARSE -->|"Não"| DENY["MOSQ_ERR_ACL_DENIED\n+ publica em errors/<client_id>\n(INVALID_JSON)"]
+    PARSE -->|"Sim"| SCHEMA
 
-    CONSENT["Layer 2 — Consentimento\nExtrai serviceId do tópico\naop/<serviceId>/...\nRedis: SISMEMBER user:<user_id>:consent <serviceId>"]
-    CONSENT -->|"Não consentido"| DENY
-    CONSENT -->|"Consentido"| CHK_SENSOR
-
-    CHK_SENSOR{"Tópico começa\ncom sensor/?"}
-    CHK_SENSOR -->|"Não"| ALLOW
-    CHK_SENSOR -->|"Sim"| SCHEMA
-
-    SCHEMA["Layer 3 — Schema\nCarrega schema de schemas.json\nValida payload JSON\n(JSON Schema Draft-07 em C)"]
-    SCHEMA -->|"Schema não encontrado"| ALLOW
-    SCHEMA -->|"Payload inválido"| DENY
+    SCHEMA["Valida o payload contra o esquema\n(JSON Schema Draft-07 em C)"]
+    SCHEMA -->|"Payload inválido"| DENY_SCHEMA["MOSQ_ERR_ACL_DENIED\n+ publica em errors/<client_id>\n(SCHEMA_VALIDATION_FAILED)"]
     SCHEMA -->|"Payload válido"| ALLOW
 
     ALLOW["Mensagem entregue\naos assinantes"]
 ```
+
+Os esquemas declarados (`infra/mqtt-broker/plugin/config/schemas.json`) cobrem tópicos de estado e de sinalização da plataforma, além dos de teste `sensor/*`. O mapa dos tópicos está em [`08-mqtt-map.md`](./08-mqtt-map.md), e a validação em detalhe, em [`09-schema-validation.md`](./09-schema-validation.md).
 
 ---
 
@@ -50,20 +46,16 @@ flowchart TD
 ```mermaid
 graph TD
     subgraph mosquitto_plugin.so
-        MAIN["mosquitto_plugin.c\nOrquestrador\ncallback_acl_check()"]
-        AUTH["authorize.c\nACL + Consentimento\nvalidate_acl()\nvalidate_consent()\nauthorize_access()"]
+        MAIN["mosquitto_plugin.c\nOrquestrador\ncallback_acl_check()\nvalidate_message()\npublish_error()"]
         SCHEMA["schema_validator.c\nValidação JSON Schema\nvalidate_json_schema()"]
-        LATENCY["response_time_tester.c\nTeste de latência\nhandle_response_time()"]
+        LATENCY["response_time_tester.c\nTeste de latência\nhandle_response_time_test()"]
     end
 
-    REDIS[("Redis\nhiredis")]
     SCHEMAS_FILE["/mosquitto/config/schemas.json"]
 
-    MAIN --> AUTH
     MAIN --> SCHEMA
     MAIN --> LATENCY
-    AUTH -->|"SMEMBERS / SISMEMBER"| REDIS
-    SCHEMA -->|"lê schemas na inicialização"| SCHEMAS_FILE
+    MAIN -->|"lê schemas na inicialização"| SCHEMAS_FILE
 ```
 
 ---
@@ -114,20 +106,14 @@ mindmap
 ```mermaid
 sequenceDiagram
     participant DC as Docker
-    participant PY as migrate_to_redis.py
-    participant REDIS as Redis
+    participant EP as entrypoint.sh
     participant MQ as Mosquitto + Plugin
 
-    DC->>PY: entrypoint.sh — aguarda Redis...
-    PY->>REDIS: PING (polling até conectar)
-    REDIS-->>PY: PONG
-    PY->>REDIS: SADD acl:<user_id> <padrões> (para cada usuário em acl.json)
-    PY->>REDIS: SADD user:<user_id>:consent <serviceIds> (userData.json)
-    PY->>REDIS: HSET user:<user_id>:profile <atributos> (userData.json)
-    PY-->>DC: migração concluída
-    DC->>MQ: mosquitto -c /mosquitto/config/mosquitto.conf
+    DC->>EP: entrypoint.sh
+    EP->>MQ: exec mosquitto -c /mosquitto/config/mosquitto.conf
     MQ->>MQ: carrega mosquitto_plugin.so
-    MQ->>REDIS: conecta via hiredis
-    MQ->>MQ: carrega schemas.json
-    Note over MQ: Pronto para receber conexões
+    MQ->>MQ: carrega /mosquitto/config/schemas.json
+    Note over MQ: Pronto para receber conexões (1883; WebSocket na 9001)
 ```
+
+O broker não depende do Redis. O `migrate_to_redis.py` continua na imagem (`/usr/local/bin`), só para depuração manual; a partida não o executa (`infra/mqtt-broker/infra/entrypoint.sh`).

@@ -18,8 +18,10 @@ ENV NODE_ENV=production
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=builder /app/dist ./dist
-# Template embutido + entrypoint que popula /user-files se vazio
-# (o tv3ws le userData.json no initFromRedis se Redis estiver vazio).
+# Template embutido + entrypoint que popula /user-files se vazio. O tv3ws nao
+# le mais o userData.json (a semeadura initFromRedis saiu na D-0510-5; a carga
+# inicial dos perfis e do container redis). Do /user-files, o codigo dele so
+# usa o USER_THUMBS (/user-files/thumbs no compose da raiz).
 COPY --from=tv30-data    / /opt/user-files-template
 COPY --from=tv30-scripts /entrypoint-user-files.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

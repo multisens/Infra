@@ -1,34 +1,33 @@
 # Mosquitto Plugin
 
-Plugin modular para Mosquitto MQTT Broker com funcionalidades de validação de schema JSON, teste de tempo de resposta e **controle de acesso em duas camadas**.
+Plugin modular para Mosquitto MQTT Broker com duas funcionalidades: validação de schema JSON na publicação e teste de tempo de resposta.
+
+> **Revisto em 2026-10-10 contra o código.** Este README descrevia também um controle de acesso em duas camadas (ACL por usuário e consentimento por `serviceId`, com `authorize.c`, `acl.json` e `userData.json` no plugin). Ele foi removido por decisão de desenho (comentário em `plugin/src/mosquitto_plugin.c`): o plugin não consulta o Redis e não decide acesso por cliente.
 
 ## Estrutura do Projeto
 
 ```
-mosquitto_plugin/
+mqtt-broker/
 ├── plugin/
 │   ├── src/
 │   │   ├── mosquitto_plugin.c            # Orquestrador principal
 │   │   ├── schema_validator.c            # Validador de JSON Schema
-│   │   ├── response_time_tester.c        # Teste de latência
-│   │   └── authorize.c                   # Controle de acesso (ACL + Consent)
+│   │   └── response_time_tester.c        # Teste de latência
 │   ├── include/
 │   │   ├── schema_validator.h
-│   │   ├── response_time_tester.h
-│   │   └── authorize.h
+│   │   └── response_time_tester.h
 │   ├── config/
 │   │   ├── mosquitto.conf                # Config do broker
-│   │   ├── schemas.json                  # Schemas de validação
-│   │   ├── acl.json                      # ACL (wildcards por usuário)
-│   │   └── userData.json                 # Dados de usuários com accessConsent
+│   │   └── schemas.json                  # Schemas de validação
 │   ├── tests/
+│   │   └── test_all_validations.sh
 │   └── docs/
-│       ├── access_control_flow.md        # Documentação do fluxo de autorização
-│       ├── authorization_tests.md        # Guia de testes
 │       └── mosquitto_plugin_context.md
 ├── infra/
 │   ├── Dockerfile
-│   └── docker-compose.yml
+│   ├── docker-compose.yml
+│   ├── entrypoint.sh                     # Só sobe o Mosquitto
+│   └── migrate_to_redis.py               # Fora da partida; fica na imagem para depuração manual
 ├── brokertimetest/                       # App web de testes
 │   ├── server.js
 │   ├── public/
@@ -39,25 +38,21 @@ mosquitto_plugin/
 ## Funcionalidades
 
 ### 1. Validação de JSON Schema
-- Valida mensagens MQTT contra schemas JSON
-- Publica erros em `errors/<client_id>`
-- Suporta tópicos `sensor/*`
+- Valida o payload de cada PUBLISH contra o schema do tópico em `plugin/config/schemas.json` (chave igual ao tópico ou com os curingas `+` e `#`); tópico sem schema passa sem validação
+- Payload fora do schema é recusado, e o erro é publicado em `errors/<client_id>`
+- Os schemas declarados cobrem tópicos de estado e de sinalização da plataforma, além dos de teste `sensor/*`
 
 ### 2. Teste de Tempo de Resposta
 - Mede latência do broker
 - Tópicos: `PublisherResponseTime<id>/iteration<N>`
 - Responde em: `PluginResponseTime<id>/iteration<N>`
 
-### 3. Controle de Acesso em Duas Camadas ⭐ NOVO
-- **Camada 1 (ACL)**: Valida se usuário tem permissão para acessar padrão de tópico (wildcards)
-- **Camada 2 (Consent)**: Valida se serviceId está no accessConsent do usuário (GDPR compliance)
-- Formato Client ID: `user_<userId>`
-- Suporta wildcards MQTT (`+` e `#`)
-
 ## Instalação
 
+O broker sobe com a stack da raiz do TV30 (serviço `mosquitto`, perfil `mqtt`, no `infra/docker-compose.yml`, que o compose da raiz inclui). Sozinho, a partir desta pasta e com a rede `ginga_net` já criada:
+
 ```bash
-docker compose up --build -d
+docker compose -f infra/docker-compose.yml up --build -d
 ```
 
 ## Uso
@@ -75,16 +70,6 @@ npm start
 # Abra http://localhost:3000
 ```
 
-### Controle de Acesso
-```bash
-# Acesso permitido (ACL + Consent OK)
-mosquitto_sub -V 5 -i user_c3167a18-5dc5 -h localhost -p 1883 \
-  -t "aop/fe2481ea-5d44-4225-884b-504782636c3a/apps"
-
-# Ver guia completo de testes
-cat plugin/docs/authorization_tests.md
-```
-
 ## Desenvolvimento
 
 ### Adicionar Nova Funcionalidade
@@ -93,23 +78,21 @@ cat plugin/docs/authorization_tests.md
 2. Implementar a lógica
 3. Importar no `src/mosquitto_plugin.c`
 4. Atualizar `Dockerfile` para compilar
-5. Rebuild: `docker compose up --build -d`
+5. Rebuild: `docker compose -f infra/docker-compose.yml up --build -d` (ou, na raiz do TV30, `docker compose --profile mqtt up --build -d mosquitto`)
 
 ### Estrutura Modular
 
 Cada funcionalidade é independente:
 - **schema_validator**: Validação de dados JSON Schema
 - **response_time_tester**: Métricas de performance
-- **authorize**: Controle de acesso ACL + Consent (GDPR)
 - **mosquitto_plugin**: Orquestração e callbacks
 
 ## Arquitetura
 
 ```
 mosquitto_plugin.c (orquestrador)
-├── Registra callbacks do Mosquitto
+├── Registra o callback MOSQ_EVT_ACL_CHECK (usado só para validar o PUBLISH)
 ├── Roteia mensagens para módulos
-│   ├── authorize → Valida ACL e Consent (duas camadas)
 │   ├── schema_validator → Valida schemas
 │   └── response_time_tester → Mede latência
 └── Gerencia ciclo de vida do plugin
@@ -117,6 +100,5 @@ mosquitto_plugin.c (orquestrador)
 
 ## Documentação
 
-- **Fluxo de Controle de Acesso**: `plugin/docs/access_control_flow.md`
-- **Guia de Testes**: `plugin/docs/authorization_tests.md`
 - **Contexto do Plugin**: `plugin/docs/mosquitto_plugin_context.md`
+- **Pipeline e validação de schema**: `../docs/03-pipeline-mqtt.md` e `../docs/09-schema-validation.md`

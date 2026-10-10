@@ -11,9 +11,13 @@ import (
 // Escolha da interface do anuncio. Uma interface so: o anuncio sai por ela e
 // a busca e respondida por ela (sem as respostas duplicadas medidas no teste
 // 7 de docs/ssdp-verificacao.md). Ordem:
-//  1. SSDP_INTERFACE, se definida (inexistente = erro, morre-inteiro);
+//  1. SSDP_INTERFACE, se definida (nome que nao existe na maquina = erro de
+//     configuracao, conferido uma vez na partida por checkForced; existir
+//     sem IPv4 = falta de rede);
 //  2. a interface que tem o IPv4 do host anunciado;
 //  3. a interface da rota padrao (/proc/net/route), com aviso.
+// Quando nada serve, o erro e de falta de rede (netDown): o anunciante espera
+// e escolhe de novo na tentativa seguinte (decisao do Luis, 10/10).
 
 type ifaceInfo struct {
 	Name  string
@@ -117,6 +121,24 @@ func owner(ifaces []ifaceInfo, ip string) *ifaceInfo {
 	return nil
 }
 
+// checkForced: SSDP_INTERFACE com nome que nao existe na maquina, ou de
+// loopback (o anuncio nunca sairia para a LAN por ela), e erro de
+// configuracao. Conferido so na partida: depois dela, a interface sumir (um
+// adaptador USB retirado, a rede do container desconectada) e falta de rede.
+func checkForced(forced string, lookup func(string) (exists, loopback bool)) error {
+	if forced = strings.TrimSpace(forced); forced == "" {
+		return nil
+	}
+	exists, loopback := lookup(forced)
+	if !exists {
+		return fmt.Errorf("SSDP_INTERFACE='%s' nao existe nesta maquina", forced)
+	}
+	if loopback {
+		return fmt.Errorf("SSDP_INTERFACE='%s' e a interface de loopback: o anuncio nao sairia para a rede", forced)
+	}
+	return nil
+}
+
 func chooseInterface(host, forced string, ifaces []ifaceInfo, defaultRoute func() string) (choice, error) {
 	isV4 := net.ParseIP(host) != nil && net.ParseIP(host).To4() != nil
 	var own *ifaceInfo
@@ -127,8 +149,8 @@ func chooseInterface(host, forced string, ifaces []ifaceInfo, defaultRoute func(
 	if forced = strings.TrimSpace(forced); forced != "" {
 		ifi := find(ifaces, forced)
 		if ifi == nil {
-			return choice{}, fmt.Errorf("SSDP_INTERFACE='%s' nao existe ou nao tem IPv4 externo (interfaces com IPv4: %s)",
-				forced, describe(ifaces))
+			return choice{}, netDown{fmt.Errorf("a interface SSDP_INTERFACE='%s' esta sem IPv4 externo ou fora do ar "+
+				"(interfaces com IPv4: %s)", forced, describe(ifaces))}
 		}
 		c := choice{Name: ifi.Name, Addr: ifi.IPv4s[0], Source: "SSDP_INTERFACE"}
 		if own != nil {
@@ -145,6 +167,9 @@ func chooseInterface(host, forced string, ifaces []ifaceInfo, defaultRoute func(
 	if own != nil {
 		return choice{Name: own.Name, Addr: host, Source: "host-ip"}, nil
 	}
+	if len(ifaces) == 0 {
+		return choice{}, netDown{fmt.Errorf("nenhuma interface de pe com IPv4 externo")}
+	}
 
 	why := fmt.Sprintf("'%s' nao e um IPv4 (nome ou IPv6)", host)
 	if isV4 {
@@ -158,6 +183,22 @@ func chooseInterface(host, forced string, ifaces []ifaceInfo, defaultRoute func(
 			}}, nil
 		}
 	}
-	return choice{}, fmt.Errorf("nenhuma interface para anunciar: %s, e nao ha rota padrao com IPv4 "+
-		"(interfaces com IPv4: %s). Defina SSDP_INTERFACE", why, describe(ifaces))
+	return choice{}, netDown{fmt.Errorf("nenhuma interface para anunciar: %s, e nao ha rota padrao com IPv4 "+
+		"(interfaces com IPv4: %s). Defina SSDP_INTERFACE", why, describe(ifaces))}
+}
+
+// localIP: o "IP local" da cadeia de config.go — o IPv4 da interface da rota
+// padrao, senao o da primeira interface. Recalculado a cada tentativa, porque
+// muda com a rede. Sem interface, 127.0.0.1 (a escolha da interface entao
+// falha por falta de rede, e nada e anunciado).
+func localIP(ifaces []ifaceInfo, defaultRoute func() string) string {
+	if r := defaultRoute(); r != "" {
+		if ifi := find(ifaces, r); ifi != nil {
+			return ifi.IPv4s[0]
+		}
+	}
+	if len(ifaces) > 0 {
+		return ifaces[0].IPv4s[0]
+	}
+	return "127.0.0.1"
 }

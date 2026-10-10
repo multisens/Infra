@@ -151,10 +151,6 @@
     "type": "string",
     "maxLength": 256
   },
-  "aop/users": {
-    "type": "string",
-    "maxLength": 512
-  },
   "aop/display/layers/rxgui": {
     "type": "string",
     "maxLength": 256
