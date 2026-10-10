@@ -38,15 +38,30 @@ func testExtra() map[string]interface{} {
 		}
 		return m
 	}
+	edge := func(m map[string]interface{}, name string) map[string]interface{} { m["edge"] = name; return m }
+	api := func(id, version string) map[string]interface{} {
+		return map[string]interface{}{"id": id, "version": version}
+	}
 	return map[string]interface{}{
 		"surface":                    "internal",
 		"current_service_context_id": tSCID,
+		"apis": []interface{}{
+			api("tv3ws-application-authorization", "2.0"),
+			api("tv3ws-current-service", "2.0"),
+			api("tv3ws-api-info", "2.0"),
+			api("tv3ws-bind-context-register", "2.0"),
+			api("tv3ws-bind-context-list", "2.0"),
+			api("tv3ws-bind-context-remove", "2.0"),
+		},
 		"routes": []interface{}{
 			r("GET", "/health", authNone),
 			r("GET", "/manifest", authNone),
 			r("GET", "/tv3/authorize", authNone, classAutonomous, classNonLocal),
-			r("POST", "/tv3/bind-context", authNone, classAssociated),
-			r("GET", "/tv3/bind-context", authToken, classAutonomous, classNonLocal),
+			edge(r("POST", "/tv3/bind-context", authNone, classAssociated), edgeBindRegister),
+			edge(r("GET", "/tv3/bind-context", authToken, classAutonomous, classNonLocal), edgeBindList),
+			edge(r("DELETE", "/tv3/bind-context", authNone, classAssociated), edgeBindRemove),
+			edge(r("GET", "/tv3/api-info", authToken), edgeAPIList),
+			edge(r("GET", "/tv3/api-info/{apiId}", authToken), edgeAPIInfo),
 			r("GET", "/tv3/current-service", authToken),
 			r("GET", "/tv3/current-service/users/current-user", authTokenBind),
 			r("POST", "/tv3/current-service/users", authTokenBind),
@@ -386,14 +401,39 @@ func TestConfigInvalida(t *testing.T) {
 			t.Errorf("env %d (%v) deveria ser rejeitado", i, b)
 		}
 	}
+	// testExtra com um campo trocado (nil = removido)
+	with := func(k string, v interface{}) map[string]interface{} {
+		m := testExtra()
+		if v == nil {
+			delete(m, k)
+		} else {
+			m[k] = v
+		}
+		return m
+	}
+	oneRoute := func(rt map[string]interface{}) []interface{} { return []interface{}{rt} }
 	for name, extra := range map[string]interface{}{
 		"sem bloco":   nil,
-		"sem surface": map[string]interface{}{"routes": testExtra()["routes"]},
-		"sem rotas":   map[string]interface{}{"surface": "internal"},
-		"auth ruim":   map[string]interface{}{"surface": "x", "routes": []interface{}{map[string]interface{}{"method": "GET", "path": "/a", "auth": "jwt"}}},
-		"classe ruim": map[string]interface{}{"surface": "x", "routes": []interface{}{map[string]interface{}{"method": "GET", "path": "/a", "classes": []interface{}{"local-standalone"}}}},
-		"cors ruim":   map[string]interface{}{"surface": "x", "routes": testExtra()["routes"], "cors_allow_headers": []interface{}{"Content-Type", ""}},
-		"cors vazio":  map[string]interface{}{"surface": "x", "routes": testExtra()["routes"], "cors_allow_headers": []interface{}{}},
+		"sem surface": with("surface", nil),
+		"sem rotas":   with("routes", nil),
+		"auth ruim":   map[string]interface{}{"surface": "x", "routes": oneRoute(map[string]interface{}{"method": "GET", "path": "/a", "auth": "jwt"})},
+		"classe ruim": map[string]interface{}{"surface": "x", "routes": oneRoute(map[string]interface{}{"method": "GET", "path": "/a", "classes": []interface{}{"local-standalone"}})},
+		"cors ruim":   with("cors_allow_headers", []interface{}{"Content-Type", ""}),
+		"cors vazio":  with("cors_allow_headers", []interface{}{}),
+		// APIs respondidas pela borda
+		"edge desconhecido": map[string]interface{}{"surface": "x", "routes": oneRoute(map[string]interface{}{"method": "GET", "path": "/a", "edge": "proxy"})},
+		"edge nao texto":    map[string]interface{}{"surface": "x", "routes": oneRoute(map[string]interface{}{"method": "GET", "path": "/a", "edge": true})},
+		"C.6.8 sem scid":    with("current_service_context_id", nil),
+		"api-info sem apis": with("apis", nil),
+		"apis nao lista":    with("apis", "tv3ws-api-info"),
+		"api sem versao":    with("apis", []interface{}{map[string]interface{}{"id": "tv3ws-api-info"}}),
+		"api versao ruim":   with("apis", []interface{}{map[string]interface{}{"id": "tv3ws-api-info", "version": "2"}}),
+		"api id sem nome":   with("apis", []interface{}{map[string]interface{}{"id": "tv3ws", "version": "2.0"}}),
+		"api subsistema":    with("apis", []interface{}{map[string]interface{}{"id": "dtv-api-info", "version": "2.0"}}),
+		"api duplicada": with("apis", []interface{}{
+			map[string]interface{}{"id": "tv3ws-api-info", "version": "2.0"},
+			map[string]interface{}{"id": "tv3ws-api-info", "version": "2.0"},
+		}),
 	} {
 		if _, err := loadConfig(extra, env(ok)); err == nil {
 			t.Errorf("%s: deveria ser rejeitado", name)
@@ -405,10 +445,28 @@ func TestConfigInvalida(t *testing.T) {
 		t.Fatalf("auth ausente deveria virar token: %+v", rt)
 	}
 	// cors_allow_headers (do routes.json) vira o ACAH do OPTIONS
-	c, err := loadConfig(map[string]interface{}{"surface": "x", "routes": testExtra()["routes"],
-		"cors_allow_headers": []interface{}{"Content-Type", " bind-token "}}, env(ok))
+	c, err := loadConfig(with("cors_allow_headers", []interface{}{"Content-Type", " bind-token "}), env(ok))
 	if err != nil || c.CORSAllowHeaders != "Content-Type, bind-token" {
-		t.Fatalf("cors_allow_headers: %v %q", err, c.CORSAllowHeaders)
+		t.Fatalf("cors_allow_headers: %v %+v", err, c)
+	}
+	// sem rota respondida pela borda, nem scid nem apis sao exigidos
+	c, err = loadConfig(map[string]interface{}{"surface": "x", "routes": oneRoute(map[string]interface{}{"method": "GET", "path": "/a"})}, env(ok))
+	if err != nil || c.ServiceContextID != "" || len(c.APIs.list) != 0 {
+		t.Fatalf("config sem rotas da borda: %v %+v", err, c)
+	}
+	// edge e apis chegam a rota e ao catalogo, na ordem dada
+	c, err = loadConfig(testExtra(), env(ok))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rt, _ := c.Routes.match("DELETE", "/tv3/bind-context"); rt == nil || rt.Edge != edgeBindRemove {
+		t.Errorf("DELETE /tv3/bind-context: edge %+v", rt)
+	}
+	if rt, _ := c.Routes.match("GET", "/tv3/current-service"); rt == nil || rt.Edge != "" {
+		t.Errorf("GET /tv3/current-service nao eh da borda: %+v", rt)
+	}
+	if len(c.APIs.list) != 6 || c.APIs.list[0].ID != "tv3ws-application-authorization" || c.ServiceContextID != tSCID {
+		t.Errorf("catalogo/scid: %+v %q", c.APIs.list, c.ServiceContextID)
 	}
 }
 

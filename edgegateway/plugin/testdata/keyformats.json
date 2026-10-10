@@ -1,5 +1,5 @@
 {
-  "comment": "Casos cruzados de formato de chave RSA (registro C.6.8.2). MESMO arquivo em infra/edgegateway/plugin/testdata/keyformats.json (borda, keys_test.go) e tv3ws/test/fixtures/keyformats.json (tv3ws, bind-token.test.ts): os dois parsers tem de concordar em todos. So material publico (chave privada e gerada na hora pelos testes).",
+  "comment": "Casos de formato de chave RSA (registro C.6.8.2 e validacao do bind-token, keys_test.go). Nasceram como teste cruzado com o tv3ws (tv3ws/test/fixtures/keyformats.json, bind-token.test.ts), que registrava as chaves ate a reuniao de 05/10; desde entao o registro e a validacao sao o mesmo codigo da borda, e o arquivo segue como teste de regressao. So material publico (chave privada e gerada na hora pelos testes).",
   "cases": [
     {
       "name": "PEM PUBLIC KEY (SPKI)",

@@ -7,7 +7,9 @@ import (
 
 // Politica por rota (routes.json, campos "auth" e "classes").
 const (
-	authNone      = "none"       // sem credencial (health, manifest, authorize, token, POST/DELETE bind-context)
+	authNone = "none" // sem credencial (health, manifest, authorize, token, POST/DELETE bind-context)
+	// (o GET /tv3/bind-context eh "token": o bind-token dele eh argumento da
+	// propria API C.6.8.3, validado pelo handler em bindcontext.go)
 	authToken     = "token"      // access token
 	authTokenBind = "token+bind" // access token + bind-token ("Security requirements" = shall)
 )
@@ -34,7 +36,10 @@ type route struct {
 	Path    string
 	Auth    string
 	Classes []string // nil = todas as classes
-	segs    []segment
+	// Edge != "" => a rota eh RESPONDIDA pela propria borda (handler deste
+	// plugin com esse nome, edge.go), sem repasse ao roteador do KrakenD.
+	Edge string
+	segs []segment
 }
 
 func newRoute(method, path, auth string, classes []string) (*route, error) {

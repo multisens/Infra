@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -99,12 +100,14 @@ func storedJSON(alg, key string) string {
 	return string(b)
 }
 
-// fakeStore: Redis em memoria para os testes da decisao.
+// fakeStore: Redis em memoria para os testes da decisao e das APIs da borda.
 type fakeStore struct {
 	blocked    map[string]bool
 	associated map[string]bool
 	current    string
-	keys       map[string][]string
+	keys       map[string][]string // bind-context:{serviceId}
+	svcHash    map[string]string   // session:current-service
+	wrongType  map[string]bool     // bind-context:{serviceId} de outro tipo (WRONGTYPE)
 	err        error
 	calls      int
 }
@@ -123,5 +126,68 @@ func (f *fakeStore) CurrentServiceID() (string, error) {
 }
 func (f *fakeStore) BindKeys(id string) ([]string, error) {
 	f.calls++
-	return f.keys[id], f.err
+	if f.err == nil && f.wrongType[id] {
+		return nil, redisError("WRONGTYPE Operation against a key holding the wrong kind of value")
+	}
+	return append([]string(nil), f.keys[id]...), f.err
+}
+func (f *fakeStore) AddBindKey(id, raw string) error {
+	f.calls++
+	if f.err != nil {
+		return f.err
+	}
+	if f.keys == nil {
+		f.keys = map[string][]string{}
+	}
+	f.keys[id] = append(f.keys[id], raw)
+	return nil
+}
+func (f *fakeStore) RemoveBindKey(id, raw string) (int64, error) {
+	f.calls++
+	if f.err != nil {
+		return 0, f.err
+	}
+	var kept []string
+	var n int64
+	for _, e := range f.keys[id] {
+		if e == raw {
+			n++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	if len(kept) == 0 {
+		delete(f.keys, id) // como no Redis: lista vazia some
+	} else {
+		f.keys[id] = kept
+	}
+	return n, nil
+}
+func (f *fakeStore) BindServices() ([]string, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	var out []string
+	for id, l := range f.keys {
+		if len(l) > 0 {
+			out = append(out, id)
+		}
+	}
+	for id := range f.wrongType {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+func (f *fakeStore) CurrentService() (map[string]string, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := map[string]string{}
+	for k, v := range f.svcHash {
+		out[k] = v
+	}
+	return out, nil
 }

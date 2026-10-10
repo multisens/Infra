@@ -33,12 +33,13 @@ func parseKeyMaterial(alg, key string) (interface{}, error) {
 	return nil, fmt.Errorf("alg %q nao suportado", alg)
 }
 
-// Rotulos PEM aceitos. O tv3ws (registro C.6.8.2, broadcaster-security/
-// bind-token.ts) aplica as MESMAS regras desta funcao — PEM so com o texto
-// comecando por "-----BEGIN" e um destes rotulos; base64 nas quatro
-// codificacoes de decodeBase64Any — para nao aceitar no registro uma chave
-// que a borda nao le (os casos de teste sao espelhados em keys_test.go e
-// test/bind-token.test.ts).
+// Rotulos PEM aceitos. Desde a reuniao de 05/10 (D-0510-2) o registro
+// (C.6.8.2, bindcontext.go) e a validacao do bind-token usam ESTA mesma
+// funcao — PEM so com o texto comecando por "-----BEGIN" e um destes rotulos;
+// base64 nas quatro codificacoes de decodeBase64Any —, entao o registro nao
+// aceita chave que a validacao nao le. Antes, o registro ficava no tv3ws
+// (broadcaster-security/bind-token.ts) com regras copiadas destas; os casos
+// de testdata/keyformats.json vem desse teste cruzado.
 var pemLabels = map[string]bool{"PUBLIC KEY": true, "RSA PUBLIC KEY": true, "RSA PRIVATE KEY": true, "PRIVATE KEY": true}
 
 func parseRSAPublicKey(s string) (*rsa.PublicKey, error) {
@@ -104,7 +105,8 @@ func rsaPublicFromDER(der []byte) (*rsa.PublicKey, error) {
 }
 
 // storedKey eh o JSON de cada elemento de bind-context:{serviceId}
-// (gravado pelo tv3ws na API C.6.8.2): {"alg","key","registeredAt"}.
+// (gravado pela propria borda na API C.6.8.2, bindcontext.go):
+// {"alg","key","registeredAt"}.
 type storedKey struct {
 	Alg string `json:"alg"`
 	Key string `json:"key"`

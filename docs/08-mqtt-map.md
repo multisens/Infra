@@ -3,7 +3,7 @@
 Mapeamento completo de publicações e subscrições MQTT no ecossistema TV 3.0,
 gerado a partir da análise estática dos fontes em `aop`, `tv3ws` e `infra`.
 
-> Caminhos e linhas do tv3ws conferidos em 2026-10-02 (renome `ccws` → `tv3ws` e mudança de `src/modules/user-api/` para `src/api/user/`). Os do `aop` e do `infra` não foram reconferidos.
+> Caminhos e linhas do tv3ws conferidos em 2026-10-02 (renome `ccws` → `tv3ws` e mudança de `src/modules/user-api/` para `src/api/user/`). Os do `aop` e do `infra` não foram reconferidos. Em 2026-10-10, depois das mudanças da reunião de 05/10 com o Joel, foram reconferidos os tópicos `aop/currentUser`, `aop/currentService`, `aop/users` e `aop/devices/{devclass}`, nos dois lados.
 
 ---
 
@@ -23,27 +23,31 @@ gerado a partir da análise estática dos fontes em `aop`, `tv3ws` e `infra`.
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **PUB** | `aop/src/core.js` | 141 | `setCurrentUser()` — payload: UUID, retain: true |
-| **PUB** | `tv3ws/src/api/user/service.ts` | 161 | `setCurrentUser()` — payload: UUID, retain: true |
-| **SUB** | `aop/src/core.js` | 44 | handler: `loadCurrentUser()` |
-| **SUB** | `tv3ws/src/api/user/service.ts` | 106 | handler: `updateCurrentUser()` → `session:current-user` no Redis |
+| **PUB** | `aop/src/core.js` | 233 | `setCurrentUser()` — grava antes o `lastAccess` do perfil; payload: UUID, retain: true |
+| **PUB** | `tv3ws/src/api/user/service.ts` | 106 | `setCurrentUser()` (C.6.14.4) — payload: UUID, retain: true |
+| **SUB** | `aop/src/core.js` | 81 | handler: `loadCurrentUser()` → grava o `lastAccess` do perfil (`touchLastAccess`, desde 05/10, D-0510-5) |
+| **SUB** | `tv3ws/src/api/user/service.ts` | 65 | handler: `updateCurrentUser()` → `session:current-user` no Redis (até 05/10, também o `lastAccess`) |
 
 ### `aop/currentService`
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **PUB** | `aop/src/core.js` | 168 | `setCurrentService()` — payload: serviceId, retain: true |
-| **PUB** | `aop/src/core.js` | 174 | `unsetCurrentService()` — payload: `''`, retain: true |
-| **SUB** | `aop/src/core.js` | 45 | handler: `loadCurrentService()` |
-| **SUB** | `tv3ws/src/api/user/service.ts` | 107 | handler: `updateCurrentService()` → `session:current-service-id` no Redis |
+| **PUB** | `aop/src/core.js` | 260 | `setCurrentService()` — payload: serviceId, retain: true |
+| **PUB** | `aop/src/core.js` | 266 | `unsetCurrentService()` — payload: `''`, retain: true |
+| **SUB** | `aop/src/core.js` | 82 | handler: `loadCurrentService()` |
+| **SUB** | `tv3ws/src/api/user/service.ts` | 66 | handler: `updateCurrentService()` → `session:current-service-id` no Redis |
 | **SUB** | `tv3ws/src/core.ts` | 168 | handler: `currentService()` → `session:current-service` Hash no Redis |
 
 ### `aop/users`
 
+Fora de uso desde a rodada da reunião de 05/10 com o Joel (D-0510-5): o tv3ws não sincroniza mais perfis a partir do `userData.json`, e a plataforma (AoP) é a dona deles. A linha de publicação que esta tabela listava (`aop/src/modules/prf-mngr/service.js`, `createUser()`) não existia mais no código; a última função que publicava o tópico (`notifyUsersChanged`, em `aop/src/core.js`) não tinha chamador e saiu na mesma rodada.
+
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **PUB** | `aop/src/modules/prf-mngr/service.js` | 105 | `createUser()` — payload: caminho do `userData.json` |
-| **SUB** | `tv3ws/src/api/user/service.ts` | 108 | handler: `syncUsersFromFile()` → sincroniza usuários para Redis |
+| **SUB** | `aop/src/core.js` | 84 | handler: `loadUserData()` — assinatura que sobrou; nada publica o tópico |
+| ~~SUB~~ | `tv3ws/src/api/user/service.ts` | — | `syncUsersFromFile()`: removido em 05/10 |
+
+O esquema do tópico continua declarado em `mqtt-broker/plugin/config/schemas.json`.
 
 ### `aop/services`
 
@@ -59,8 +63,8 @@ gerado a partir da análise estática dos fontes em `aop`, `tv3ws` e `infra`.
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **PUB** | `tv3ws/src/modules/remotedevice-manager/manager.ts` | 79 | `addRemoteDevice()` — payload: JSON array de handles, retain: true |
-| **PUB** | `tv3ws/src/modules/remotedevice-manager/manager.ts` | 102 | `removeRemoteDevice()` — payload: JSON array de handles, retain: true |
+| **PUB** | `tv3ws/src/modules/remotedevice-manager/manager.ts` | 87 | `addRemoteDevice()` — payload: JSON array de handles, retain: true. Desde 05/10 (D-0510-6), só publica depois de gravar o espelho no Redis |
+| **PUB** | `tv3ws/src/modules/remotedevice-manager/manager.ts` | 110 | `removeRemoteDevice()` — payload: JSON array de handles (ou `''` se não sobrou nenhum), retain: true. Também depois da remoção no Redis |
 
 ---
 
@@ -190,19 +194,19 @@ gerado a partir da análise estática dos fontes em `aop`, `tv3ws` e `infra`.
 ```mermaid
 graph TD
     subgraph AoP["AoP (aop-core)"]
-        AOP_PUB["Publica\naop/currentUser\naop/currentService\naop/users\naop/display/layers/*"]
-        AOP_SUB["Subscreve\naop/currentUser\naop/currentService\ntlm/lls/#\ntlm/sls/{svcId}/#"]
+        AOP_PUB["Publica\naop/currentUser\naop/currentService\naop/display/layers/*"]
+        AOP_SUB["Subscreve\naop/currentUser\naop/currentService\naop/users (sobra)\ntlm/lls/#\ntlm/sls/{svcId}/#"]
     end
 
     subgraph TV3WS["tv3ws (tv3ws-client)"]
         TV3WS_PUB["Publica\naop/currentUser\naop/devices/{class}\npopup/yesno|qrcode|pin"]
-        TV3WS_SUB["Subscreve\naop/currentUser\naop/currentService\naop/users\naop/services\naop/{svcId}/currentApp\naop/{svcId}/{appId}/path\naop/{svcId}/{appId}/doc/nodes"]
+        TV3WS_SUB["Subscreve\naop/currentUser\naop/currentService\naop/services\naop/{svcId}/currentApp\naop/{svcId}/{appId}/path\naop/{svcId}/{appId}/doc/nodes"]
     end
 
     subgraph REDIS["Redis"]
         R_USER["session:current-user"]
         R_SVC["session:current-service"]
-        R_USERS["users:index\nuser:{id}\nuser:{id}:consent"]
+        R_USERS["users:index\nuser:{id} (lastAccess)\nuser:{id}:consent"]
     end
 
     subgraph DISPLAY["Display Layer (rp-display)"]
@@ -212,7 +216,8 @@ graph TD
     AOP_PUB -->|"MQTT"| TV3WS_SUB
     AOP_PUB -->|"MQTT"| D_SUB
     TV3WS_PUB -->|"MQTT"| AOP_SUB
-    TV3WS_SUB -->|"Redis write"| REDIS
+    TV3WS_SUB -->|"Redis write (session:*)"| REDIS
+    AOP_SUB -->|"Redis write (lastAccess, desde 05/10)"| R_USERS
 ```
 
 ---

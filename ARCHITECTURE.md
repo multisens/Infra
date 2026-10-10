@@ -2,8 +2,9 @@
 
 > **Documento histórico (2026-10-02).** Descreve o layout `aop_infra` anterior à consolidação de set/2026 e **não** o estado corrente. Os nomes de pasta, serviço e script são os da época: `ccws/` e `CCWS` são o atual `tv3ws`, e `ccws-relay.js` não existe mais. Também deixaram de valer as seguintes afirmações técnicas:
 >
-> - **Bug do "Bearer".** O tv3ws hoje remove o prefixo `Bearer` antes de validar.
-> - **`exp` comentado.** O tv3ws confere `exp`, e a borda exige `exp`.
+> - **Bug do "Bearer".** Desde a reunião de 05/10 com o Joel (D-0510-1), o tv3ws não valida o access token; quem valida é a borda (plugin `tv30-auth`), que exige o formato `Authorization: Bearer <accessToken>`.
+> - **`exp` comentado.** O tv3ws confere o `exp` do token que ele mesmo emitiu antes de reaproveitá-lo, e a borda exige `exp`.
+> - **106 do CCWS a não locais por HTTP.** Saiu do tv3ws com a D-0510-1. Fora do `/tv3/token`, ninguém o aplica até a borda ter TLS (lacuna L3).
 > - **Middleware Node e plugin `consent-validator`.** Foram removidos. O plugin nunca validou nada: fazia proxy de qualquer caminho.
 > - **ACL e consentimento no broker.** Saíram no item 3.
 >
