@@ -12,13 +12,17 @@ import (
 )
 
 // Textos da Tabela C.1 — os mesmos do catalogo do tv3ws (src/util/error.ts).
+// 101, 105 e 300 so saem das APIs respondidas pela borda (edge.go).
 var errorText = map[int]string{
 	100: "API not found",
+	101: "Illegal argument value",
 	104: "Access not authorized by the broadcaster",
+	105: "Missing argument",
 	106: "API unavailable for this runtime environment",
 	107: "Invalid or outdated access token",
 	108: "Invalid or revoked bind token",
 	200: "Platform resource unavailable",
+	300: "No DTV service currently in use",
 }
 
 const warnHeader = "X-TV30-Auth-Warn"
@@ -29,6 +33,8 @@ type verdict struct {
 	Detail string
 	Class  string
 	Route  string
+	rt     *route            // rota casada (nil = nao declarada)
+	params map[string]string // valores dos {param} do caminho
 }
 
 func (v verdict) fail(code int, detail string) verdict {
@@ -87,6 +93,12 @@ func (h *authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		logf("WARN surface=%s code=%d %s %q class=%s detalhe=%q", h.cfg.Surface, v.Code, r.Method, r.URL.Path, class, v.Detail)
 		w.Header().Set(warnHeader, strconv.Itoa(v.Code))
+	}
+	// API respondida pela propria borda (C.6.8, C.6.7.8/C.6.7.9): nao vai ao
+	// roteador do KrakenD.
+	if v.rt != nil && v.rt.Edge != "" {
+		h.serveEdge(w, r, v)
+		return
 	}
 	h.serveNext(w, r)
 }
@@ -249,7 +261,7 @@ func (h *authHandler) evaluate(r *http.Request) verdict {
 	if rt == nil {
 		return verdict{Code: 100, Detail: r.Method + " " + r.URL.Path}
 	}
-	v := verdict{Route: rt.String()}
+	v := verdict{Route: rt.String(), rt: rt, params: params}
 	if rt.Auth == authNone && rt.Classes == nil {
 		return v
 	}
@@ -295,7 +307,8 @@ func (h *authHandler) evaluate(r *http.Request) verdict {
 	// emite o token com a classe gravada do cliente), e um access token
 	// VALIDO de outra classe prevalece sobre o Origin.
 	// PENDENTE (Joel): lacuna L3 — sem TLS na borda (44643 em HTTP), o 106
-	// por protocolo (nao local fora de HTTPS, C.4.1.6) nao eh aplicado aqui.
+	// por protocolo (nao local fora de HTTPS, C.4.1.6) nao eh aplicado aqui
+	// (o tv3ws o aplicava ate a reuniao de 05/10; com a D-0510-1 deixa de).
 	classForRoute := v.Class
 	if classForRoute == "" && originAssoc {
 		classForRoute = classAssociated

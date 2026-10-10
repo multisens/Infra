@@ -25,6 +25,22 @@
  *
  * Campo opcional "timeout" (ex.: "15s"): espera maxima pelo backend nessa
  * rota; ausente => padrao do KrakenD (2s).
+ *
+ * Campo opcional "api" = {id, section, version}: a linha da Tabela C.2 da
+ * norma que a rota implementa (rotas do testbed fora da norma nao tem). A
+ * lista das APIs implementadas e as versoes das APIs C.6.7.8/C.6.7.9 saem
+ * daqui (reuniao de 05/10 com o Joel, D-0510-3). O mesmo id em rotas
+ * diferentes (ex.: current-service e {serviceContextId}) tem de repetir
+ * secao e versao.
+ *
+ * Campo opcional "edge" = nome do handler do plugin que RESPONDE a rota na
+ * propria borda, sem repasse ao tv3ws (reuniao de 05/10: C.6.8, D-0510-2, e
+ * C.6.7.8/C.6.7.9, D-0510-3). Escolha documentada: o endpoint dessas rotas
+ * CONTINUA gerado no KrakenD (mesmo backend das demais), mas o plugin
+ * responde antes e ele nunca eh alcancado. Assim o caminho fica registrado
+ * no roteador como o de qualquer rota — o preflight CORS (que passa ao
+ * modulo CORS) segue o mesmo caminho ja testado, e a arvore do Gin nao muda
+ * (caminho nao registrado ali pode cair no panic de KNOWN-ISSUES.md).
  */
 const fs = require('fs');
 const path = require('path');
@@ -96,14 +112,43 @@ const PLUGIN_NAME = 'tv30-auth';
 const PLUGIN_FOLDER = '/opt/krakend/plugins/';
 const AUTH_VALUES = ['none', 'token', 'token+bind'];
 const CLASS_VALUES = ['local-associated', 'local-autonomous', 'non-local'];
+// handlers do plugin (plugin/edge.go): o mesmo conjunto, para o build falhar
+// antes do container (o plugin tambem recusa nome desconhecido ao subir)
+const EDGE_HANDLERS = ['bind-context-register', 'bind-context-list', 'bind-context-remove', 'api-info', 'api-list'];
+// formatos da Tabela C.2 / C.3.6.2 (os mesmos do plugin, apiinfo.go)
+const API_ID = /^[a-z0-9]+(-[a-z0-9]+)+$/;
+const API_SUBSYSTEMS = ['ncl', 'nclua', 'tv3ws'];
+const API_SECTION = /^C(\.[0-9]+)+$/;
+const API_VERSION = /^[1-9][0-9]*\.[0-9]+$/;
 
 const authOf = r => r.auth || 'token';
+
+// ordem da Tabela C.2 = ordem das secoes (C.6.1.2 < C.6.1.3 < ... < C.6.16.3)
+function compareSections(a, b) {
+  const pa = a.split('.').slice(1).map(Number), pb = b.split('.').slice(1).map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? -1) - (pb[i] ?? -1);
+    if (d) return d;
+  }
+  return 0;
+}
+
+// APIs implementadas numa superficie (C.6.7.8/C.6.7.9): {id, version}, sem
+// repeticao, na ordem da Tabela C.2.
+function apisOf(routes) {
+  const byId = new Map();
+  for (const r of routes) if (r.api && !byId.has(r.api.id)) byId.set(r.api.id, r.api);
+  return [...byId.values()]
+    .sort((a, b) => compareSections(a.section, b.section) || a.id.localeCompare(b.id))
+    .map(a => ({ id: a.id, version: a.version }));
+}
 
 // Erro na tabela derruba o build: config gerada errada viraria politica
 // errada na borda, em silencio.
 function validate(t) {
   const errs = [];
   const seen = new Set();
+  const apiSeen = new Map();
   for (const r of t.routes) {
     const id = `${r.method} ${r.path}`;
     if (seen.has(id)) errs.push(`${id}: rota duplicada`);
@@ -115,6 +160,29 @@ function validate(t) {
     }
     if (!(r.headers || []).includes('Accept-Version')) errs.push(`${id}: toda rota repassa Accept-Version`);
     if (r.timeout !== undefined && !/^[1-9][0-9]*(ms|s)$/.test(r.timeout)) errs.push(`${id}: timeout "${r.timeout}" invalido (ex.: 15s, 500ms)`);
+    if (r.edge !== undefined) {
+      if (!EDGE_HANDLERS.includes(r.edge)) errs.push(`${id}: edge "${r.edge}" invalido (${EDGE_HANDLERS.join(', ')})`);
+      if (r.timeout !== undefined) errs.push(`${id}: timeout nao se aplica a rota respondida pela borda (edge)`);
+      if (String(r.edge).startsWith('bind-context-') && !(t.auth && t.auth.current_service_context_id)) {
+        errs.push(`${id}: edge ${r.edge} exige auth.current_service_context_id (devolvido pela C.6.8)`);
+      }
+    }
+    if (r.api !== undefined) {
+      const a = r.api;
+      if (!a || typeof a !== 'object' || Array.isArray(a)) { errs.push(`${id}: api nao eh objeto {id, section, version}`); continue; }
+      const extra = Object.keys(a).filter(k => !['id', 'section', 'version'].includes(k));
+      if (extra.length) errs.push(`${id}: api com campo desconhecido (${extra.join(', ')})`);
+      if (!API_ID.test(a.id || '') || !API_SUBSYSTEMS.includes(String(a.id).split('-')[0])) {
+        errs.push(`${id}: api.id "${a.id}" invalido (<subsistema>-<nome>, subsistemas ${API_SUBSYSTEMS.join(', ')})`);
+      }
+      if (!API_SECTION.test(a.section || '')) errs.push(`${id}: api.section "${a.section}" invalida (ex.: C.6.3.1)`);
+      if (!API_VERSION.test(a.version || '')) errs.push(`${id}: api.version "${a.version}" invalida (X.Y, C.3.6.2)`);
+      const prev = apiSeen.get(a.id);
+      if (prev && (prev.section !== a.section || prev.version !== a.version)) {
+        errs.push(`${id}: api.id ${a.id} com secao/versao diferente de ${prev.route} (${prev.section} ${prev.version})`);
+      }
+      if (!prev) apiSeen.set(a.id, { section: a.section, version: a.version, route: id });
+    }
   }
   if (errs.length) {
     console.error('routes.json invalido:\n  ' + errs.join('\n  '));
@@ -145,6 +213,8 @@ function endpointFor(r, surface, host) {
   // tv3ws, client-identification/service.ts): com 2s a borda devolvia 500
   // enquanto o tv3ws seguia e autorizava o cliente (medido em 02/10).
   if (r.timeout) e.timeout = r.timeout;
+  // Rota com "edge": o plugin responde antes e este backend nunca eh chamado
+  // (ver o cabecalho deste arquivo: o endpoint so mantem o caminho no roteador).
   e.backend = [{ url_pattern: r.backendPath || r.path, host: [host], encoding: 'no-op' }];
   return e;
 }
@@ -153,13 +223,17 @@ function endpointFor(r, surface, host) {
 // padroes {param}, auth, classes). Caminho nao listado aqui => erro 100 no
 // plugin, sem chegar ao roteador.
 function pluginConfig(t, surface) {
+  const routes = t.routes.filter(r => r.surfaces.includes(surface));
   const c = {
     surface,
-    routes: t.routes.filter(r => r.surfaces.includes(surface)).map(r => {
+    routes: routes.map(r => {
       const p = { method: r.method, path: r.path, auth: authOf(r) };
       if (r.classes) p.classes = r.classes;
+      if (r.edge) p.edge = r.edge; // respondida pelo plugin (edge.go)
       return p;
     }),
+    // APIs implementadas nesta superficie, para a C.6.7.8/C.6.7.9
+    apis: apisOf(routes),
   };
   // PENDENTE (Joel): lacuna L2 — serviceContextId constante do tv3ws
   // (tv3ws/src/core.ts): nas rotas /tv3/{serviceContextId}/... o plugin
@@ -181,7 +255,7 @@ const ERROR_SCHEMA = {
   type: 'object',
   required: ['error', 'description'],
   properties: {
-    error: { type: 'integer', description: 'codigo da Tabela C.1 / C.3.3 (ex.: 100, 104, 106, 107, 108, 200)' },
+    error: { type: 'integer', description: 'codigo da Tabela C.1 / C.3.3 (ex.: 100, 101, 104, 105, 106, 107, 108, 200, 300)' },
     description: { type: 'string' },
   },
 };
@@ -225,10 +299,14 @@ function build() {
       paths[r.path] = paths[r.path] || {};
       paths[r.path][r.method.toLowerCase()] = {
         summary: r.path,
-        description: `Credencial: ${AUTH_DOC[auth]}. Classes: ${(r.classes || ['todas']).join(', ')}. ` +
+        description: (r.api ? `API ${r.api.id} (${r.api.section}, versao ${r.api.version}). ` : '') +
+          (r.edge ? 'Respondida pela propria borda (plugin tv30-auth), sem repasse ao tv3ws. ' : '') +
+          `Credencial: ${AUTH_DOC[auth]}. Classes: ${(r.classes || ['todas']).join(', ')}. ` +
           'O local associado dispensa access token e bind-token nas rotas que o admitem (C.4.1.1).',
         'x-tv30-auth': auth,
         ...(r.classes ? { 'x-tv30-classes': r.classes } : {}),
+        ...(r.api ? { 'x-tv30-api': r.api } : {}),
+        ...(r.edge ? { 'x-tv30-edge': r.edge } : {}),
         parameters: [
           ...headersOf(r).map(h => ({ name: h, in: 'header', required: h === 'Authorization' && auth !== 'none', schema: { type: 'string' } })),
           ...(r.query || []).map(q => ({ name: q, in: 'query', required: false, schema: { type: 'string' } })),

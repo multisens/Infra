@@ -1,9 +1,11 @@
 // tv30-auth — plugin http-server do KrakenD (edgegateway): validacao de
 // credenciais na BORDA (item 9; decisao da reuniao de 28/09, D1: o tv3ws so
 // implementa as APIs; quem decide se a requisicao chega nele e este plugin).
-// Estado corrente, nao a decisao: o tv3ws ainda responde 107 a Authorization
-// invalido e 106 ao nao local que chega por HTTP (tv3ws/src/middleware/
-// authorization.ts e basic.ts), nos dois modos — a limpeza la esta pendente.
+// Reuniao de 05/10 com o Joel: TODA a validacao de credencial fica aqui e o
+// tv3ws fica "anonimo" (D-0510-1; a retirada do middleware de credencial do
+// tv3ws eh feita no proprio tv3ws), e a borda passa a RESPONDER algumas APIs
+// em vez de repassa-las (edge.go): C.6.8 bind-context (D-0510-2) e
+// C.6.7.8/C.6.7.9 api-info (D-0510-3).
 //
 // Toda resposta leva Access-Control-Allow-Origin: * (C.4.1.9.2). O preflight
 // CORS (OPTIONS com Access-Control-Request-Method) passa sempre ao modulo
@@ -20,6 +22,9 @@
 //  4. bind-token (104/108): so nas rotas "token+bind" (campo "Security
 //     requirements" = shall da norma), contra as chaves registradas pela
 //     emissora do servico corrente (C.6.8, bind-context:{serviceId}).
+//
+// Liberada a requisicao (ou so avisada, em warn), a rota com "edge" no
+// routes.json eh respondida aqui (edge.go); as demais vao ao roteador.
 //
 // Modo (AUTH_ENFORCE): warn (padrao) nao bloqueia nada de credencial — loga
 // "[tv30-auth] WARN ..." e acrescenta o cabecalho X-TV30-Auth-Warn: <codigo>;
@@ -68,8 +73,14 @@ func (r registerer) registerHandlers(_ context.Context, extra map[string]interfa
 	if string(cfg.Secret) == devSecret {
 		logf("AVISO surface=%s JWT_SECRET eh o padrao de desenvolvimento do compose — nao usar em producao", cfg.Surface)
 	}
-	logf("registrado surface=%s modo=%s rotas=%d redis=%s issuer=%s",
-		cfg.Surface, cfg.Mode, len(cfg.Routes.routes), cfg.RedisAddr, cfg.Issuer)
+	edge := 0
+	for _, rt := range cfg.Routes.routes {
+		if rt.Edge != "" {
+			edge++
+		}
+	}
+	logf("registrado surface=%s modo=%s rotas=%d respondidas_pela_borda=%d apis=%d redis=%s issuer=%s",
+		cfg.Surface, cfg.Mode, len(cfg.Routes.routes), edge, len(cfg.APIs.list), cfg.RedisAddr, cfg.Issuer)
 
 	store := &redisStore{c: newRedisClient(cfg.RedisAddr, cfg.RedisTimeout)}
 	return newHandler(cfg, store, next), nil

@@ -1,9 +1,11 @@
 # Gestão de Usuários e Perfis — TV 3.0
 
-> **Nota (2026-10-03):** documento anterior à consolidação; só o nome do componente foi atualizado. Três trechos não correspondem ao código atual:
+> **Nota (2026-10-03, revista em 2026-10-10):** documento anterior à consolidação; só o nome do componente e esta nota foram atualizados. Estes trechos não correspondem ao código atual:
 > - **Criação de perfil:** o gestor de perfis do AoP grava direto no Redis (`aop/src/modules/profile-manager/service.js`, `createProfile`) e não toca o `userData.json`, ao contrário do diagrama "UI->>FS: Salva userData.json".
-> - **Sync do tv3ws:** `user:{userId}:consent` é mesclado com `SADD`, **sem** `DEL` antes (`tv3ws/src/api/user/service.ts`, "Merge (SADD sem DEL)"); o `DEL user:{userId}` vale só para o hash de atributos.
+> - **Sync do tv3ws:** não existe mais. Na reunião de 05/10, o Joel apontou que os perfis tinham três escritores (carga inicial, tv3ws e plataforma), e a correção (D-0510-5) aplicou o P5, "um dono por família de chave": a plataforma (AoP) é a dona de `users:index`, `user:{id}` e `user:{id}:consent`, e o tv3ws só os lê. Saíram do tv3ws o `syncUsersFromFile`, a assinatura de `aop/users` e a semeadura no boot. O diagrama "Fluxo de escrita: criação de perfil" e as linhas "Sync do userData.json" do resumo descrevem esse caminho, que não existe. O `userData.json` é só a carga inicial do container `redis`, aplicada uma vez, no banco vazio.
+> - **`lastAccess`:** campo de `user:{id}` usado pelo despejo do perfil de último acesso mais antigo (P3), ausente da lista abaixo. Desde 05/10, só o AoP o grava, em toda troca de usuário corrente, inclusive a que chega por `aop/currentUser` vinda da C.6.14.4 no tv3ws (`touchLastAccess`, que só escreve se o id está em `users:index`).
 > - **Broker:** o plugin Mosquitto **não** consulta `user:{userId}:consent` nem faz controle de acesso; ele só valida esquema de payload (`infra/mqtt-broker/plugin/src/mosquitto_plugin.c`).
+> - **`user:{id}:broadcaster-attrs:{scid}`:** tem dois escritores (o tv3ws grava na C.6.14.5; a plataforma apaga no despejo), exceção ao P5 ainda sem decisão.
 >
 > Ver `docs/modelo-redis.md` e `docs/mqtt-topicos.md` na raiz do TV30. Revisão geral: pendente (backlog).
 
@@ -199,6 +201,7 @@ sequenceDiagram
     TV3WS->>REDIS: SET session:current-user {uuid}
     TV3WS->>MQTT: PUBLISH aop/currentUser {uuid} (retain)
     MQTT->>AOP: aop/currentUser
+    AOP->>REDIS: HSET user:{uuid} lastAccess\n(so se o id esta em users:index, desde 05/10)
     AOP->>AOP: Atualiza interface\n(seletor de perfil)
     TV3WS-->>C: 200 OK
 ```

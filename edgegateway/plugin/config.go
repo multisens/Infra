@@ -33,7 +33,14 @@ type config struct {
 	// (tv3ws/src/core.ts), entao nao ha como ligar outro valor a um servico;
 	// qualquer outro valor da 108 nas rotas token+bind (provisorio).
 	CurrentSCIDs []string
-	Routes       *routeTable
+	// serviceContextId que as respostas da C.6.8 devolvem (o mesmo valor de
+	// current_service_context_id; L2 acima). Obrigatorio se alguma rota
+	// bind-context-* eh respondida pela borda.
+	ServiceContextID string
+	Routes           *routeTable
+	// APIs implementadas (id da Tabela C.2 + versao), na ordem da tabela,
+	// para as APIs C.6.7.8/C.6.7.9 (apiinfo.go). Vem de routes.json.
+	APIs         *apiCatalog
 	RedisAddr    string
 	RedisTimeout time.Duration
 	// Access-Control-Allow-Headers do OPTIONS que nao eh preflight
@@ -67,6 +74,7 @@ func loadConfig(raw interface{}, getenv func(string) string) (*config, error) {
 			return nil, fmt.Errorf("current_service_context_id invalido: %v", v)
 		}
 		cfg.CurrentSCIDs = append(cfg.CurrentSCIDs, s)
+		cfg.ServiceContextID = s
 	}
 
 	rawRoutes, ok := m["routes"].([]interface{})
@@ -106,9 +114,39 @@ func loadConfig(raw interface{}, getenv func(string) string) (*config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("routes[%d]: %v", i, err)
 		}
+		if v, present := rm["edge"]; present {
+			name, ok := v.(string)
+			if !ok || edgeHandlers[name] == nil {
+				return nil, fmt.Errorf("routes[%d].edge invalido: %v (%s)", i, v, edgeHandlerNames())
+			}
+			rt.Edge = name
+		}
 		table.add(rt)
 	}
 	cfg.Routes = table
+
+	var needAPIs, needSCID bool
+	for _, rt := range table.routes {
+		switch {
+		case rt.Edge == edgeAPIInfo || rt.Edge == edgeAPIList:
+			needAPIs = true
+		case strings.HasPrefix(rt.Edge, "bind-context-"):
+			needSCID = true
+		}
+	}
+	if needSCID && cfg.ServiceContextID == "" {
+		return nil, fmt.Errorf("current_service_context_id ausente: as respostas da C.6.8 respondidas pela borda o devolvem")
+	}
+	cfg.APIs = &apiCatalog{}
+	if v, present := m["apis"]; present {
+		cat, err := loadAPICatalog(v)
+		if err != nil {
+			return nil, err
+		}
+		cfg.APIs = cat
+	} else if needAPIs {
+		return nil, fmt.Errorf("lista apis ausente: as rotas da C.6.7.8/C.6.7.9 respondidas pela borda a usam")
+	}
 
 	cfg.CORSAllowHeaders = defaultCORSAllowHeaders
 	if v, present := m["cors_allow_headers"]; present {
