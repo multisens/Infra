@@ -34,10 +34,13 @@ RUN go vet ./... \
  && CGO_ENABLED=0 go build -trimpath -o /out/ssdp-announcer .
 
 # --- estagio 1: gera configs e specs da tabela unica (M4) ---
+# Testes do gerador antes (superficie derivada de classes, P1.9): tabela que
+# quebra a regra nao vira imagem, como o plugin Go no estagio 0.
 FROM node:20-alpine AS gen
 WORKDIR /m4
-COPY generate.js routes.json ./
-RUN node generate.js build
+COPY generate.js generate.test.js routes.json ./
+RUN node --test generate.test.js \
+ && node generate.js build
 
 # --- estagio 2: dist estatico do Swagger UI ---
 FROM swaggerapi/swagger-ui AS swagger

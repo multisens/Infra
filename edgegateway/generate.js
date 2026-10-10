@@ -3,13 +3,23 @@
 /*
  * M4 — Tabela única de rotas do edgegateway.
  *
- * A FONTE DE VERDADE é routes.json (uma entrada por rota, com metadados e as
- * superfícies em que ela existe). Este script:
+ * A FONTE DE VERDADE é routes.json (uma entrada por rota, com metadados). Este
+ * script:
  *
  *   node generate.js build     — gera generated/krakend-{external,internal}.
  *                                <variante>.json (uma por backend de
  *                                routes.json: linux, windows, host) + os dois
  *                                OpenAPI
+ *
+ * Testes: node --test generate.test.js (tambem rodam no build da imagem).
+ *
+ * Superficie de cada rota (P1.9, decisao do Luis em 10/10): DERIVADA do campo
+ * "classes", e nao mais declarada por rota (o campo "surfaces" das rotas saiu;
+ * o build recusa quem o usar). A externa (44643) so expoe as rotas que
+ * admitem o cliente nao local; a interna (44642) expoe todas. Rota sem
+ * "classes" (todas as classes, inclusive /health e /manifest) fica nas duas.
+ * Numa superficie em que nao existe, a rota responde 100, como qualquer
+ * caminho nao declarado (o plugin nem a conhece la). Ver SURFACE_RULES.
  *
  * (Os modos extract e verify, que liam os configs KrakenD anteriores à tabela
  * única em gateway-{external,internal}/, saíram em 10/10: esses arquivos não
@@ -68,6 +78,44 @@ const API_SECTION = /^C(\.[0-9]+)+$/;
 const API_VERSION = /^[1-9][0-9]*\.[0-9]+$/;
 
 const authOf = r => r.auth || 'token';
+const classesOf = r => r.classes || CLASS_VALUES;
+
+// P1.9 (decisao do Luis em 10/10): superficies com rotas distintas. Cada
+// superficie expoe as rotas cuja lista "classes" (ausente => todas) inclui a
+// classe em "requires"; requires null => todas as rotas. As chaves daqui sao
+// as de routes.json (surfaces e backends): o build falha se divergirem.
+// Duas superficies com conjuntos de rota distintos sao decisao de
+// implementacao do projeto: a norma (C.3.4, p. 216 do PDF) so define o
+// Server-BaseURL (http, porta fixa 44642, que o cliente local usa direto) e o
+// Server-SecureBaseURL (https, porta livre).
+// PENDENTE (Joel): ligado a lacuna L3 (44643 ainda em HTTP). A C.4.1.8 (p.
+// 206-207; p. 224-225 do PDF) manda responder 106, e nao 100, ao nao local
+// que chama por HTTPS uma API de uso exclusivo do cliente local; com esta
+// regra, POST e DELETE /tv3/bind-context (so local-associated) dao 100 na
+// 44643. Enquanto a 44643 nao tiver TLS, a C.4.1.8 nao se aplica a ela ao pe
+// da letra; com TLS, falta decidir se essas rotas dao 106 ali. A mesma secao
+// diz que a C.6.1.2 (/tv3/authorize) so se acessa por HTTP; esta regra a
+// mantem na 44643, porque ela admite o nao local.
+const SURFACE_RULES = {
+  external: {
+    requires: 'non-local',
+    doc: 'Expoe so as rotas que admitem o cliente nao local (non-local); as demais existem so na superficie interna e respondem 100 aqui (P1.9).',
+  },
+  internal: {
+    requires: null,
+    doc: 'Expoe todas as rotas da tabela (P1.9).',
+  },
+};
+
+// superficies em que a rota existe, na ordem de SURFACE_RULES
+function surfacesOf(r) {
+  return Object.keys(SURFACE_RULES).filter(s => {
+    const need = SURFACE_RULES[s].requires;
+    return need === null || classesOf(r).includes(need);
+  });
+}
+
+const routesOf = (t, surface) => t.routes.filter(r => surfacesOf(r).includes(surface));
 
 // ordem da Tabela C.2 = ordem das secoes (C.6.1.2 < C.6.1.3 < ... < C.6.16.3)
 function compareSections(a, b) {
@@ -90,15 +138,27 @@ function apisOf(routes) {
 }
 
 // Erro na tabela derruba o build: config gerada errada viraria politica
-// errada na borda, em silencio.
-function validate(t) {
+// errada na borda, em silencio. checkTable devolve a lista de erros (vazia =
+// tabela valida); validate encerra o processo se houver algum.
+function checkTable(t) {
   const errs = [];
   const seen = new Set();
   const apiSeen = new Map();
+  // superficies: as mesmas de SURFACE_RULES, com porta e backends
+  const known = Object.keys(SURFACE_RULES);
+  const declared = Object.keys(t.surfaces || {});
+  for (const s of declared) if (!known.includes(s)) errs.push(`surfaces.${s}: superficie sem regra em SURFACE_RULES (${known.join(', ')})`);
+  for (const s of known) {
+    if (!declared.includes(s)) errs.push(`surfaces.${s}: superficie ausente`);
+    else if (!Number.isInteger(t.surfaces[s].port)) errs.push(`surfaces.${s}.port: porta ausente ou nao inteira`);
+    const b = (t.backends || {})[s];
+    if (!b || typeof b !== 'object' || !Object.keys(b).length) errs.push(`backends.${s}: sem variante de backend`);
+  }
   for (const r of t.routes) {
     const id = `${r.method} ${r.path}`;
     if (seen.has(id)) errs.push(`${id}: rota duplicada`);
     seen.add(id);
+    if (r.surfaces !== undefined) errs.push(`${id}: o campo "surfaces" da rota saiu (P1.9): a superficie eh derivada de "classes" (generate.js, SURFACE_RULES)`);
     if (r.auth !== undefined && !AUTH_VALUES.includes(r.auth)) errs.push(`${id}: auth "${r.auth}" invalido (${AUTH_VALUES.join(', ')})`);
     if (r.classes !== undefined) {
       if (!Array.isArray(r.classes)) errs.push(`${id}: classes nao eh lista`);
@@ -130,6 +190,16 @@ function validate(t) {
       if (!prev) apiSeen.set(a.id, { section: a.section, version: a.version, route: id });
     }
   }
+  // superficie sem rota: o plugin recusa lista vazia e derrubaria a borda.
+  // So com as rotas validas (classes fora do formato quebraria surfacesOf).
+  if (!errs.length) {
+    for (const s of known) if (!routesOf(t, s).length) errs.push(`surfaces.${s}: nenhuma rota (regra: ${SURFACE_RULES[s].doc})`);
+  }
+  return errs;
+}
+
+function validate(t) {
+  const errs = checkTable(t);
   if (errs.length) {
     console.error('routes.json invalido:\n  ' + errs.join('\n  '));
     process.exit(1);
@@ -167,9 +237,10 @@ function endpointFor(r, surface, host) {
 
 // Bloco do plugin tv30-auth: a politica da superficie (metodo+caminho com
 // padroes {param}, auth, classes). Caminho nao listado aqui => erro 100 no
-// plugin, sem chegar ao roteador.
+// plugin, sem chegar ao roteador — inclusive a rota que so existe na outra
+// superficie (P1.9).
 function pluginConfig(t, surface) {
-  const routes = t.routes.filter(r => r.surfaces.includes(surface));
+  const routes = routesOf(t, surface);
   const c = {
     surface,
     routes: routes.map(r => {
@@ -178,7 +249,15 @@ function pluginConfig(t, surface) {
       if (r.edge) p.edge = r.edge; // respondida pelo plugin (edge.go)
       return p;
     }),
-    // APIs implementadas nesta superficie, para a C.6.7.8/C.6.7.9
+    // APIs implementadas nesta superficie, para a C.6.7.8/C.6.7.9. Com a
+    // P1.9, a externa deixa de listar as APIs das rotas que so existem na
+    // interna (hoje tv3ws-bind-context-register e tv3ws-bind-context-remove),
+    // e GET /tv3/api-info/<id> delas da 101 na 44643.
+    // PENDENTE (Joel): a lista por superficie ja era assim desde a D-0510-3
+    // (05/10), mas com as duas superficies iguais a diferenca nao aparecia. A
+    // C.6.7.9 (Tabela C.46, p. 301 do PDF) descreve "all APIs of a given
+    // category", no campo "receiverApis", sem falar de superficie; se a
+    // externa deve listar tambem as APIs que nao oferece nao foi decidido.
     apis: apisOf(routes),
   };
   // PENDENTE (Joel): lacuna L2 — serviceContextId constante do tv3ws
@@ -212,15 +291,15 @@ const AUTH_DOC = {
   'token+bind': 'access token + bind-token (Security requirements = shall)',
 };
 
-function build() {
-  const t = readJson(path.join(HERE, 'routes.json'));
-  validate(t);
-  fs.mkdirSync(GEN, { recursive: true });
-
+// generate monta todos os arquivos de uma tabela JA validada, sem gravar:
+// { '<nome>.json': objeto }. build() grava; generate.test.js confere.
+function generate(t) {
+  const files = {};
   for (const surface of Object.keys(t.surfaces)) {
+    const routes = routesOf(t, surface);
     for (const variant of Object.keys(t.backends[surface])) {
       const host = t.backends[surface][variant];
-      const cfg = {
+      files[`krakend-${surface}.${variant}.json`] = {
         $schema: 'https://www.krakend.io/schema/v2.7/krakend.json',
         version: 3,
         name: `TV30 edgegateway — ${surface} (${variant})`,
@@ -231,26 +310,25 @@ function build() {
           'security/cors': t.cors,
           'plugin/http-server': { name: [PLUGIN_NAME], [PLUGIN_NAME]: pluginConfig(t, surface) },
         },
-        endpoints: t.routes.filter(r => r.surfaces.includes(surface))
-                           .map(r => endpointFor(r, surface, host)),
+        endpoints: routes.map(r => endpointFor(r, surface, host)),
       };
-      const out = path.join(GEN, `krakend-${surface}.${variant}.json`);
-      fs.writeFileSync(out, JSON.stringify(cfg, null, 2) + '\n');
-      console.log(`${out}: ${cfg.endpoints.length} rotas, porta ${cfg.port}`);
     }
     // OpenAPI da superficie (metodos mesclados por path)
     const paths = {};
-    for (const r of t.routes.filter(r => r.surfaces.includes(surface))) {
+    for (const r of routes) {
       const auth = authOf(r);
+      const where = surfacesOf(r);
       paths[r.path] = paths[r.path] || {};
       paths[r.path][r.method.toLowerCase()] = {
         summary: r.path,
         description: (r.api ? `API ${r.api.id} (${r.api.section}, versao ${r.api.version}). ` : '') +
           (r.edge ? 'Respondida pela propria borda (plugin tv30-auth), sem repasse ao tv3ws. ' : '') +
           `Credencial: ${AUTH_DOC[auth]}. Classes: ${(r.classes || ['todas']).join(', ')}. ` +
+          (where.length < Object.keys(SURFACE_RULES).length ? `So nesta superficie (${where.join(', ')}; P1.9). ` : '') +
           'O local associado dispensa access token e bind-token nas rotas que o admitem (C.4.1.1).',
         'x-tv30-auth': auth,
         ...(r.classes ? { 'x-tv30-classes': r.classes } : {}),
+        'x-tv30-surfaces': where,
         ...(r.api ? { 'x-tv30-api': r.api } : {}),
         ...(r.edge ? { 'x-tv30-edge': r.edge } : {}),
         parameters: [
@@ -263,17 +341,41 @@ function build() {
         },
       };
     }
-    const spec = {
+    files[`openapi-${surface}.json`] = {
       openapi: '3.0.0',
-      info: { title: t.surfaces[surface].title, version: '2.0', description: 'Gerado da tabela unica de rotas (M4) — edite routes.json, nao este arquivo.' },
+      info: {
+        title: t.surfaces[surface].title,
+        version: '2.0',
+        description: 'Gerado da tabela unica de rotas (M4) — edite routes.json, nao este arquivo. ' + SURFACE_RULES[surface].doc,
+      },
       servers: [{ url: `http://localhost:${t.surfaces[surface].port}` }],
       paths,
       components: { schemas: { Erro: ERROR_SCHEMA } },
     };
-    fs.writeFileSync(path.join(GEN, `openapi-${surface}.json`), JSON.stringify(spec, null, 2) + '\n');
+  }
+  return files;
+}
+
+function build() {
+  const t = readJson(path.join(HERE, 'routes.json'));
+  validate(t);
+  fs.mkdirSync(GEN, { recursive: true });
+  for (const [name, obj] of Object.entries(generate(t))) {
+    const out = path.join(GEN, name);
+    fs.writeFileSync(out, JSON.stringify(obj, null, 2) + '\n');
+    if (obj.endpoints) console.log(`${out}: ${obj.endpoints.length} rotas, porta ${obj.port}`);
+  }
+  // rotas que ficam fora de alguma superficie (P1.9), para o log do build
+  for (const surface of Object.keys(t.surfaces)) {
+    const out = t.routes.filter(r => !surfacesOf(r).includes(surface)).map(r => `${r.method} ${r.path}`);
+    console.log(`superficie ${surface}: ${t.routes.length - out.length} de ${t.routes.length} rotas` + (out.length ? `; fora: ${out.join(', ')}` : ''));
   }
 }
 
-const mode = process.argv[2];
-if (mode === 'build') build();
-else { console.error('uso: node generate.js build'); process.exit(2); }
+module.exports = { SURFACE_RULES, CLASS_VALUES, surfacesOf, routesOf, checkTable, pluginConfig, apisOf, generate };
+
+if (require.main === module) {
+  const mode = process.argv[2];
+  if (mode === 'build') build();
+  else { console.error('uso: node generate.js build'); process.exit(2); }
+}
