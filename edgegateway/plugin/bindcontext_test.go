@@ -274,12 +274,19 @@ func TestRegistroClasseEVersao(t *testing.T) {
 	wantErr(t, "nao associado", edgeCall(t, h, "POST", "/tv3/bind-context", map[string]string{"Content-Type": "application/json"}, regBody("HS256", "s")), 106)
 	auto := accessFor(t, "cli-1", classAutonomous)
 	wantErr(t, "token autonomo", edgeCall(t, h, "POST", "/tv3/bind-context", map[string]string{"Content-Type": "application/json", "Authorization": auto}, regBody("HS256", "s")), 106)
+	// API-Version (C.3.6.6): no 100 (versao fora do conjunto), a mais recente
+	// suportada; no 101 (malformado), a 2.0
 	for _, c := range []struct {
 		v    string
 		code int
-	}{{"abc", 101}, {"", 101}, {"2", 101}, {"3.0", 100}, {"1.9", 100}} {
+		api  string
+	}{{"abc", 101, "2.0"}, {"", 101, "2.0"}, {"2", 101, "2.0"}, {"3.0", 100, "2.1"}, {"1.9", 100, "2.1"}} {
 		hd := map[string]string{"Origin": tAssoc, "Content-Type": "application/json", "Accept-Version": c.v}
-		wantErr(t, "Accept-Version "+c.v, edgeCall(t, h, "POST", "/tv3/bind-context", hd, regBody("HS256", "s")), c.code)
+		r := edgeCall(t, h, "POST", "/tv3/bind-context", hd, regBody("HS256", "s"))
+		wantErr(t, "Accept-Version "+c.v, r, c.code)
+		if v := r.hdr.Get("API-Version"); v != c.api {
+			t.Errorf("Accept-Version %q: API-Version %q, esperado %s", c.v, v, c.api)
+		}
 	}
 	if len(st.keys) != 0 {
 		t.Fatalf("gravou: %v", st.keys)

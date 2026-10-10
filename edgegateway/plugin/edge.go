@@ -57,8 +57,11 @@ func edgeHandlerNames() string {
 // sem Accept-Version vale a 2.0; fora do formato X.Y => 101; fora do
 // conjunto => 100. A 2.1 eh a proposta do Forum (fluxo de remote-device por
 // handle); as APIs daqui respondem igual nas duas.
+// A lista vai em ordem crescente: a ultima eh a mais recente (latestVersion,
+// o API-Version do erro 100, C.3.6.6).
 var (
 	supportedVersions = []string{"2.0", "2.1"}
+	latestVersion     = supportedVersions[len(supportedVersions)-1]
 	versionPattern    = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
 )
 

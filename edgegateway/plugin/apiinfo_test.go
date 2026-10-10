@@ -69,7 +69,11 @@ func TestAPIInfoPolitica(t *testing.T) {
 				t.Errorf("%s %s: status %d %s", p, name, r.status, r.body)
 			}
 		}
-		wantErr(t, p+" Accept-Version 9.9", apiGet(t, h, p, map[string]string{"Origin": tAssoc, "Accept-Version": "9.9"}), 100)
+		r := apiGet(t, h, p, map[string]string{"Origin": tAssoc, "Accept-Version": "9.9"})
+		wantErr(t, p+" Accept-Version 9.9", r, 100)
+		if v := r.hdr.Get("API-Version"); v != latestVersion {
+			t.Errorf("%s Accept-Version 9.9: API-Version %q, esperado a mais recente (%s, C.3.6.6)", p, v, latestVersion)
+		}
 	}
 	// warn: sem token so avisa, e a borda responde
 	h = newTestHandler(t, modeWarn, baseStore(), nil)

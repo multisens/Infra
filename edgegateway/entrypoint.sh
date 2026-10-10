@@ -5,8 +5,11 @@
 #
 # Anunciante SSDP (C.3.4; L6 = opcao A, decisao do Luis em 09/10): sobe so com
 # SSDP_ENABLED=true, que o docker-compose.ssdp.yml liga junto com a rede do
-# host (so Linux nativo). Ele tambem segue o morre-inteiro (decisao do Luis,
-# 09/10): falha do anuncio derruba a borda inteira.
+# host (so Linux nativo). A vigia abaixo vale para ele como para os outros: se
+# sair, a borda inteira cai (morre-inteiro). Desde a decisao do Luis em 10/10,
+# ele so sai por erro de configuracao do anuncio (porta invalida, SSDP_INTERFACE
+# que nao existe, UDP 1900 presa sem SO_REUSEADDR, erro que nao e de rede); na
+# falta de rede ele fica de pe, sem anunciar, e tenta de novo (ssdp/main.go).
 set -u
 
 VARIANT="${EDGE_VARIANT:-linux}"

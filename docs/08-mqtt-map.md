@@ -3,7 +3,7 @@
 Mapeamento completo de publicações e subscrições MQTT no ecossistema TV 3.0,
 gerado a partir da análise estática dos fontes em `aop`, `tv3ws` e `infra`.
 
-> Caminhos e linhas do tv3ws conferidos em 2026-10-02 (renome `ccws` → `tv3ws` e mudança de `src/modules/user-api/` para `src/api/user/`). Os do `aop` e do `infra` não foram reconferidos. Em 2026-10-10, depois das mudanças da reunião de 05/10 com o Joel, foram reconferidos os tópicos `aop/currentUser`, `aop/currentService`, `aop/users` e `aop/devices/{devclass}`, nos dois lados.
+> Caminhos e linhas do tv3ws conferidos em 2026-10-02 (renome `ccws` → `tv3ws` e mudança de `src/modules/user-api/` para `src/api/user/`). Os do `aop` e do `infra` não foram reconferidos. Em 2026-10-10, depois das mudanças da reunião de 05/10 com o Joel, foram reconferidos os tópicos `aop/currentUser`, `aop/currentService`, `aop/users` e `aop/devices/{devclass}`, nos dois lados. Na mesma data, a assinatura que sobrava de `aop/users` saiu do AoP, e o esquema do tópico saiu do `schemas.json` do broker; as linhas do `aop/src/core.js` desses tópicos foram reconferidas depois disso.
 
 ---
 
@@ -12,7 +12,7 @@ gerado a partir da análise estática dos fontes em `aop`, `tv3ws` e `infra`.
 | Client ID | Processo | Arquivo |
 |---|---|---|
 | `aop-core` | AoP — Application-oriented Platform | `aop/src/core.js` |
-| `tv3ws-client` | tv3ws — Ginga CC WebServices | `tv3ws/src/mqtt-client.ts` |
+| `tv3ws-client` | tv3ws — TV 3.0 WebServices | `tv3ws/src/mqtt-client.ts` |
 | `rp-display` | AoP — Display Layer (browser) | `aop/src/modules/disp-lyr/view.ejs` |
 
 ---
@@ -23,31 +23,29 @@ gerado a partir da análise estática dos fontes em `aop`, `tv3ws` e `infra`.
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **PUB** | `aop/src/core.js` | 233 | `setCurrentUser()` — grava antes o `lastAccess` do perfil; payload: UUID, retain: true |
+| **PUB** | `aop/src/core.js` | 236 | `setCurrentUser()` — grava antes o `lastAccess` do perfil; payload: UUID, retain: true |
 | **PUB** | `tv3ws/src/api/user/service.ts` | 106 | `setCurrentUser()` (C.6.14.4) — payload: UUID, retain: true |
-| **SUB** | `aop/src/core.js` | 81 | handler: `loadCurrentUser()` → grava o `lastAccess` do perfil (`touchLastAccess`, desde 05/10, D-0510-5) |
+| **SUB** | `aop/src/core.js` | 85 | handler: `loadCurrentUser()` → grava o `lastAccess` do perfil (`touchLastAccess`, desde 05/10, D-0510-5) |
 | **SUB** | `tv3ws/src/api/user/service.ts` | 65 | handler: `updateCurrentUser()` → `session:current-user` no Redis (até 05/10, também o `lastAccess`) |
 
 ### `aop/currentService`
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **PUB** | `aop/src/core.js` | 260 | `setCurrentService()` — payload: serviceId, retain: true |
-| **PUB** | `aop/src/core.js` | 266 | `unsetCurrentService()` — payload: `''`, retain: true |
-| **SUB** | `aop/src/core.js` | 82 | handler: `loadCurrentService()` |
+| **PUB** | `aop/src/core.js` | 263 | `setCurrentService()` — payload: serviceId, retain: true |
+| **PUB** | `aop/src/core.js` | 269 | `unsetCurrentService()` — payload: `''`, retain: true |
+| **SUB** | `aop/src/core.js` | 86 | handler: `loadCurrentService()` |
 | **SUB** | `tv3ws/src/api/user/service.ts` | 66 | handler: `updateCurrentService()` → `session:current-service-id` no Redis |
 | **SUB** | `tv3ws/src/core.ts` | 168 | handler: `currentService()` → `session:current-service` Hash no Redis |
 
 ### `aop/users`
 
-Fora de uso desde a rodada da reunião de 05/10 com o Joel (D-0510-5): o tv3ws não sincroniza mais perfis a partir do `userData.json`, e a plataforma (AoP) é a dona deles. A linha de publicação que esta tabela listava (`aop/src/modules/prf-mngr/service.js`, `createUser()`) não existia mais no código; a última função que publicava o tópico (`notifyUsersChanged`, em `aop/src/core.js`) não tinha chamador e saiu na mesma rodada.
+Fora de uso desde a rodada da reunião de 05/10 com o Joel (D-0510-5): o tv3ws não sincroniza mais perfis a partir do `userData.json`, e a plataforma (AoP) é a dona deles. A linha de publicação que esta tabela listava (`aop/src/modules/prf-mngr/service.js`, `createUser()`) não existia mais no código; a última função que publicava o tópico (`notifyUsersChanged`, em `aop/src/core.js`) não tinha chamador e saiu na mesma rodada. Desde 10/10, ninguém publica nem assina o tópico: a assinatura que sobrava no AoP saiu, e o esquema dele saiu de `mqtt-broker/plugin/config/schemas.json`.
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **SUB** | `aop/src/core.js` | 84 | handler: `loadUserData()` — assinatura que sobrou; nada publica o tópico |
+| ~~SUB~~ | `aop/src/core.js` | — | handler `loadUserData()`: assinatura removida em 10/10 (a carga da lista de perfis segue no `connect`) |
 | ~~SUB~~ | `tv3ws/src/api/user/service.ts` | — | `syncUsersFromFile()`: removido em 05/10 |
-
-O esquema do tópico continua declarado em `mqtt-broker/plugin/config/schemas.json`.
 
 ### `aop/services`
 
@@ -195,7 +193,7 @@ O esquema do tópico continua declarado em `mqtt-broker/plugin/config/schemas.js
 graph TD
     subgraph AoP["AoP (aop-core)"]
         AOP_PUB["Publica\naop/currentUser\naop/currentService\naop/display/layers/*"]
-        AOP_SUB["Subscreve\naop/currentUser\naop/currentService\naop/users (sobra)\ntlm/lls/#\ntlm/sls/{svcId}/#"]
+        AOP_SUB["Subscreve\naop/currentUser\naop/currentService\ntlm/lls/#\ntlm/sls/{svcId}/#"]
     end
 
     subgraph TV3WS["tv3ws (tv3ws-client)"]

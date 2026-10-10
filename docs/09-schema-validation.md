@@ -6,46 +6,49 @@ Validação de payload MQTT por schema JSON, executada dentro do plugin C do bro
 
 ## Quando o validador roda
 
-Configurado em `plugin/src/mosquitto_plugin.c` (callback `callback_acl_check`):
+Configurado em `plugin/src/mosquitto_plugin.c` (callback `callback_acl_check`). O antigo filtro que restringia a validação a `sensor/*` saiu (P4); o que vale hoje:
 
 ```c
-// Only validate PUBLISH operations on sensor topics
-if (ed->access != MOSQ_ACL_WRITE || strncmp(ed->topic, "sensor/", 7) != 0) {
+// Valida so PUBLISH; ... qualquer topico com esquema declarado e validado
+if (ed->access != MOSQ_ACL_WRITE || strncmp(ed->topic, "$SYS/", 5) == 0) {
     return MOSQ_ERR_SUCCESS;
 }
 ```
 
 | Operação | Tópico | Schema validation? |
 |---|---|---|
-| PUBLISH | `sensor/...` | **Sim** |
-| PUBLISH | qualquer outro (`aop/`, `tlm/`, `errors/`, custom) | Não |
+| PUBLISH | qualquer tópico com schema declarado em `schemas.json` (`sensor/`, `aop/`, `tlm/`, `video/event`...) | **Sim** |
+| PUBLISH | sem schema declarado | Não (passa direto) |
+| PUBLISH | `errors/*`, `PluginResponseTime*`, `PublisherResponseTime*` (teste de latência) e `$SYS/*` | Não |
+| PUBLISH | payload vazio | Não |
 | SUBSCRIBE | qualquer | Não |
-| PUBLISH em `sensor/X` sem schema definido | — | Não (passa direto) |
 
-Ou seja: **só PUBLISH em `sensor/*` com schema declarado é validado**.
+Ou seja: **todo PUBLISH com payload num tópico com schema declarado é validado**. O callback é o de checagem de acesso do Mosquitto, mas o plugin não faz controle de acesso: o que ele recusa é payload fora do schema.
 
 ---
 
 ## Onde ficam os schemas
 
-Arquivo único: `infra/mosquitto_plugin/plugin/config/schemas.json`.
+Arquivo único: `infra/mqtt-broker/plugin/config/schemas.json`.
 
-No build do container, é copiado para `/mosquitto/config/schemas.json` (ver Dockerfile linha 44). O plugin lê esse caminho na inicialização (`mosquitto_plugin.c:182`):
+No build do container, é copiado para `/mosquitto/config/schemas.json` (`infra/mqtt-broker/infra/Dockerfile`, linha 42). O plugin lê esse caminho na inicialização (`mosquitto_plugin.c:227`):
 
 ```c
 load_schemas_from_file("/mosquitto/config/schemas.json");
 ```
 
-Estrutura do arquivo: **objeto raiz** onde cada chave é o **tópico exato** e o valor é o schema JSON Draft-07.
+Estrutura do arquivo: **objeto raiz** onde cada chave é um **tópico** (exato ou com os curingas MQTT `+` e `#`) e o valor é o schema JSON Draft-07.
 
 ```json
 {
   "sensor/room1/temperature": { "...schema..." },
-  "sensor/room2/humidity":    { "...schema..." }
+  "tlm/sls/+/esg":            { "...schema..." }
 }
 ```
 
-> **Match é exato.** Não há suporte a wildcard (`+`/`#`). `sensor/room1/+` não vira regra para `sensor/room1/temperature`.
+> **Casamento** (`get_schema_for_topic` e `topic_matches`, em `mosquitto_plugin.c`): primeiro a chave igual ao tópico; senão, a primeira chave com `+` ou `#` que casa, na ordem do arquivo. `tlm/sls/+/esg` vale para `tlm/sls/<serviceId>/esg`.
+>
+> **Payload texto puro:** se o payload não é JSON e o schema declara `"type": "string"`, ele é validado como string (uuid, caminho, nome de tela, os casos de `aop/currentUser` e `aop/currentService`).
 
 ---
 
@@ -112,8 +115,10 @@ Acrescenta uma chave nova com o tópico exato e seu schema. Mantém vírgulas e 
 
 O schema é copiado pra dentro da imagem em build-time, então `docker compose restart` **não basta** — precisa rebuild:
 
+Pelo compose da raiz do TV30, que inclui o `infra/docker-compose.yml` (subir o da `infra/` isolado cria outro projeto, com o mesmo nome de container):
+
 ```bash
-wsl -- bash -c "cd /mnt/d/ProjCEFET/TV30/infra && \
+wsl -- bash -c "cd /mnt/d/Proj_CEFET/TV30 && \
     docker compose --profile mqtt build mosquitto && \
     docker compose --profile mqtt up -d mosquitto"
 ```
@@ -126,12 +131,11 @@ wsl -- bash -c "cd /mnt/d/ProjCEFET/TV30/infra && \
 wsl -- docker logs mqtt-broker 2>&1 | grep "Schema loaded"
 ```
 
-Saída esperada:
+Saída esperada (uma linha por tópico do arquivo; abreviada aqui):
 ```
-Schemas loaded from file: 4 topics configured
+Schemas loaded from file: <n> topics configured
 Schema loaded for topic: sensor/room1/temperature
-Schema loaded for topic: sensor/room2/humidity
-Schema loaded for topic: sensor/comprehensive/test
+...
 Schema loaded for topic: sensor/garage/co2
 ```
 
@@ -190,13 +194,13 @@ Quando a validação falha, o plugin:
 }
 ```
 
-> Tópicos `errors/*` e `PluginResponseTime*` são **ignorados pelo callback** (early-return em `mosquitto_plugin.c:121-128`) pra evitar loop infinito.
+> Tópicos `errors/*` e `PluginResponseTime*` são **ignorados pelo callback** (early-return em `mosquitto_plugin.c:163-171`) pra evitar loop infinito.
 
 ---
 
 ## Limitações conhecidas
 
-- **Sem wildcards** em chaves de schema. `sensor/+/temperature` não funciona como regra. Cada tópico precisa estar listado explicitamente.
+- **Curingas sem prioridade por especificidade.** Com mais de uma chave com `+`/`#` casando o mesmo tópico, vale a primeira na ordem do arquivo, e não a mais específica.
 - **Sem `$ref`** — não dá pra reusar sub-schemas via referência. Copia/cola.
 - **`pattern` é regex POSIX simples**, sem flags. Sem suporte a `^...$` multi-linha, lookahead/lookbehind, etc.
 - **Erros de schema malformado são silenciosos no carregamento** — só loga `Invalid JSON in schemas file`, e o plugin segue funcionando com schemas vazios. Sempre validar o JSON com `jq`/`json5` antes do rebuild.
@@ -211,12 +215,12 @@ Quando a validação falha, o plugin:
 ```
 Cliente publica em sensor/X/Y
     ↓
-callback_acl_check (mosquitto_plugin.c:116)
-    ↓ (é WRITE em sensor/?)
-validate_message (mosquitto_plugin.c:91)
-    ↓ get_schema_for_topic("sensor/X/Y")
+callback_acl_check (mosquitto_plugin.c:159)
+    ↓ (é WRITE, fora de errors/, PluginResponseTime*, PublisherResponseTime* e $SYS/, com payload?)
+validate_message (mosquitto_plugin.c:129)
+    ↓ get_schema_for_topic("sensor/X/Y") (exato, depois + e #)
     ↓ não tem schema → MOSQ_ERR_SUCCESS (passa)
-    ↓ tem schema → tokenize JSON
+    ↓ tem schema → tokenize JSON (schema type=string aceita texto puro)
         ↓ JSON inválido → publish_error("INVALID_JSON") + DENIED
         ↓ JSON válido → validate_with_schema (schema_validator.c:396)
             ↓ falha → publish_error("SCHEMA_VALIDATION_FAILED") + DENIED
@@ -230,8 +234,9 @@ validate_message (mosquitto_plugin.c:91)
 | O que mudar | Arquivo |
 |---|---|
 | Adicionar nova keyword (ex.: `format`) | `plugin/src/schema_validator.c` — criar `validate_<keyword>()` e chamar em `validate_with_schema` |
-| Liberar/restringir tópicos validados (ex.: validar `aop/*`) | `plugin/src/mosquitto_plugin.c:149-152` (filtro `strncmp("sensor/")`) |
-| Mudar formato do JSON publicado em `errors/*` | `plugin/src/mosquitto_plugin.c:55-77` (`publish_error`) |
-| Suportar wildcard em chaves do `schemas.json` | `plugin/src/mosquitto_plugin.c:80-88` (`get_schema_for_topic`) |
+| Validar um tópico novo | só `plugin/config/schemas.json` (sem filtro de prefixo no código) |
+| Mudar os tópicos que nunca são validados (`errors/`, teste de latência, `$SYS/`) | `plugin/src/mosquitto_plugin.c:163-197` (`callback_acl_check`) |
+| Mudar formato do JSON publicado em `errors/*` | `plugin/src/mosquitto_plugin.c:54-76` (`publish_error`) |
+| Mudar o casamento de tópico (exato, depois `+`/`#`) | `plugin/src/mosquitto_plugin.c:80-117` (`topic_matches`, `get_schema_for_topic`) |
 
 Qualquer mudança em C exige rebuild da imagem (mesma sequência da seção "Rebuild e restart" acima).

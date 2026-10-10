@@ -147,6 +147,8 @@ O build também falha se o `.so` não casar com o binário do KrakenD (`krakend 
 - corpo `{"error": <n>, "description": "..."}`;
 - cabeçalhos `Content-Type: application/json`, `Access-Control-Allow-Origin: *` e `API-Version`.
 
+O `API-Version` desses erros (e do `OPTIONS` que não é preflight) sai da mesma negociação das APIs da borda (`apiVersion`, em `handler.go`): a versão pedida, se for `2.0` ou `2.1` (`2.0` sem `Accept-Version`); a mais recente suportada, `2.1`, quando a versão pedida está fora do conjunto, o caso do erro 100 da negociação (C.3.6.6: "the latest version supported by the server"); e `2.0` com `Accept-Version` fora do formato `X.Y`, o caso do erro 101, como antes. Este último é leitura do projeto: a exceção da C.3.6.6 fala de versão pedida, e um cabeçalho malformado não pede versão nenhuma.
+
 ## Build e testes
 
 O plugin usa **somente a biblioteca padrão**: o `go.mod` não tem `require`. O `.so` precisa do mesmo Go, da mesma libc (musl) e da mesma arquitetura do binário do KrakenD. Por isso o builder e a imagem final usam a mesma versão fixa, `2.7.2`.

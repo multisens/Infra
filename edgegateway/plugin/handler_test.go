@@ -292,6 +292,47 @@ func TestRotaNaoDeclaradaNosDoisModos(t *testing.T) {
 	}
 }
 
+// API-Version (C.3.6.6) nas respostas que a borda escreve sem repassar:
+// erros C.3.2 (rota nao declarada, credencial) e o OPTIONS que nao e
+// preflight. Versao pedida e suportada: ela; fora do conjunto: a mais recente
+// suportada; malformada ou ausente: 2.0.
+func TestAPIVersionDasRespostasDaBorda(t *testing.T) {
+	if latestVersion != "2.1" {
+		t.Fatalf("latestVersion = %s, esperado 2.1 (a ultima de %v)", latestVersion, supportedVersions)
+	}
+	h := newTestHandler(t, modeEnforce, baseStore(), nil)
+	for _, c := range []struct {
+		accept []string // nil = sem Accept-Version
+		want   string
+	}{
+		{nil, "2.0"}, {[]string{"2.0"}, "2.0"}, {[]string{"2.1"}, "2.1"},
+		{[]string{"3.0"}, "2.1"}, {[]string{"1.9"}, "2.1"}, {[]string{"9.99"}, "2.1"},
+		{[]string{"abc"}, "2.0"}, {[]string{"2"}, "2.0"}, {[]string{"2.1", "2.0"}, "2.0"},
+	} {
+		for _, rq := range []struct {
+			name, method, path string
+			code               int
+		}{
+			{"107 sem token", "GET", "/tv3/current-service", 107},
+			{"100 rota nao declarada", "GET", "/tv3/abc", 100},
+			{"OPTIONS sem preflight", "OPTIONS", "/tv3/current-service", 0},
+		} {
+			req := httptest.NewRequest(rq.method, rq.path, nil)
+			for _, v := range c.accept {
+				req.Header.Add("Accept-Version", v)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rq.code != 0 {
+				checkC32(t, rec, rq.code)
+			}
+			if v := rec.Header().Get("API-Version"); v != c.want {
+				t.Errorf("%s com Accept-Version %v: API-Version %q, esperado %s", rq.name, c.accept, v, c.want)
+			}
+		}
+	}
+}
+
 func TestOptionsPassaSempre(t *testing.T) {
 	called := false
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true; w.WriteHeader(204) })

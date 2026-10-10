@@ -439,12 +439,23 @@ func writeOptions(w http.ResponseWriter, r *http.Request, allowHeaders string) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// apiVersion: as versoes que o tv3ws aceita (middleware/basic.ts); fora
-// delas, a versao da norma.
+// apiVersion: o API-Version das respostas que a propria borda escreve fora do
+// sucesso de uma API dela (erros C.3.2 e o OPTIONS que nao e preflight), pela
+// negociacao de negotiateVersion (edge.go), a mesma do tv3ws:
+//   - versao pedida e suportada: ela (2.0 sem Accept-Version, C.3.6.5);
+//   - versao pedida fora do conjunto (o erro 100 da negociacao): a mais
+//     recente suportada. C.3.6.6: quando o servidor nao consegue responder de
+//     forma compativel com a versao pedida, "the 'API-Version' header is
+//     assigned to the latest version supported by the server";
+//   - Accept-Version malformado (o erro 101): segue a 2.0, como antes. A
+//     excecao da C.3.6.6 fala de versao pedida, e um cabecalho fora do
+//     formato X.Y nao pede versao nenhuma.
 func apiVersion(r *http.Request) string {
-	switch v := r.Header.Get("Accept-Version"); v {
-	case "2.0", "2.1":
+	switch v, code, _ := negotiateVersion(r); code {
+	case 0:
 		return v
+	case 100:
+		return latestVersion
 	}
-	return "2.0"
+	return defaultVersion
 }

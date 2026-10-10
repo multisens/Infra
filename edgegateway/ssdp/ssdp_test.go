@@ -86,11 +86,53 @@ func TestChooseInterface(t *testing.T) {
 	if err != nil || c.Name != "docker0" || c.Addr != "172.17.0.1" || len(c.Warnings) != 1 {
 		t.Fatalf("forcada divergente: %+v %v", c, err)
 	}
-	if _, err = chooseInterface("192.168.2.7", "eth9", ifs, route); err == nil || !strings.Contains(err.Error(), "eth9") {
-		t.Fatalf("forcada inexistente deveria falhar: %v", err)
+	// forcada fora da lista (sem IPv4 ou fora do ar; a existencia do nome e
+	// conferida na partida, por checkForced): falta de rede
+	if _, err = chooseInterface("192.168.2.7", "eth9", ifs, route); err == nil || !strings.Contains(err.Error(), "eth9") || !isNetDown(err) {
+		t.Fatalf("forcada sem IPv4 deveria ser falta de rede: %v", err)
 	}
-	if _, err = chooseInterface("10.9.9.9", "", ifs, func() string { return "" }); err == nil {
-		t.Fatal("sem dono e sem rota padrao deveria falhar")
+	if _, err = chooseInterface("10.9.9.9", "", ifs, func() string { return "" }); err == nil || !isNetDown(err) {
+		t.Fatalf("sem dono e sem rota padrao deveria ser falta de rede: %v", err)
+	}
+	if _, err = chooseInterface("tv.local", "", nil, func() string { return "" }); err == nil || !isNetDown(err) ||
+		!strings.Contains(err.Error(), "nenhuma interface") {
+		t.Fatalf("sem interface deveria ser falta de rede: %v", err)
+	}
+}
+
+func TestCheckForced(t *testing.T) {
+	lookup := func(name string) (bool, bool) {
+		switch name {
+		case "lo":
+			return true, true
+		case "wlp2s0":
+			return true, false
+		}
+		return false, false
+	}
+	if err := checkForced("", lookup); err != nil {
+		t.Fatalf("sem SSDP_INTERFACE: %v", err)
+	}
+	if err := checkForced(" wlp2s0 ", lookup); err != nil {
+		t.Fatalf("existente: %v", err)
+	}
+	if err := checkForced("eth9", lookup); err == nil || !strings.Contains(err.Error(), "nao existe") || isNetDown(err) {
+		t.Fatalf("inexistente deveria ser erro de configuracao: %v", err)
+	}
+	if err := checkForced("lo", lookup); err == nil || !strings.Contains(err.Error(), "loopback") || isNetDown(err) {
+		t.Fatalf("loopback deveria ser erro de configuracao: %v", err)
+	}
+}
+
+func TestLocalIP(t *testing.T) {
+	if ip := localIP(ifs, func() string { return "wlp2s0" }); ip != "192.168.2.7" {
+		t.Errorf("rota padrao: %s", ip)
+	}
+	if ip := localIP(ifs, func() string { return "" }); ip != "172.17.0.1" {
+		t.Errorf("sem rota, primeira interface: %s", ip)
+	}
+	if ip := localIP(nil, func() string { return "" }); ip != "127.0.0.1" {
+		t.Errorf("sem interface: %s", ip)
 	}
 }
 
