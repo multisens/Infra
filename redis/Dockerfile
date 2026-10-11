@@ -10,12 +10,14 @@
 # biblioteca que nao carrega, carga fora do esquema ou auditoria com achados
 # depois da carga nao viram imagem. Ver README.md desta pasta.
 #
-# Semantica registrada (decisao V8/V9): o redis-server e o processo
-# principal — se ELE morrer, o container cai; se o COMMANDER morrer, o
-# banco segue (excecao consciente ao morre-inteiro, por ser ferramenta de
-# inspecao). O healthcheck so fica saudavel APOS a biblioteca carregar nesta
-# partida e a carga estar aplicada (marca /tmp/tv30-redis-pronto e chave
-# seed:done), substituindo o antigo depends_on service_completed_successfully.
+# Semantica registrada: MORRE-INTEIRO para o redis-server e o commander (C2,
+# decisao do Luis em 11/10) — se QUALQUER um dos dois morrer, o container cai
+# (entrypoint.sh) e o restart do compose o traz de volta. Ate 11/10 o
+# commander era excecao consciente (decisao V8/V9: a morte dele nao derrubava
+# o banco, por ser ferramenta de inspecao). O healthcheck so fica saudavel
+# APOS a biblioteca carregar nesta partida e a carga estar aplicada (marca
+# /tmp/tv30-redis-pronto e chave seed:done), substituindo o antigo depends_on
+# service_completed_successfully.
 #
 # Build context: infra/  (precisa do template de userData e do script de
 # normalizacao compartilhado com o mqtt-broker)

@@ -9,7 +9,7 @@
     "o campo 'fonte' de cada regra diz de onde ela veio (secao da norma, schemas.json do broker ou codigo).",
     "Documentacao para quem chega: docs/modelo-redis.md e infra/redis/README.md."
   ],
-  "versao": "1",
+  "versao": "2",
   "biblioteca": "tv30",
   "prefixoErro": "TV30ESQUEMA",
 
@@ -17,8 +17,8 @@
 
   "definicoes": {
     "idPerfil": {
-      "tipo": "texto", "min": 1, "max": 64, "proibe": ":",
-      "fonte": "max 64: schemas.json do broker, aop/currentUser (maxLength 64), o topico que carrega o id do perfil corrente; sem ':' para a chave user:{id}:consent nao se confundir com o perfil de id 'x:consent' (decisao de implementacao)"
+      "tipo": "uuid",
+      "fonte": "Tabela 7: id 'UUID string', required. F-3 (decisao do Luis em 11/10): UUID no formato textual da IETF RFC 9562 (8-4-4-4-12 digitos hexadecimais, como c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10), em minusculas, sem compatibilidade com os ids antigos (user_<epoch-ms> do AoP, c3167a18-5dc5 da carga). Versao e variante nao sao conferidas (o formato textual nao as fixa). Sem ':' por construcao: a chave user:{id}:consent nao se confunde com um perfil. Ate 11/10 (versao 1 deste esquema): texto de 1 a 64 caracteres, sem ':'"
     },
     "idServico": {
       "tipo": "texto", "min": 1, "max": 256,
@@ -84,7 +84,7 @@
       "descricao": "Perfil do telespectador: atributos basicos da Tabela 7 mais lastAccess (despejo P3).",
       "partes": { "id": { "ref": "idPerfil" } },
       "campos": {
-        "id": { "ref": "idPerfil", "obrigatorio": true, "fonte": "Tabela 7: required (a norma pede UUID; ver divergencias)" },
+        "id": { "ref": "idPerfil", "obrigatorio": true, "fonte": "Tabela 7: UUID string, required (F-3, decisao do Luis em 11/10)" },
         "nickname": { "tipo": "texto", "min": 1, "max": 20, "obrigatorio": true, "fonte": "Tabela 7: string (up to 20 characters), required" },
         "avatar": { "tipo": "texto", "fonte": "Tabela 7: file path, optional (o testbed grava SVG em linha; ver divergencias)" },
         "parentalControl": { "ref": "booleano", "obrigatorio": true, "fonte": "Tabela 7: (true | false), required" },
@@ -104,7 +104,6 @@
       "outrosCampos": false,
       "campoIgualAParte": { "campo": "id", "parte": "id" },
       "divergencias": [
-        "Tabela 7 pede 'UUID string' no id. O AoP gera user_<epoch-ms> e a carga inicial traz c3167a18-5dc5 (tambem citado pelo bcast/webmedia); o esquema exige so idPerfil. PENDENTE (Joel): adotar UUID ou registrar a excecao.",
         "Tabela 7 pede 'file path' no avatar. O AoP e a carga gravam o SVG em linha; o esquema aceita qualquer texto."
       ],
       "funcoes": ["tv30_perfil_grava", "tv30_perfil_ultimo_acesso", "tv30_perfil_remove"]

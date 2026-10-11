@@ -103,12 +103,14 @@ func storedJSON(alg, key string) string {
 // fakeStore: Redis em memoria para os testes da decisao e das APIs da borda.
 type fakeStore struct {
 	blocked    map[string]bool
+	authorized map[string]bool // clients:authorized (E6)
 	associated map[string]bool
 	current    string
 	keys       map[string][]string // bind-context:{serviceId}
 	svcHash    map[string]string   // session:current-service
 	wrongType  map[string]bool     // bind-context:{serviceId} de outro tipo (WRONGTYPE)
 	err        error
+	authzErr   error // so no SISMEMBER clients:authorized (E6)
 	writeErr   error // so nas escritas (a funcao do Redis recusando o dado, P4)
 	calls      int
 }
@@ -116,6 +118,13 @@ type fakeStore struct {
 func (f *fakeStore) IsBlocked(id string) (bool, error) {
 	f.calls++
 	return f.blocked[id], f.err
+}
+func (f *fakeStore) IsAuthorized(id string) (bool, error) {
+	f.calls++
+	if f.authzErr != nil {
+		return false, f.authzErr
+	}
+	return f.authorized[id], f.err
 }
 func (f *fakeStore) IsAssociatedOrigin(o string) (bool, error) {
 	f.calls++

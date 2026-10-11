@@ -65,7 +65,8 @@ func testExtra() map[string]interface{} {
 			r("GET", "/tv3/current-service", authToken),
 			r("GET", "/tv3/current-service/users/current-user", authTokenBind),
 			r("POST", "/tv3/current-service/users", authTokenBind),
-			r("POST", "/tv3/{serviceContextId}/users", authTokenBind),
+			// POST /tv3/{serviceContextId}/users saiu da tabela (A4, decisao do
+			// Luis em 11/10): fora da norma, a borda responde 100
 			r("GET", "/tv3/{serviceContextId}/users/{userid}", authTokenBind),
 		},
 	}
@@ -100,7 +101,10 @@ func newTestHandler(t *testing.T, mode string, st *fakeStore, next http.Handler)
 
 func baseStore() *fakeStore {
 	return &fakeStore{
-		blocked:    map[string]bool{"cli-bloq": true},
+		blocked: map[string]bool{"cli-bloq": true},
+		// E6 (Luis, 11/10): so passa quem esta em clients:authorized; o
+		// bloqueado nunca esta (invariante clientes-disjuntos do esquema)
+		authorized: map[string]bool{"cli-1": true, "cli-2": true, "cli-3": true},
 		associated: map[string]bool{tAssoc: true},
 		current:    tSvc,
 		keys:       map[string][]string{tSvc: {storedJSON("HS256", "chave-webmedia")}, "urn:outra": {storedJSON("HS256", "chave-outra")}},
@@ -116,6 +120,12 @@ func TestDecisao(t *testing.T) {
 	assocTok := accessFor(t, "cli-3", classAssociated)
 	blocked := accessFor(t, "cli-bloq", classAutonomous)
 	blockedAssoc := accessFor(t, "cli-bloq", classAssociated)
+	// E6: token valido de cliente fora de clients:authorized (desbloqueado sem
+	// nova autorizacao, ou nunca autorizado) e token valido sem sub
+	fora := accessFor(t, "cli-fora", classNonLocal)
+	foraAssoc := accessFor(t, "cli-fora", classAssociated)
+	semSub := "Bearer " + signJWT(t, "HS256", []byte(tSecret), map[string]interface{}{
+		"iat": t0.Unix(), "exp": t0.Add(time.Hour).Unix(), "iss": "GenericIssuer", "class": classNonLocal})
 	expired := "Bearer " + signJWT(t, "HS256", []byte(tSecret), map[string]interface{}{"exp": t0.Add(-time.Second).Unix(), "iss": "GenericIssuer", "sub": "x", "class": classNonLocal})
 
 	type hdr map[string]string
@@ -153,6 +163,16 @@ func TestDecisao(t *testing.T) {
 		{"cliente bloqueado", "GET", "/tv3/current-service", hdr{"Authorization": blocked}, 107},
 		{"bloqueado com token de classe associado", "GET", "/tv3/current-service/users/current-user", hdr{"Authorization": blockedAssoc}, 107},
 		{"token de associado dispensa bind", "GET", "/tv3/current-service/users/current-user", hdr{"Authorization": assocTok}, 0},
+		// E6 (decisao do Luis em 11/10): sub fora de clients:authorized = 107
+		{"fora de clients:authorized (E6)", "GET", "/tv3/current-service", hdr{"Authorization": fora}, 107},
+		{"fora de clients:authorized, rota token+bind (E6)", "GET", "/tv3/current-service/users/current-user", hdr{"Authorization": fora, "bind-token": bindOK}, 107},
+		{"token de associado fora de clients:authorized (E6)", "GET", "/tv3/current-service/users/current-user", hdr{"Authorization": foraAssoc}, 107},
+		{"token sem sub (E6)", "GET", "/tv3/current-service", hdr{"Authorization": semSub}, 107},
+		{"fora de clients:authorized, API da borda com token (E6)", "GET", "/tv3/api-info", hdr{"Authorization": fora}, 107},
+		// rotas auth none nao mudam com a E6
+		{"authorize com token fora de clients:authorized (auth none)", "GET", "/tv3/authorize", hdr{"Authorization": fora}, 0},
+		{"health com token fora de clients:authorized", "GET", "/health", hdr{"Authorization": fora}, 0},
+		{"associado pelo Origin nao depende do conjunto", "GET", "/tv3/current-service", hdr{"Origin": tAssoc}, 0},
 		{"associado sem token", "GET", "/tv3/current-service", hdr{"Origin": tAssoc}, 0},
 		{"token invalido + Origin associado", "GET", "/tv3/current-service", hdr{"Authorization": "Bearer lixo", "Origin": tAssoc}, 107},
 		// bind (104/108)
@@ -166,12 +186,14 @@ func TestDecisao(t *testing.T) {
 		{"scid constante = corrente", "GET", "/tv3/" + tSCID + "/users/u1", hdr{"Authorization": auto, "bind-token": bindOK}, 0},
 		{"scid current-service", "GET", "/tv3/current-service/users/u1", hdr{"Authorization": auto, "bind-token": bindOK}, 0},
 		{"scid de outro servico (L2)", "GET", "/tv3/urn:outra/users/u1", hdr{"Authorization": auto, "bind-token": bindOutra}, 108},
-		// POST {scid}/users chega ao mesmo handler da C.6.14.1 (bind shall)
+		// C.6.14.1 (bind shall); a variante POST {scid}/users saiu da tabela
+		// (A4, Luis 11/10): 100 com qualquer scid, inclusive o constante e o
+		// current-service com a caixa trocada
 		{"POST current-service/users sem bind", "POST", "/tv3/current-service/users", hdr{"Authorization": auto}, 104},
-		{"POST {scid}/users sem bind", "POST", "/tv3/xyz/users", hdr{"Authorization": auto}, 104},
-		{"POST {scid}/users scid qualquer (L2)", "POST", "/tv3/xyz/users", hdr{"Authorization": auto, "bind-token": bindOK}, 108},
-		{"POST Current-Service/users (caixa trocada, L2)", "POST", "/tv3/Current-Service/users", hdr{"Authorization": auto, "bind-token": bindOK}, 108},
-		{"POST {scid}/users scid constante", "POST", "/tv3/" + tSCID + "/users", hdr{"Authorization": auto, "bind-token": bindOK}, 0},
+		{"POST {scid}/users sem bind (A4)", "POST", "/tv3/xyz/users", hdr{"Authorization": auto}, 100},
+		{"POST {scid}/users scid qualquer (A4)", "POST", "/tv3/xyz/users", hdr{"Authorization": auto, "bind-token": bindOK}, 100},
+		{"POST Current-Service/users (caixa trocada, A4)", "POST", "/tv3/Current-Service/users", hdr{"Authorization": auto, "bind-token": bindOK}, 100},
+		{"POST {scid}/users scid constante (A4)", "POST", "/tv3/" + tSCID + "/users", hdr{"Authorization": auto, "bind-token": bindOK}, 100},
 	}
 	for _, c := range cases {
 		h := newTestHandler(t, modeEnforce, baseStore(), nil)
@@ -182,6 +204,60 @@ func TestDecisao(t *testing.T) {
 		if got := h.evaluate(req); got.Code != c.want {
 			t.Errorf("%s: codigo %d (%s), esperado %d", c.name, got.Code, got.Detail, c.want)
 		}
+	}
+}
+
+// E6 (decisao do Luis em 11/10): o bloqueado continua 107 com a mensagem do
+// bloqueio (conferido antes); o fora do conjunto tem a mensagem propria; o
+// conjunto vale para o cliente que volta a ele (sem cache na borda); falha do
+// Redis na consulta do conjunto da 200, como as outras consultas.
+func TestDecisaoClientesAutorizados(t *testing.T) {
+	req := func(tok string) *http.Request {
+		r := httptest.NewRequest("GET", "/tv3/current-service", nil)
+		r.Header.Set("Authorization", tok)
+		return r
+	}
+	st := baseStore()
+	h := newTestHandler(t, modeEnforce, st, nil)
+	if v := h.evaluate(req(accessFor(t, "cli-bloq", classAutonomous))); v.Code != 107 || !strings.Contains(v.Detail, "bloqueado pelo usuario") {
+		t.Fatalf("bloqueado: %d %q", v.Code, v.Detail)
+	}
+	tok := accessFor(t, "cli-volta", classAutonomous)
+	if v := h.evaluate(req(tok)); v.Code != 107 || !strings.Contains(v.Detail, "fora de clients:authorized (E6)") {
+		t.Fatalf("fora do conjunto: %d %q", v.Code, v.Detail)
+	}
+	// token sem sub: 107 sem consultar o Redis (nao ha id para procurar)
+	semSub := "Bearer " + signJWT(t, "HS256", []byte(tSecret), map[string]interface{}{
+		"exp": t0.Add(time.Hour).Unix(), "iss": "GenericIssuer", "class": classAutonomous})
+	antes := st.calls
+	if v := h.evaluate(req(semSub)); v.Code != 107 || !strings.Contains(v.Detail, "sem sub") || st.calls != antes {
+		t.Fatalf("sem sub: %d %q, consultas ao redis %d", v.Code, v.Detail, st.calls-antes)
+	}
+	st.authorized["cli-volta"] = true // o tv3ws o inclui de novo (boot ou nova autorizacao)
+	if v := h.evaluate(req(tok)); v.Code != 0 {
+		t.Fatalf("de volta ao conjunto: %d %q", v.Code, v.Detail)
+	}
+	delete(st.authorized, "cli-volta") // autorizacao removida
+	if v := h.evaluate(req(tok)); v.Code != 107 {
+		t.Fatalf("autorizacao removida: %d %q", v.Code, v.Detail)
+	}
+	// bloqueado E (por defeito do dado) ainda no conjunto: o bloqueio vence
+	st.authorized["cli-bloq"] = true
+	if v := h.evaluate(req(accessFor(t, "cli-bloq", classAutonomous))); v.Code != 107 || !strings.Contains(v.Detail, "bloqueado") {
+		t.Fatalf("bloqueado no conjunto: %d %q", v.Code, v.Detail)
+	}
+	// Redis fora so na consulta do conjunto: 200
+	st2 := baseStore()
+	st2.authzErr = errors.New("conexao recusada")
+	h2 := newTestHandler(t, modeEnforce, st2, nil)
+	if v := h2.evaluate(req(accessFor(t, "cli-1", classAutonomous))); v.Code != 200 {
+		t.Fatalf("redis fora no conjunto: %d %q", v.Code, v.Detail)
+	}
+	// warn: so avisa
+	hw := newTestHandler(t, modeWarn, baseStore(), nil)
+	rec := serve(hw, "GET", "/tv3/current-service", map[string]string{"Authorization": accessFor(t, "cli-fora", classNonLocal)})
+	if rec.Code != 200 || rec.Header().Get(warnHeader) != "107" {
+		t.Fatalf("warn: status %d, aviso %q", rec.Code, rec.Header().Get(warnHeader))
 	}
 }
 

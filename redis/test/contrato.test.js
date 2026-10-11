@@ -49,7 +49,7 @@ after(async () => {
 
 test('tv3ws: espelhos da sessao e o hash do servico corrente', async () => {
     await tv.sessaoUsuario('');
-    await tv.sessaoUsuario('user_1760000000000');
+    await tv.sessaoUsuario('c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10');
     await tv.sessaoServicoId('urn:tv30:service:users-test');
     await tv.sessaoServico({
         serviceContextId: 'c08b2c72-fd14-4095-adaf-2e5810850c57', serviceId: '', serviceName: '',
@@ -95,11 +95,16 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
         { nickname: 'Visivel', accessConsent: ['urn:tv30:service:webmedia', 'urn:tv30:service:uff'] },
     ];
     const ids = [];
+    // F-3 (decisao do Luis em 11/10): o AoP gera o id do perfil com
+    // crypto.randomUUID(); o esquema exige UUID em minusculas (RFC 9562)
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
     for (const b of bodies) {
         const { user } = await profiles.createProfile(b);
+        assert.match(user.id, UUID, 'id do perfil criado pelo AoP');
         ids.push(user.id);
-        await new Promise(res => setTimeout(res, 2)); // ids user_<ms> distintos
+        await new Promise(res => setTimeout(res, 2)); // lastAccess distintos (ordem do despejo)
     }
+    assert.equal(new Set(ids).size, 5);
     assert.equal(await r('SCARD', 'users:index'), 5);
     assert.deepEqual(await auditoria(), [], 'perfis montados pelo AoP cumprem o esquema');
     assert.equal(await profiles.touchLastAccess(ids[1], 5), true);
@@ -107,7 +112,10 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
     // atributo de emissora no perfil que sera despejado (o tv3ws grava)
     assert.equal(await tv.atributosEmissora(ids[0], 'urn:tv30:service:users-test', { cor: 'azul' }), 1);
     await assert.rejects(tv.atributosEmissora(ids[0], 'urn:tv30:service:users-test', { nickname: 'x' }), esquema);
-    await assert.rejects(tv.atributosEmissora('nao-indexado', 'urn:s', { cor: 'azul' }), esquema);
+    // UUID valido fora de users:index (invariante perfil-dependentes) e id no
+    // formato antigo (fora do esquema)
+    await assert.rejects(tv.atributosEmissora('9d1e2f3a-4b5c-4d6e-8f70-81a2b3c4d5e6', 'urn:s', { cor: 'azul' }), { message: /perfil-dependentes/ });
+    await assert.rejects(tv.atributosEmissora('user_1760000000000', 'urn:s', { cor: 'azul' }), { message: /^TV30ESQUEMA .*RFC 9562/ });
     // sexto perfil: despeja o de ultimo acesso mais antigo (ids[1] ficou com 5)
     const { evicted } = await profiles.createProfile({ nickname: 'Sexto' });
     assert.equal(evicted.id, ids[1]);

@@ -13,8 +13,9 @@
 // (testes 44-45 de docs/ssdp-verificacao.md).
 //   - Erro de configuracao: encerra com exit 1, e o entrypoint derruba a
 //     borda inteira (morre-inteiro; o restart do compose a traz de volta).
-//     Porta invalida em EDGE_HTTP_PORT/EDGE_HTTPS_PORT, SSDP_INTERFACE com
-//     nome que nao existe na maquina (ou de loopback), UDP 1900 presa por
+//     SSDP_ADVERTISE_HOST ausente, vazio ou sem host (B2, decisao do Luis em
+//     11/10), porta invalida em EDGE_HTTP_PORT/EDGE_HTTPS_PORT, SSDP_INTERFACE
+//     com nome que nao existe na maquina (ou de loopback), UDP 1900 presa por
 //     socket sem SO_REUSEADDR (EADDRINUSE no bind) e todo erro que nao seja
 //     de rede.
 //   - Falta de rede: o processo fica de pe. Nenhuma interface com IPv4, sem
@@ -23,12 +24,15 @@
 //     sumiram). Fecha os sockets (nao anuncia nem responde a buscas), avisa
 //     UMA vez ao entrar no estado e outra ao sair, e tenta de novo com espera
 //     crescente (retryMin ate retryMax), escolhendo de novo a interface e o
-//     IP a cada tentativa.
+//     IPv4 de origem a cada tentativa.
 //
 // O LOCATION aponta para o /manifest, que continua no tv3ws, atras da propria
-// borda (44642), com o host da cadeia de config.go (B2 segue com o Joel). O
-// anunciante Node do tv3ws (dev-host, tv3ws/src/ssdp-server.ts) nao mudou: la,
-// qualquer falha do anuncio ainda encerra o processo.
+// borda (44642), com o host de SSDP_ADVERTISE_HOST (B2, config.go). Esse host
+// nao muda com a rede: numa troca de rede, o anuncio volta pela interface
+// escolhida de novo, com o mesmo LOCATION (e aviso, se o IPv4 configurado nao
+// estiver mais em nenhuma interface). O anunciante Node do tv3ws (dev-host,
+// tv3ws/src/ssdp-server.ts) nao mudou: la, qualquer falha do anuncio ainda
+// encerra o processo, e o host ainda segue a cadeia antiga.
 package main
 
 import (
@@ -244,15 +248,10 @@ func (a *announcer) read(s *session) {
 	}
 }
 
-// start: uma tentativa — escolhe interface e IP com a rede de agora, abre os
-// sockets e manda o primeiro NOTIFY.
-func (a *announcer) start(forced, udn string) (*session, []string, error) {
-	ifaces := a.net.Interfaces()
-	ep, err := resolveEndpoint(a.getenv, func() string { return localIP(ifaces, a.net.DefaultRoute) })
-	if err != nil {
-		return nil, nil, step("configuracao do anuncio (EDGE_HTTP_PORT/EDGE_HTTPS_PORT)", err)
-	}
-	ch, err := chooseInterface(ep.Host, forced, ifaces, a.net.DefaultRoute)
+// start: uma tentativa — escolhe interface e IPv4 de origem com a rede de
+// agora, abre os sockets e manda o primeiro NOTIFY.
+func (a *announcer) start(ep endpoint, forced, udn string) (*session, []string, error) {
+	ch, err := chooseInterface(ep.Host, forced, a.net.Interfaces(), a.net.DefaultRoute)
 	if err != nil {
 		return nil, nil, step("escolha da interface do anuncio", err)
 	}
@@ -330,9 +329,10 @@ func (a *announcer) fatal(err error) int {
 // run devolve o codigo de saida: 0 num sinal, 1 em erro de configuracao. Na
 // falta de rede nao volta.
 func (a *announcer) run() int {
-	// Configuracao: conferida uma vez, antes de tudo.
-	if _, err := resolveEndpoint(a.getenv, func() string { return "" }); err != nil {
-		return a.fatal(step("configuracao do anuncio (EDGE_HTTP_PORT/EDGE_HTTPS_PORT)", err))
+	// Configuracao: conferida uma vez, antes de tudo (o ambiente nao muda).
+	ep, err := resolveEndpoint(a.getenv)
+	if err != nil {
+		return a.fatal(step("configuracao do anuncio (SSDP_ADVERTISE_HOST, EDGE_HTTP_PORT, EDGE_HTTPS_PORT)", err))
 	}
 	forced := strings.TrimSpace(a.getenv("SSDP_INTERFACE"))
 	if err := checkForced(forced, a.net.Lookup); err != nil {
@@ -348,7 +348,7 @@ func (a *announcer) run() int {
 	tries := 0
 	shown := map[string]bool{} // avisos da sessao anterior: nao se repetem
 	for {
-		s, warns, err := a.start(forced, udn)
+		s, warns, err := a.start(ep, forced, udn)
 		if err == nil {
 			if !downSince.IsZero() {
 				a.logf("rede de volta: anunciando de novo depois de %s sem anunciar (%d tentativas sem rede)",
@@ -363,8 +363,8 @@ func (a *announcer) run() int {
 				now[w] = true
 			}
 			shown = now
-			a.logf("anunciando %s em UDP 1900 pela interface %s (%s, via %s); LOCATION %s (host via %s)",
-				ssdpST, s.ch.Name, s.ch.Addr, s.ch.Source, s.ep.location(), s.ep.Source)
+			a.logf("anunciando %s em UDP 1900 pela interface %s (%s, via %s); LOCATION %s (host de SSDP_ADVERTISE_HOST)",
+				ssdpST, s.ch.Name, s.ch.Addr, s.ch.Source, s.ep.location())
 			stop, serr := a.serve(s)
 			if stop {
 				return 0

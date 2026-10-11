@@ -340,16 +340,30 @@ func (h *authHandler) evaluate(r *http.Request) verdict {
 	if tokenErr != nil {
 		return v.fail(107, tokenErr.Error())
 	}
-	// cliente bloqueado (C.4.2.2): vale para toda credencial valida,
-	// inclusive token com class local-associated.
-	if claims.Sub != "" {
-		blocked, err := h.store.IsBlocked(claims.Sub)
-		if err != nil {
-			return v.fail(200, "redis indisponivel ("+err.Error()+")")
-		}
-		if blocked {
-			return v.fail(107, "cliente bloqueado pelo usuario (C.4.2.2)")
-		}
+	// Cliente bloqueado (C.4.2.2) e cliente fora de clients:authorized (E6,
+	// decisao do Luis em 11/10): 107 nos dois casos, para toda credencial
+	// valida, inclusive token com class local-associated, e so nas rotas que
+	// pedem token (as de auth none ja sairam acima). O bloqueado e conferido
+	// antes e mantem a mensagem dele. Token sem sub nunca esta no conjunto (ate
+	// 11/10 ele passava sem nenhuma das duas consultas). O tv3ws grava o
+	// conjunto (auth-manager: autorizacao no pop-up, inclusao no boot) e tira
+	// dele o id no bloqueio.
+	if claims.Sub == "" {
+		return v.fail(107, "access token sem sub: cliente fora de clients:authorized (E6)")
+	}
+	blocked, err := h.store.IsBlocked(claims.Sub)
+	if err != nil {
+		return v.fail(200, "redis indisponivel ("+err.Error()+")")
+	}
+	if blocked {
+		return v.fail(107, "cliente bloqueado pelo usuario (C.4.2.2)")
+	}
+	authorized, err := h.store.IsAuthorized(claims.Sub)
+	if err != nil {
+		return v.fail(200, "redis indisponivel ("+err.Error()+")")
+	}
+	if !authorized {
+		return v.fail(107, "cliente fora de clients:authorized (E6): autorizacao do espectador ausente ou removida")
 	}
 	// token com class local-associated: dispensa o bind-token (D8)
 	if v.Class == classAssociated || rt.Auth == authToken {

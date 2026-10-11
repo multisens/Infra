@@ -186,19 +186,3 @@ func chooseInterface(host, forced string, ifaces []ifaceInfo, defaultRoute func(
 	return choice{}, netDown{fmt.Errorf("nenhuma interface para anunciar: %s, e nao ha rota padrao com IPv4 "+
 		"(interfaces com IPv4: %s). Defina SSDP_INTERFACE", why, describe(ifaces))}
 }
-
-// localIP: o "IP local" da cadeia de config.go — o IPv4 da interface da rota
-// padrao, senao o da primeira interface. Recalculado a cada tentativa, porque
-// muda com a rede. Sem interface, 127.0.0.1 (a escolha da interface entao
-// falha por falta de rede, e nada e anunciado).
-func localIP(ifaces []ifaceInfo, defaultRoute func() string) string {
-	if r := defaultRoute(); r != "" {
-		if ifi := find(ifaces, r); ifi != nil {
-			return ifi.IPv4s[0]
-		}
-	}
-	if len(ifaces) > 0 {
-		return ifaces[0].IPv4s[0]
-	}
-	return "127.0.0.1"
-}

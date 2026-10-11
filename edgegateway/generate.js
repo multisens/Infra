@@ -263,11 +263,11 @@ function pluginConfig(t, surface) {
   // PENDENTE (Joel): lacuna L2 — serviceContextId constante do tv3ws
   // (tv3ws/src/core.ts): nas rotas /tv3/{serviceContextId}/... o plugin
   // trata este valor (e current-service) como o servico corrente.
-  // PENDENTE (Joel): POST /tv3/{serviceContextId}/users nao existe na norma
-  // (so POST /tv3/current-service/users, C.6.14.1, bind-token shall), mas o
-  // tv3ws a atende com o MESMO handler. Esta como token+bind (e a regra L2
-  // acima) para nao abrir um atalho sem bind-token; falta decidir se a rota
-  // fica ou sai da tabela.
+  // A4 (decisao do Luis em 11/10): POST /tv3/{serviceContextId}/users, que nao
+  // existe na norma (so POST /tv3/current-service/users, C.6.14.1, bind-token
+  // shall), saiu do routes.json: a borda responde 100 a ela. Ate 11/10 ficava
+  // como token+bind (com a regra L2 acima) para nao abrir um atalho sem
+  // bind-token ao MESMO handler do tv3ws.
   if (t.auth && t.auth.current_service_context_id) c.current_service_context_id = t.auth.current_service_context_id;
   // Cabecalhos que o plugin devolve em Access-Control-Allow-Headers no
   // OPTIONS que nao e preflight (C.4.1.9.3): os mesmos do modulo CORS.

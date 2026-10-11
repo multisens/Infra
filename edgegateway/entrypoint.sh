@@ -7,9 +7,11 @@
 # SSDP_ENABLED=true, que o docker-compose.ssdp.yml liga junto com a rede do
 # host (so Linux nativo). A vigia abaixo vale para ele como para os outros: se
 # sair, a borda inteira cai (morre-inteiro). Desde a decisao do Luis em 10/10,
-# ele so sai por erro de configuracao do anuncio (porta invalida, SSDP_INTERFACE
-# que nao existe, UDP 1900 presa sem SO_REUSEADDR, erro que nao e de rede); na
-# falta de rede ele fica de pe, sem anunciar, e tenta de novo (ssdp/main.go).
+# ele so sai por erro de configuracao do anuncio (SSDP_ADVERTISE_HOST ausente
+# ou vazio — obrigatorio desde a B2, decisao do Luis em 11/10 —, porta
+# invalida, SSDP_INTERFACE que nao existe, UDP 1900 presa sem SO_REUSEADDR,
+# erro que nao e de rede); na falta de rede ele fica de pe, sem anunciar, e
+# tenta de novo (ssdp/main.go).
 set -u
 
 VARIANT="${EDGE_VARIANT:-linux}"

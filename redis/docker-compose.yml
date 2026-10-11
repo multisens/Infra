@@ -1,7 +1,9 @@
 services:
   # Redis consolidado (fase 3): server + biblioteca de funcoes (P4) + carga
   # inicial no entrypoint + redis-commander embutido como processo auxiliar
-  # de debug. Healthcheck so fica saudavel APOS a biblioteca de funcoes
+  # de debug. Morre-inteiro (C2, decisao do Luis em 11/10): se o redis-server
+  # ou o commander cair, o container cai e o restart o traz de volta.
+  # Healthcheck so fica saudavel APOS a biblioteca de funcoes
   # carregar NESTA partida e a carga estar aplicada (marca
   # /tmp/tv30-redis-pronto, que o entrypoint cria, e chave seed:done) — quem
   # precisa do estado semeado e das funcoes depende de service_healthy.

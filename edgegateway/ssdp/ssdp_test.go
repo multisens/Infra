@@ -24,34 +24,47 @@ func TestNormalizeHost(t *testing.T) {
 	}
 }
 
+// B2 (decisao do Luis em 11/10): o host do anuncio e o SSDP_ADVERTISE_HOST,
+// obrigatorio. Ausente, vazio ou sem host e erro; o SERVER_URL nao e mais
+// fonte do host (nem como reserva), e o IP local tambem nao.
 func TestResolveEndpoint(t *testing.T) {
-	local := func() string { return "10.0.0.9" }
-	e, err := resolveEndpoint(env(map[string]string{"SSDP_ADVERTISE_HOST": "192.168.2.7", "SERVER_URL": "x"}), local)
-	if err != nil || e.Host != "192.168.2.7" || e.Source != "SSDP_ADVERTISE_HOST" || e.HTTPPort != 44642 || e.HTTPSPort != 44643 {
+	e, err := resolveEndpoint(env(map[string]string{"SSDP_ADVERTISE_HOST": "192.168.2.7", "SERVER_URL": "x"}))
+	if err != nil || e.Host != "192.168.2.7" || e.HTTPPort != 44642 || e.HTTPSPort != 44643 {
 		t.Fatalf("advertise: %+v %v", e, err)
 	}
 	if e.location() != "http://192.168.2.7:44642/manifest" {
 		t.Fatalf("location = %s", e.location())
 	}
-	e, _ = resolveEndpoint(env(map[string]string{"SERVER_URL": "localhost"}), local)
-	if e.Host != "localhost" || e.Source != "SERVER_URL" {
-		t.Fatalf("server_url: %+v", e)
+	e, err = resolveEndpoint(env(map[string]string{"SSDP_ADVERTISE_HOST": " http://tv.local:8080/x "}))
+	if err != nil || e.Host != "tv.local" {
+		t.Fatalf("advertise com esquema e porta: %+v %v", e, err)
 	}
-	e, _ = resolveEndpoint(env(nil), local)
-	if e.Host != "10.0.0.9" || e.Source != "local-ip" {
-		t.Fatalf("local-ip: %+v", e)
+	for name, m := range map[string]map[string]string{
+		"ausente, so SERVER_URL": {"SERVER_URL": "192.168.2.7"},
+		"ausente, nada":          nil,
+		"vazio":                  {"SSDP_ADVERTISE_HOST": "", "SERVER_URL": "192.168.2.7"},
+		"so espacos":             {"SSDP_ADVERTISE_HOST": "   "},
+	} {
+		if e, err := resolveEndpoint(env(m)); err == nil || !strings.Contains(err.Error(), "SSDP_ADVERTISE_HOST ausente ou vazio") {
+			t.Errorf("%s: esperado erro de SSDP_ADVERTISE_HOST obrigatorio, veio %+v %v", name, e, err)
+		}
 	}
-	if _, err := resolveEndpoint(env(map[string]string{"EDGE_HTTP_PORT": "abc"}), local); err == nil {
+	for _, v := range []string{"http://", "http://:44642", "[", ":44642"} {
+		if e, err := resolveEndpoint(env(map[string]string{"SSDP_ADVERTISE_HOST": v})); err == nil || !strings.Contains(err.Error(), "sem host") {
+			t.Errorf("SSDP_ADVERTISE_HOST=%q: esperado erro 'sem host', veio %+v %v", v, e, err)
+		}
+	}
+	if _, err := resolveEndpoint(env(map[string]string{"SSDP_ADVERTISE_HOST": "192.168.2.7", "EDGE_HTTP_PORT": "abc"})); err == nil {
 		t.Fatal("porta invalida deveria falhar")
 	}
 }
 
 func TestWarnings(t *testing.T) {
-	w := warnings(endpoint{"localhost", "SERVER_URL", 44642, 44643})
-	if len(w) != 2 || !strings.Contains(w[0], "loopback") || !strings.Contains(w[1], "SEM TLS") {
+	w := warnings(endpoint{"localhost", 44642, 44643})
+	if len(w) != 2 || !strings.Contains(w[0], "SSDP_ADVERTISE_HOST='localhost' e de loopback") || !strings.Contains(w[1], "SEM TLS") {
 		t.Fatalf("loopback: %v", w)
 	}
-	w = warnings(endpoint{"192.168.2.7", "SSDP_ADVERTISE_HOST", 8080, 44643})
+	w = warnings(endpoint{"192.168.2.7", 8080, 44643})
 	if len(w) != 2 || !strings.Contains(w[0], "EDGE_HTTP_PORT=8080") {
 		t.Fatalf("porta: %v", w)
 	}
@@ -121,18 +134,6 @@ func TestCheckForced(t *testing.T) {
 	}
 	if err := checkForced("lo", lookup); err == nil || !strings.Contains(err.Error(), "loopback") || isNetDown(err) {
 		t.Fatalf("loopback deveria ser erro de configuracao: %v", err)
-	}
-}
-
-func TestLocalIP(t *testing.T) {
-	if ip := localIP(ifs, func() string { return "wlp2s0" }); ip != "192.168.2.7" {
-		t.Errorf("rota padrao: %s", ip)
-	}
-	if ip := localIP(ifs, func() string { return "" }); ip != "172.17.0.1" {
-		t.Errorf("sem rota, primeira interface: %s", ip)
-	}
-	if ip := localIP(nil, func() string { return "" }); ip != "127.0.0.1" {
-		t.Errorf("sem interface: %s", ip)
 	}
 }
 

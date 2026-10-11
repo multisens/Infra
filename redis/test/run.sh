@@ -16,8 +16,10 @@
 #             funcoes num Redis real; a auditoria tem de terminar vazia
 #   imagem    constroi a imagem do redis (infra/redis/Dockerfile) com tag de
 #             teste, sobe um container dela e confere: funcoes carregadas,
-#             carga inicial pelas funcoes, auditoria vazia, healthcheck, e
-#             que uma nova partida recarrega a biblioteca e nao refaz a carga
+#             carga inicial pelas funcoes (id do perfil em UUID, F-3),
+#             auditoria vazia, healthcheck, que uma nova partida recarrega a
+#             biblioteca e nao refaz a carga, e que a morte do commander
+#             derruba o container (morre-inteiro, C2)
 #   tudo      os quatro
 # Sai com codigo != 0 se algum falhar. No fim (trap) remove containers, rede
 # e a imagem de teste.
@@ -115,12 +117,16 @@ modo_imagem() {
   grep -q 'carga concluida' <<<"$logs" && echo "PASS  log: carga concluida" || { echo "FALHA log sem 'carga concluida'"; ok=0; }
   local n; n=$(docker exec "$C" redis-cli --raw SCARD users:index)
   [ "${n:-0}" -ge 1 ] && echo "PASS  carga inicial gravou $n perfil(is) pelas funcoes" || { echo "FALHA users:index vazio"; ok=0; }
-  local b; b=$(docker exec "$C" redis-cli --raw HGET user:c3167a18-5dc5 closedCaptioning)
+  # id do primeiro perfil da carga, lido do template (F-3, Luis 11/10: UUID)
+  local P; P=$(sed -n 's/^[[:space:]]*"id": "\([^"]*\)".*/\1/p' "$INFRA/user-files-template/userData.json" | head -1)
+  [[ "$P" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] && [ "$(docker exec "$C" redis-cli --raw SISMEMBER users:index "$P")" = 1 ] \
+    && echo "PASS  perfil da carga com id UUID em minusculas ($P), em users:index (F-3)" || { echo "FALHA id da carga '$P' (UUID em users:index?)"; ok=0; }
+  local b; b=$(docker exec "$C" redis-cli --raw HGET "user:$P" closedCaptioning)
   [ "$b" = false ] && echo "PASS  booleano da carga gravado como 'false' (antes: 'False')" || { echo "FALHA closedCaptioning da carga = '$b'"; ok=0; }
   local a; a=$(docker exec "$C" redis-cli FCALL_RO tv30_auditoria 0)
   [ -z "$a" ] && echo "PASS  auditoria vazia depois da carga" || { echo "FALHA auditoria: $a"; ok=0; }
   # nova partida: biblioteca recarregada (REPLACE), carga mantida
-  docker exec "$C" redis-cli FCALL tv30_perfil_ultimo_acesso 0 c3167a18-5dc5 4242 >/dev/null
+  docker exec "$C" redis-cli FCALL tv30_perfil_ultimo_acesso 0 "$P" 4242 >/dev/null
   docker restart "$C" >/dev/null
   for _ in $(seq 1 60); do
     s=$(docker inspect -f '{{.State.Health.Status}}' "$C" 2>/dev/null)
@@ -130,8 +136,24 @@ modo_imagem() {
   logs=$(docker logs --since 0 "$C" 2>&1)
   [ "$(grep -c 'biblioteca de funcoes tv30 carregada' <<<"$logs")" -ge 2 ] && echo "PASS  nova partida recarregou a biblioteca" || { echo "FALHA biblioteca nao recarregada na nova partida"; ok=0; }
   grep -q 'carga ja aplicada' <<<"$logs" && echo "PASS  nova partida manteve a carga (seed:done)" || { echo "FALHA nova partida sem 'carga ja aplicada'"; ok=0; }
-  [ "$(docker exec "$C" redis-cli --raw HGET user:c3167a18-5dc5 lastAccess)" = 4242 ] && echo "PASS  dado gravado antes da nova partida continua (AOF)" || { echo "FALHA lastAccess perdido"; ok=0; }
+  [ "$(docker exec "$C" redis-cli --raw HGET "user:$P" lastAccess)" = 4242 ] && echo "PASS  dado gravado antes da nova partida continua (AOF)" || { echo "FALHA lastAccess perdido"; ok=0; }
   [ "$s" = healthy ] && echo "PASS  saudavel de novo" || { echo "FALHA healthcheck depois da nova partida: $s"; ok=0; }
+  # C2 (decisao do Luis em 11/10): morre-inteiro tambem para o commander — a
+  # morte dele derruba o container (exit 1), com a mensagem no log
+  local cpid est
+  cpid=$(docker exec "$C" sh -c "ps -o pid,args | grep '[r]edis-commander' | awk '{print \$1}' | head -1")
+  if [ -n "$cpid" ]; then
+    docker exec "$C" kill -9 "$cpid"
+    for _ in $(seq 1 15); do
+      [ "$(docker inspect -f '{{.State.Running}}' "$C")" = false ] && break
+      sleep 1
+    done
+    est=$(docker inspect -f '{{.State.Running}} exit={{.State.ExitCode}}' "$C")
+    [ "$est" = "false exit=1" ] && echo "PASS  morte do commander derrubou o container (exit 1, C2)" || { echo "FALHA morte do commander: estado '$est' (esperado 'false exit=1')"; ok=0; }
+    grep -q "commander (pid $cpid) morreu" <<<"$(docker logs "$C" 2>&1)" && echo "PASS  log: commander morreu — derrubando o container inteiro" || { echo "FALHA log sem a morte do commander"; ok=0; }
+  else
+    echo "FALHA processo do commander nao encontrado no container"; ok=0
+  fi
   [ "$ok" = 1 ]
 }
 

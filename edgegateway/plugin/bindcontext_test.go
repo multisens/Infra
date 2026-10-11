@@ -563,6 +563,8 @@ func TestC68ComClienteRedis(t *testing.T) {
 		f.strs[keyCurrentService] = tSvc
 		f.hashes[keyAssociated] = map[string]string{tAssoc: tSCID}
 		f.hashes[keyCurrentSvcHash] = map[string]string{"serviceName": "Canal A", "serviceId": "7"}
+		// E6 (Luis, 11/10): os clientes dos tokens do teste estao autorizados
+		f.sets[keyAuthorized] = map[string]bool{"cli-1": true, "cli-2": true, "cli-3": true}
 	})
 	h := newTestHandler(t, modeEnforce, nil, nil)
 	h.store = &redisStore{c: newRedisClient(f.ln.Addr().String(), time.Second)}

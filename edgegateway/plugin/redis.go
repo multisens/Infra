@@ -352,6 +352,9 @@ func (rc *redisClient) scanKeys(match string) ([]string, error) {
 // Chaves Redis da borda:
 //
 //	clients:blocked              SET    le    — tv3ws (auth-manager): clientes bloqueados (C.4.2.2)
+//	clients:authorized           SET    le    — tv3ws (auth-manager): clientes autorizados pelo
+//	                                    espectador (D-0510-4); a borda exige o sub do access
+//	                                    token aqui (E6, decisao do Luis em 11/10)
 //	origins:associated           HASH   le    — AoP (core.js): origem -> scid das apps associadas
 //	session:current-service-id   STRING le    — tv3ws (api/user/service.ts): servico corrente
 //	session:current-service      HASH   le    — tv3ws (core.ts): serviceName/serviceId do corrente (C.6.8.3)
@@ -360,6 +363,7 @@ func (rc *redisClient) scanKeys(match string) ([]string, error) {
 //	                                    tv30_bind_registra/tv30_bind_remove (P4)
 const (
 	keyBlocked        = "clients:blocked"
+	keyAuthorized     = "clients:authorized"
 	keyAssociated     = "origins:associated"
 	keyCurrentService = "session:current-service-id"
 	keyCurrentSvcHash = "session:current-service"
@@ -369,6 +373,7 @@ const (
 // store eh o que a borda precisa do armazenamento (interface p/ testes).
 type store interface {
 	IsBlocked(clientID string) (bool, error)
+	IsAuthorized(clientID string) (bool, error) // SISMEMBER clients:authorized (E6)
 	IsAssociatedOrigin(origin string) (bool, error)
 	CurrentServiceID() (string, error)
 	BindKeys(serviceID string) ([]string, error)
@@ -384,6 +389,11 @@ type redisStore struct{ c *redisClient }
 
 func (s *redisStore) IsBlocked(id string) (bool, error) {
 	n, err := s.c.intCmd("SISMEMBER", keyBlocked, id)
+	return n == 1, err
+}
+
+func (s *redisStore) IsAuthorized(id string) (bool, error) {
+	n, err := s.c.intCmd("SISMEMBER", keyAuthorized, id)
 	return n == 1, err
 }
 
