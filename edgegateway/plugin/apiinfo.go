@@ -95,8 +95,8 @@ func loadAPICatalog(raw interface{}) (*apiCatalog, error) {
 
 // C.6.7.8 (Tabela C.45). 101 "If <api-id> does not correspond to a valid API
 // identification string".
-// PENDENTE (Joel): id que esta na Tabela C.2 mas que o testbed nao implementa
-// tambem da 101 (provisorio) — a tabela nao preve outro erro, e nao ha
+// DECIDIDO (Luis, 11/10; E1): id que esta na Tabela C.2 mas que o testbed
+// nao implementa tambem da 101 — a tabela nao preve outro erro, e nao ha
 // "ultima versao suportada" de uma API que o receptor nao tem.
 func (h *authHandler) apiInfo(_ *http.Request, params map[string]string) edgeReply {
 	id := params["apiId"]
@@ -112,8 +112,8 @@ func (h *authHandler) apiInfo(_ *http.Request, params map[string]string) edgeRep
 // C.6.7.9 (Tabela C.46). Com subsystem: so as daquele subsistema;
 // desconhecido (inclusive vazio) => 101; ncl e nclua sao conhecidos e o
 // testbed nao implementa nenhuma API deles (lista vazia).
-// PENDENTE (Joel): sem subsystem a norma nao diz o que listar (o parametro eh
-// opcional na URL); provisorio: todas as APIs implementadas.
+// DECIDIDO (Luis, 11/10; E3): sem subsystem a norma nao diz o que listar (o
+// parametro eh opcional na URL); lista todas as APIs implementadas.
 func (h *authHandler) apiList(r *http.Request, _ map[string]string) edgeReply {
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
