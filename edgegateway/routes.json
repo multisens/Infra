@@ -292,16 +292,6 @@
       ]
     },
     {
-      "path": "/tv3/{serviceContextId}/users",
-      "method": "POST",
-      "auth": "token+bind",
-      "headers": [
-        "Authorization",
-        "Accept-Version",
-        "Content-Type"
-      ]
-    },
-    {
       "path": "/tv3/current-service/apps/{appid}/files",
       "method": "GET",
       "api": {

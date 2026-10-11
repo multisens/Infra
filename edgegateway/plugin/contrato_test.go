@@ -49,6 +49,51 @@ func TestContratoFuncoes(t *testing.T) {
 		t.Fatalf("remocao repetida: %d %v", n, err)
 	}
 
+	// E6 (decisao do Luis em 11/10): a borda le clients:authorized e
+	// clients:blocked como as funcoes do tv3ws os gravam (autorizar, bloquear,
+	// incluir de novo no boot)
+	const cid = "contrato-go-cliente"
+	must0 := func(nome string, args ...string) {
+		t.Helper()
+		if _, err := s.c.fcall(true, nome, args...); err != nil {
+			t.Fatalf("%s: %v", nome, err)
+		}
+	}
+	authz := func() (bool, bool) {
+		t.Helper()
+		a, err1 := s.IsAuthorized(cid)
+		b, err2 := s.IsBlocked(cid)
+		if err1 != nil || err2 != nil {
+			t.Fatalf("SISMEMBER: %v %v", err1, err2)
+		}
+		return a, b
+	}
+	if a, b := authz(); a || b {
+		t.Fatalf("antes: autorizado=%v bloqueado=%v", a, b)
+	}
+	must0("tv30_cliente_autoriza", cid, "class", "local-autonomous", "refreshToken", "rt")
+	if a, b := authz(); !a || b {
+		t.Fatalf("autorizado: autorizado=%v bloqueado=%v", a, b)
+	}
+	must0("tv30_cliente_bloqueia", cid)
+	if a, b := authz(); a || !b {
+		t.Fatalf("bloqueado: autorizado=%v bloqueado=%v", a, b)
+	}
+	if _, err := s.c.do("SREM", keyBlocked, cid); err != nil { // desbloqueio a mao, como o test-auth.sh
+		t.Fatal(err)
+	}
+	if a, b := authz(); a || b {
+		t.Fatalf("desbloqueado sem nova autorizacao: autorizado=%v bloqueado=%v", a, b)
+	}
+	must0("tv30_cliente_inclui_autorizado", cid)
+	if a, b := authz(); !a || b {
+		t.Fatalf("incluido de novo: autorizado=%v bloqueado=%v", a, b)
+	}
+	defer func() {
+		s.c.do("SREM", keyAuthorized, cid)
+		s.c.do("DEL", "client:"+cid)
+	}()
+
 	// API C.6.8 sobre o Redis real: servico corrente e origem associada
 	// gravados pelas funcoes (no lugar do tv3ws e do AoP)
 	must := func(nome string, args ...string) {
@@ -59,9 +104,14 @@ func TestContratoFuncoes(t *testing.T) {
 	}
 	must("tv30_sessao_servico_id", sid)
 	must("tv30_origem_registra", tAssoc, sid)
+	// o GET da C.6.8.3 pede access token: o cliente dele (cli-1, bindGet) tem
+	// de estar em clients:authorized (E6), como o tv3ws o deixa ao autorizar
+	must("tv30_cliente_autoriza", "cli-1", "class", "local-autonomous", "refreshToken", "rt")
 	defer func() {
 		s.c.fcall(true, "tv30_origem_remove", tAssoc)
 		s.c.fcall(true, "tv30_sessao_servico_id", "")
+		s.c.do("SREM", keyAuthorized, "cli-1")
+		s.c.do("DEL", "client:cli-1")
 	}()
 	h := newTestHandler(t, modeEnforce, nil, nil)
 	h.store = s

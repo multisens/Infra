@@ -23,17 +23,20 @@ Redis, funções e esquema são decisões de implementação deste testbed. A AB
 2. **Biblioteca de funções**, a cada partida, com `FUNCTION LOAD REPLACE`. O Redis guarda as funções no AOF; o `REPLACE` garante que vale a versão desta imagem, não a que ficou no volume. Se a biblioteca não carregar, o container encerra com a mensagem do Redis no log (sem ela, toda escrita dos serviços falharia com `ERR Function not found`).
 3. **Carga inicial**, só se não existir a chave `seed:done`: `redis-cli --pipe < /seed.resp`, que chama `tv30_perfil_grava` para cada perfil do `userData.json`. Se alguma chamada for recusada pelo esquema, `seed:done` não é gravado e o container fica *unhealthy*, com os erros no log. Na prática isso não acontece com a imagem do repositório: o build já aplicou a mesma carga e falharia antes.
 4. Marca `/tmp/tv30-redis-pronto` e commander na porta 18081, com login (D-L1).
+5. **Vigia (morre-inteiro, C2, decisão do Luís em 11/10).** O entrypoint confere os dois processos a cada segundo. Se o `redis-server` ou o commander cair, ele encerra o outro, espera o `redis-server` terminar de desligar (AOF gravado) e sai com 1; o `restart: unless-stopped` do compose traz o container de volta. Até 11/10 o commander era exceção (decisão V8/V9): a morte dele não derrubava o banco. No `docker stop`, o entrypoint para o commander e espera o `redis-server` desligar antes de sair.
 
 O healthcheck exige a marca e `seed:done`. A marca é apagada no começo de cada partida, então um `docker restart` só volta a ficar saudável depois de recarregar a biblioteca.
 
 Logs esperados:
 
 ```
-[redis] biblioteca de funcoes tv30 carregada (esquema versao 1)
+[redis] biblioteca de funcoes tv30 carregada (esquema versao 2)
 [redis] aplicando carga inicial pelas funcoes (redis-cli --pipe)...
 [redis] carga concluida (1 perfil(is))
 [redis] commander (debug) na porta 18081, com login (usuario: admin)
 ```
+
+Se um dos dois processos cair, o log termina com `[redis] commander (pid <n>) morreu — derrubando o container inteiro (morre-inteiro, C2)` (ou `redis-server`, no lugar de `commander`).
 
 ## As funções
 
@@ -66,8 +69,8 @@ Os adaptadores que fazem essas chamadas são `tv3ws/src/redis-funcoes.ts`, `aop/
 Dado fora do esquema volta como erro do Redis com prefixo próprio, a função, a chave, o campo e o motivo. Nesse caso, nada é gravado:
 
 ```
-$ docker exec redis redis-cli FCALL tv30_perfil_grava 0 u2 0 id u2 nickname X parentalControl False closedCaptioning false closedSigning false audioDescription false dialogEnhancement false voiceGuidance false
-TV30ESQUEMA tv30_perfil_grava: user:u2 campo parentalControl: deve ser "true" ou "false" (veio "False")
+$ docker exec redis redis-cli FCALL tv30_perfil_grava 0 0b6e3c1a-7f2d-4e8b-9a5c-3d1f2e4a6b8c 0 id 0b6e3c1a-7f2d-4e8b-9a5c-3d1f2e4a6b8c nickname X parentalControl False closedCaptioning false closedSigning false audioDescription false dialogEnhancement false voiceGuidance false
+TV30ESQUEMA tv30_perfil_grava: user:0b6e3c1a-7f2d-4e8b-9a5c-3d1f2e4a6b8c campo parentalControl: deve ser "true" ou "false" (veio "False")
 ```
 
 Para os serviços, a recusa é **defeito do serviço**. O erro sobe como qualquer falha do Redis: a rota HTTP responde `404 {"error":200}` e loga a mensagem; um handler MQTT só loga. Na borda, o `description` diz `escrita recusada pelo esquema do Redis (...)`.
@@ -77,10 +80,10 @@ Para os serviços, a recusa é **defeito do serviço**. O erro sobe como qualque
 Cada família tem `chave` (com partes como `{id}`), `tipo` (`string`, `hash`, `set`, `list`), `dono` e as regras:
 
 - `valor` (string), `campos` e `outrosCampos` (hash), `membros` (set), `itens` (list), `partes` (as partes da chave);
-- cada regra tem um `tipo`: `texto` (`min`/`max` em caracteres, `proibe`), `booleano` (`"true"`/`"false"`), `inteiro` (decimal sem zero à esquerda, `min`/`max`, `vazio`), `enum`, `idioma` (formato IETF RFC 5646), `origem` (como o navegador manda no `Origin`) e `json` (objeto com `campos`);
+- cada regra tem um `tipo`: `texto` (`min`/`max` em caracteres, `proibe`), `booleano` (`"true"`/`"false"`), `inteiro` (decimal sem zero à esquerda, `min`/`max`, `vazio`), `enum`, `idioma` (formato IETF RFC 5646), `uuid` (formato textual da IETF RFC 9562, em minúsculas; o id do perfil, F-3), `origem` (como o navegador manda no `Origin`) e `json` (objeto com `campos`);
 - `obrigatorio`, `obrigatorioSe` (`{campo, valor}`), `campoIgualAParte`, `camposProibidos`, `maxBytes`;
 - `ref` reaproveita uma regra de `definicoes` (por exemplo, `idPerfil`);
-- `fonte` diz de onde a regra veio, e `divergencias` registra onde o código não segue a norma (por exemplo, o id do perfil não é UUID).
+- `fonte` diz de onde a regra veio, e `divergencias` registra onde o código não segue a norma (por exemplo, o avatar gravado como SVG em linha, e não como caminho de arquivo). O id do perfil saiu das divergências em 11/10 (F-3, decisão do Luís): o esquema exige UUID, como a Tabela 7, e o `tv30_versao` passou a `2`.
 
 As invariantes entre chaves (`perfil-indexado`, `perfil-dependentes`, `clientes-disjuntos`, `autorizado-tem-registro`) são declaradas no `esquema.json` e implementadas no `funcoes.lua`. A biblioteca recusa rodar se as duas listas não baterem.
 
@@ -97,7 +100,7 @@ docker exec redis redis-cli FCALL_RO tv30_auditoria 0
 A auditoria percorre as chaves dos prefixos do alcance (`session:`, `users:`, `user:`, `clients:`, `client:`, `origins:`, `bind-context:`) e devolve uma entrada `[chave, familia, motivo]` por problema: chave sem família, tipo errado, campo fora da regra, membro inválido e cada invariante quebrada. **Vazia = tudo no esquema.** `scripts/test-auth.sh` exige a auditoria vazia no fim, e `scripts/test-consolidacao.sh` a mostra. Exemplo:
 
 ```
-1) 1) "user:abc-123"
+1) 1) "user:9d1e2f3a-4b5c-4d6e-8f70-81a2b3c4d5e6"
    2) "user:{id}"
    3) "id fora de users:index (invariante perfil-indexado)"
 ```
@@ -105,6 +108,8 @@ A auditoria percorre as chaves dos prefixos do alcance (`session:`, `users:`, `u
 Chaves fora do alcance não são auditadas: `remote-devices:*` e `remote-device:*` (espelho do tv3ws), `seed:done` e a chave de exemplo do template de componente (`foraDoAlcance` no `esquema.json`).
 
 **Volume de antes do P4:** dados gravados antes das funções podem estar fora do esquema. Os casos conhecidos são os booleanos `"False"`/`"True"` da carga antiga e hashes `user:{id}` só com `lastAccess`, de antes de 05/10. A auditoria os mostra. Para começar limpo, use `docker compose down -v`, que apaga o volume e com ele os perfis criados. A outra saída é corrigir as chaves apontadas.
+
+**Volume de antes da F-3 (11/10):** perfis gravados com o id antigo (`user_<epoch-ms>`, do AoP, e `c3167a18-5dc5`, da carga) ficam fora do esquema, sem compatibilidade (decisão do Luís). A auditoria aponta `users:index`, `user:{id}`, `user:{id}:consent` e `user:{id}:broadcaster-attrs:*` de cada um (`{id} da chave: deve ser UUID ...`). Com esse id, `tv30_perfil_grava` e `tv30_atributos_emissora` recusam a escrita; `tv30_perfil_ultimo_acesso` ainda grava o `lastAccess` (num registro que já existe, a função confere só o campo escrito) e `tv30_perfil_remove` ainda remove (não confere o id). Como a carga só roda em banco vazio (`seed:done`), um volume antigo também não recebe o perfil novo da carga (`c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10`). Para começar limpo, recrie o volume, como acima.
 
 ## Gravar à mão para depurar
 
@@ -138,6 +143,6 @@ bash infra/redis/test/run.sh tudo        # ou: funcoes | estatico | contrato | i
 | `funcoes` | Biblioteca num `redis:7-alpine` descartável. Cobre aceitação; **recusa de cada regra**, com os casos gerados a partir do `esquema.json` e conferência de que nada foi gravado; valores de fronteira; atomicidade (tipo errado ou membro inválido no fim não deixam gravação parcial); invariantes; e auditoria, que aponta cada tipo de problema gravado à mão e volta vazia. |
 | `estatico` | Nenhum serviço grava direto numa família do alcance. Cobre tv3ws e AoP (cadeias de comandos no cliente Redis fora do adaptador), plugin Go (texto de comando de escrita) e carga inicial (Python). O mesmo teste roda no `npm test` do tv3ws e do AoP e no `go test` da borda (`escritas_test.go`, também no build da imagem dela). |
 | `contrato` | Os adaptadores e os gestores de verdade (auth-manager do tv3ws, gestor de perfis e `app-hosts` do AoP, `redisStore` da borda) contra as funções num Redis real. Termina com a auditoria vazia. |
-| `imagem` | Build da imagem (com a conferência do `confere-imagem.sh`), healthcheck igual ao do compose, carga pelas funções, booleanos `"false"`, auditoria vazia e recarga da biblioteca numa nova partida. |
+| `imagem` | Build da imagem (com a conferência do `confere-imagem.sh`), healthcheck igual ao do compose, carga pelas funções (id do perfil em UUID, lido do template), booleanos `"false"`, auditoria vazia, recarga da biblioteca numa nova partida e o morre-inteiro do commander (C2: a morte dele derruba o container com exit 1). |
 
 Os containers, a rede e a imagem de teste têm nomes próprios (`tv30-redis-teste-<pid>`) e são removidos no fim. A stack não é tocada.

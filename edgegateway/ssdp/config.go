@@ -1,16 +1,26 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
-// Endereco que a descoberta SSDP divulga (C.3.4). Mesma regra do
-// tv3ws/src/ssdp-config.ts, que monta o /manifest: LOCATION e Server-BaseURL
-// tem de sair do mesmo host. L6 decidida = opcao A (Luis, 09/10): quem
-// anuncia e a borda, em rede do host (so Linux nativo).
+// Endereco que a descoberta SSDP divulga (C.3.4). LOCATION e Server-BaseURL
+// (o /manifest, montado pelo tv3ws/src/ssdp-config.ts) tem de sair do mesmo
+// host. L6 decidida = opcao A (Luis, 09/10): quem anuncia e a borda, em rede
+// do host (so Linux nativo).
+//
+// B2 (decisao do Luis em 11/10): com o anuncio ligado (SSDP_ENABLED=true), o
+// host e o SSDP_ADVERTISE_HOST, OBRIGATORIO — ausente, vazio ou sem host e
+// erro de configuracao (o anunciante sai com 1 e a borda cai inteira, como os
+// outros erros de configuracao da C8). O SERVER_URL e o IP local deixaram de
+// ser fonte do host do anuncio da borda. O tv3ws manteve a cadeia dele
+// (SSDP_ADVERTISE_HOST > SERVER_URL > IP local; o anunciante Node do dev-host
+// nao mudou) e le os mesmos arquivos de ambiente que a borda: com o
+// SSDP_ADVERTISE_HOST definido, os dois saem do mesmo valor.
 
 const (
 	ssdpST              = "urn:schemas-sbtvd-org:service:TV3.0WebServices:1"
@@ -20,8 +30,7 @@ const (
 )
 
 type endpoint struct {
-	Host      string
-	Source    string // SSDP_ADVERTISE_HOST | SERVER_URL | local-ip
+	Host      string // de SSDP_ADVERTISE_HOST (B2)
 	HTTPPort  int
 	HTTPSPort int
 }
@@ -61,9 +70,9 @@ func parsePort(name, raw string, fallback int) (int, error) {
 	return n, nil
 }
 
-// resolveEndpoint: <host> = SSDP_ADVERTISE_HOST, senao SERVER_URL, senao o IP
-// da interface que anuncia (B2 segue aberta: mesma cadeia do tv3ws).
-func resolveEndpoint(getenv func(string) string, localIP func() string) (endpoint, error) {
+// resolveEndpoint: <host> = SSDP_ADVERTISE_HOST, obrigatorio (B2, decisao do
+// Luis em 11/10). Conferido uma vez, na partida: erro aqui e de configuracao.
+func resolveEndpoint(getenv func(string) string) (endpoint, error) {
 	httpPort, err := parsePort("EDGE_HTTP_PORT", getenv("EDGE_HTTP_PORT"), defaultEdgeHTTPPort)
 	if err != nil {
 		return endpoint{}, err
@@ -72,13 +81,18 @@ func resolveEndpoint(getenv func(string) string, localIP func() string) (endpoin
 	if err != nil {
 		return endpoint{}, err
 	}
-	if h := normalizeHost(getenv("SSDP_ADVERTISE_HOST")); h != "" {
-		return endpoint{h, "SSDP_ADVERTISE_HOST", httpPort, httpsPort}, nil
+	raw := getenv("SSDP_ADVERTISE_HOST")
+	if strings.TrimSpace(raw) == "" {
+		return endpoint{}, errors.New("SSDP_ADVERTISE_HOST ausente ou vazio: com SSDP_ENABLED=true ele e " +
+			"obrigatorio (B2). Defina no .env da raiz o IP (ou nome) desta maquina na rede, por exemplo " +
+			"SSDP_ADVERTISE_HOST=192.168.0.23")
 	}
-	if h := normalizeHost(getenv("SERVER_URL")); h != "" {
-		return endpoint{h, "SERVER_URL", httpPort, httpsPort}, nil
+	h := normalizeHost(raw)
+	if h == "" {
+		return endpoint{}, fmt.Errorf("SSDP_ADVERTISE_HOST=%q sem host (esperado IP ou nome, com ou sem "+
+			"esquema e porta)", raw)
 	}
-	return endpoint{localIP(), "local-ip", httpPort, httpsPort}, nil
+	return endpoint{h, httpPort, httpsPort}, nil
 }
 
 func (e endpoint) location() string   { return fmt.Sprintf("http://%s:%d/manifest", e.Host, e.HTTPPort) }
@@ -97,10 +111,11 @@ func isLoopbackHost(host string) bool {
 func warnings(e endpoint) []string {
 	var out []string
 	if isLoopbackHost(e.Host) {
-		// PENDENTE (Joel): B2 — padrao do host anunciado quando nada e configurado.
-		out = append(out, fmt.Sprintf("host anunciado '%s' (via %s) e de loopback: um cliente em outro "+
+		// A B2 (Luis, 11/10) fez do SSDP_ADVERTISE_HOST ausente ou vazio um erro;
+		// um valor de loopback configurado de proposito segue so com aviso.
+		out = append(out, fmt.Sprintf("SSDP_ADVERTISE_HOST='%s' e de loopback: um cliente em outro "+
 			"equipamento recebe o anuncio mas nao alcanca o LOCATION nem o Server-BaseURL (C.3.4). "+
-			"Defina SSDP_ADVERTISE_HOST no .env da raiz com o IP do equipamento na rede.", e.Host, e.Source))
+			"Defina no .env da raiz o IP do equipamento na rede.", e.Host))
 	}
 	if e.HTTPPort != defaultEdgeHTTPPort {
 		out = append(out, fmt.Sprintf("EDGE_HTTP_PORT=%d: a C.3.4 fixa %d no Server-BaseURL; "+

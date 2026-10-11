@@ -53,6 +53,36 @@ test('rotas sem restricao de classe ficam nas duas; /health e /manifest nas duas
   }
 });
 
+// A4 (decisao do Luis em 11/10): POST /tv3/{serviceContextId}/users, fora da
+// Tabela C.2 (a norma so define POST /tv3/current-service/users, C.6.14.1),
+// saiu da tabela: nenhuma superficie a tem, e a borda responde 100. As outras
+// rotas /tv3/{serviceContextId}/users/{userid} (GET e POST, C.6.14.2/C.6.14.5)
+// continuam. Contagens (P1.9 + A4): 24 rotas na externa e 26 na interna; as
+// APIs listadas na C.6.7.8/C.6.7.9 nao mudam (a rota nao tinha campo "api").
+test('A4: POST /tv3/{serviceContextId}/users fora da tabela; contagens por superficie', () => {
+  const t = real();
+  assert.ok(!t.routes.some(r => key(r) === 'POST /tv3/{serviceContextId}/users'), 'rota retirada (A4)');
+  assert.ok(t.routes.some(r => key(r) === 'POST /tv3/current-service/users'), 'a da norma (C.6.14.1) fica');
+  for (const k of ['GET /tv3/{serviceContextId}/users/{userid}', 'POST /tv3/{serviceContextId}/users/{userid}']) {
+    assert.ok(t.routes.some(r => key(r) === k), k);
+  }
+  assert.equal(g.routesOf(t, 'external').length, 24);
+  assert.equal(g.routesOf(t, 'internal').length, 26);
+  const files = g.generate(t);
+  for (const [name, cfg] of Object.entries(files)) {
+    if (name.startsWith('krakend-')) {
+      assert.ok(!cfg.endpoints.some(e => e.method === 'POST' && e.endpoint === '/tv3/{serviceContextId}/users'), `${name}: endpoint`);
+      const plugin = cfg.extra_config['plugin/http-server']['tv30-auth'];
+      assert.ok(!plugin.routes.some(r => r.method === 'POST' && r.path === '/tv3/{serviceContextId}/users'), `${name}: plugin`);
+    } else {
+      assert.ok(!cfg.paths['/tv3/{serviceContextId}/users'], `${name}: OpenAPI`);
+    }
+  }
+  const apis = s => files[`krakend-${s}.linux.json`].extra_config['plugin/http-server']['tv30-auth'].apis.length;
+  assert.equal(apis('internal'), 20);
+  assert.equal(apis('external'), 18);
+});
+
 test('POST e DELETE /tv3/bind-context (so local-associated) ficam so na interna', () => {
   const t = real();
   const fora = t.routes.filter(r => !g.surfacesOf(r).includes('external'));

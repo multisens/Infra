@@ -98,8 +98,8 @@ end
 -- ------------------------------------------------------ preparo do esquema --
 
 -- "{id}" no meio da chave casa [^:]+; a ultima parte casa o resto, a nao ser
--- que a regra dela proiba ':' (como idPerfil): assim user:{id} nao engole
--- user:{id}:consent.
+-- que a regra dela nao admita ':' (proibe ':', ou o tipo uuid do idPerfil):
+-- assim user:{id} nao engole user:{id}:consent.
 local function compila(tpl, partes)
   local pat, nomes, pos = '^', {}, 1
   while true do
@@ -110,7 +110,7 @@ local function compila(tpl, partes)
     end
     pat = pat .. escapaPadrao(string.sub(tpl, pos, a - 1))
     local regra = partes and partes[nome]
-    local semDoisPontos = regra and regra.proibe and string.find(regra.proibe, ':', 1, true)
+    local semDoisPontos = regra and (regra.tipo == 'uuid' or (regra.proibe and string.find(regra.proibe, ':', 1, true)))
     if b == #tpl and not semDoisPontos then pat = pat .. '(.+)' else pat = pat .. '([^:]+)' end
     nomes[#nomes + 1] = nome
     pos = b + 1
@@ -204,6 +204,20 @@ local function idiomaOk(v)
   return i > 0
 end
 
+-- F-3 (decisao do Luis em 11/10): id do perfil em UUID, no formato textual da
+-- RFC 9562 (8-4-4-4-12 digitos hexadecimais), em minusculas. Literal (e nao
+-- string.rep): na carga da biblioteca o Redis nao expoe as bibliotecas.
+local UUID_FORMATO = '^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$'
+
+local function motivoUuid(v)
+  if not string.find(v, UUID_FORMATO) then
+    return 'deve ser UUID no formato da RFC 9562 (8-4-4-4-12 digitos hexadecimais, como ' ..
+      'c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10; veio ' .. amostra(v) .. ')'
+  end
+  if string.find(v, '%u') then return 'UUID deve estar em minusculas (veio ' .. amostra(v) .. ')' end
+  return nil
+end
+
 local function motivoOrigem(v)
   local esq, resto = string.match(v, '^(https?)://(.+)$')
   if not esq then return 'deve comecar por http:// ou https://' end
@@ -268,6 +282,8 @@ motivo = function(regra, v, emJson)
   elseif t == 'enum' then
     for _, x in ipairs(regra.valores) do if v == x then return nil end end
     return 'deve ser um de ' .. table.concat(regra.valores, ', ') .. ' (veio ' .. amostra(v) .. ')'
+  elseif t == 'uuid' then
+    return motivoUuid(v)
   elseif t == 'idioma' then
     if not idiomaOk(v) then return 'deve ser etiqueta de idioma IETF RFC 5646, como pt-BR (veio ' .. amostra(v) .. ')' end
   elseif t == 'origem' then

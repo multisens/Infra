@@ -56,8 +56,14 @@ const familia = nome => {
 };
 
 // ----------------------------------------------------------------- dados --
+// ids de perfil: UUID em minusculas (F-3, decisao do Luis em 11/10)
+const P1 = '0b6e3c1a-7f2d-4e8b-9a5c-3d1f2e4a6b8c';
+const P2 = '5a9d2f4e-1c3b-4d6a-8e7f-9b0c1d2e3f4a';
+const FANTASMA = 'f0f0f0f0-0000-4000-8000-000000000001';
+const ORFAO = 'f0f0f0f0-0000-4000-8000-000000000002';
+const SEM_HASH = 'f0f0f0f0-0000-4000-8000-000000000003';
 const PERFIL = {
-    id: 'p1', nickname: 'Viewer 1', avatar: '<svg viewBox="0 0 1 1"/>',
+    id: P1, nickname: 'Viewer 1', avatar: '<svg viewBox="0 0 1 1"/>',
     parentalControl: 'true', maxContentRating: '12',
     audioLanguage: 'pt-BR', closedCaptioningLanguage: 'pt-BR', userInterfaceLanguage: 'en',
     closedCaptioning: 'true', closedSigning: 'true', closedSigningSide: 'right', closedSigningWidth: '28',
@@ -65,7 +71,7 @@ const PERFIL = {
 };
 // perfil minimo: so os obrigatorios (condicoes falsas)
 const PERFIL_MIN = {
-    id: 'p1', nickname: 'Viewer 1', parentalControl: 'false', closedCaptioning: 'false', closedSigning: 'false',
+    id: P1, nickname: 'Viewer 1', parentalControl: 'false', closedCaptioning: 'false', closedSigning: 'false',
     audioDescription: 'false', dialogEnhancement: 'false', voiceGuidance: 'false',
 };
 const perfilArgs = (id, servicos, h) => [id, String(servicos.length), ...servicos, ...plano(h)];
@@ -158,6 +164,20 @@ function violacoes(regra, emJson = false) {
         case 'idioma':
             for (const v of ['pt_BR', 'p', '', 'pt-', 'pt--BR', 'português', '123', 'pt-abcdefghi']) out.push([v, 'RFC 5646', `"${v}"`]);
             break;
+        case 'uuid': {
+            // F-3 (Luis, 11/10): formato da RFC 9562, minusculas, sem os ids antigos
+            const ok = 'c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10';
+            for (const [v, d] of [
+                ['', 'vazio'], ['c3167a18-5dc5', 'id antigo da carga'], ['user_1760000000000', 'id antigo do AoP'],
+                ['p1', 'curto'], [ok.slice(0, -1), 'um digito a menos'], [ok + '0', 'um digito a mais'],
+                [ok.replace(/-/g, ''), 'sem hifens'], [`{${ok}}`, 'entre chaves'], [`urn:uuid:${ok}`, 'forma URN'],
+                ['g' + ok.slice(1), 'digito nao hexadecimal'], [ok.replace(/-/g, '_'), 'separador errado'],
+                [` ${ok}`, 'espaco antes'], [`${ok} `, 'espaco depois'], ['c3167a185-dc5-4a6e-9b1d-3f2a7c5e8d10', 'grupos 9-3'],
+            ]) out.push([v, 'RFC 9562', d]);
+            out.push([ok.toUpperCase(), 'minusculas', 'maiusculas']);
+            out.push(['C' + ok.slice(1), 'minusculas', 'uma maiuscula']);
+            break;
+        }
         case 'origem':
             for (const [v, m] of [
                 ['ftp://x.example', 'http:// ou https://'], ['x.example', 'http:// ou https://'],
@@ -211,6 +231,11 @@ function aceitacoes(regra) {
         }
         case 'enum': return regra.valores.slice();
         case 'idioma': return ['pt-BR', 'en', 'pt', 'zh-Hant-TW', 'x-tv30', 'i-default', 'es-419'];
+        // a carga inicial, um crypto.randomUUID() (o que o AoP gera), exemplos
+        // de outras versoes (1 e 7) e os UUID nulo e maximo: versao e variante
+        // nao sao conferidas
+        case 'uuid': return ['c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10', require('crypto').randomUUID(), 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6',
+            '017f22e2-79b0-7cc3-98c4-dc0c0c07398f', '00000000-0000-0000-0000-000000000000', 'ffffffff-ffff-ffff-ffff-ffffffffffff'];
         case 'origem': return ['http://users-test.apps.localhost:8080', 'http://a.apps.localhost', 'https://x.example', 'https://x.example:8443', 'http://[::1]:8099', 'http://127.0.0.1:65535'];
         case 'json': return ['HS256', 'HS512', 'RS256', 'RS512'].map(alg => JSON.stringify({ ...jsonValido(regra), alg }));
         default: throw new Error(`tipo de regra sem gerador de aceitacoes neste teste: ${regra.tipo}`);
@@ -225,7 +250,7 @@ function jsonValido(regra) {
 // ------------------------------------------- montagem das chamadas por slot --
 // Para cada familia: os "slots" (lugares onde uma regra se aplica) e como
 // montar uma chamada valida com o valor do slot trocado. prep roda antes.
-const indexaP1 = () => fcall('tv30_perfil_grava', ...perfilArgs('p1', [], PERFIL));
+const indexaP1 = () => fcall('tv30_perfil_grava', ...perfilArgs(P1, [], PERFIL));
 const SLOTS = {
     'session:current-user': [{ rotulo: 'valor', regra: f => f.valor, chamada: v => ['tv30_sessao_usuario', [v]], trecho: 'valor:' }],
     'session:current-service-id': [{ rotulo: 'valor', regra: f => f.valor, chamada: v => ['tv30_sessao_servico_id', [v]], trecho: 'valor:' }],
@@ -235,18 +260,18 @@ const SLOTS = {
         { rotulo: '{id}', regra: f => f.partes.id, chamada: v => ['tv30_perfil_grava', perfilArgs(v, [], { ...PERFIL, id: v })], trecho: '{id} da chave:' },
         // o campo id tem a mesma regra da parte {id} (slot acima) e tem de ser
         // igual a ela (teste proprio abaixo): fica fora dos slots por campo
-        ...campoSlots(campo => v => ['tv30_perfil_grava', perfilArgs('p1', [], { ...PERFIL, [campo]: v })], ['id']),
+        ...campoSlots(campo => v => ['tv30_perfil_grava', perfilArgs(P1, [], { ...PERFIL, [campo]: v })], ['id']),
     ],
     'user:{id}:consent': [
-        { rotulo: 'membro', regra: f => f.membros, chamada: v => ['tv30_perfil_grava', perfilArgs('p1', ['urn:tv30:service:ok', v], PERFIL)], trecho: 'membro' },
+        { rotulo: 'membro', regra: f => f.membros, chamada: v => ['tv30_perfil_grava', perfilArgs(P1, ['urn:tv30:service:ok', v], PERFIL)], trecho: 'membro' },
         { rotulo: '{id}', regra: f => f.partes.id, chamada: v => ['tv30_perfil_grava', perfilArgs(v, ['urn:x'], { ...PERFIL, id: v })], trecho: '{id} da chave:' },
     ],
     'user:{id}:broadcaster-attrs:{scid}': [
         // o perfil do valor tem de existir para a aceitacao; com valor invalido a
         // criacao falha e a recusa vem da parte {id} da chave
         { rotulo: '{id}', regra: f => f.partes.id, prep: v => fcall('tv30_perfil_grava', ...perfilArgs(v, [], { ...PERFIL, id: v })).catch(() => undefined), chamada: v => ['tv30_atributos_emissora', [v, 'urn:s:1', 'cor', 'azul']], trecho: '{id} da chave:' },
-        { rotulo: '{scid}', regra: f => f.partes.scid, prep: indexaP1, chamada: v => ['tv30_atributos_emissora', ['p1', v, 'cor', 'azul']], trecho: '{scid} da chave:' },
-        { rotulo: 'nome de campo', regra: f => f.outrosCampos.nome, prep: indexaP1, chamada: v => ['tv30_atributos_emissora', ['p1', 'urn:s:1', v, 'azul']], trecho: 'nome de campo:' },
+        { rotulo: '{scid}', regra: f => f.partes.scid, prep: indexaP1, chamada: v => ['tv30_atributos_emissora', [P1, v, 'cor', 'azul']], trecho: '{scid} da chave:' },
+        { rotulo: 'nome de campo', regra: f => f.outrosCampos.nome, prep: indexaP1, chamada: v => ['tv30_atributos_emissora', [P1, 'urn:s:1', v, 'azul']], trecho: 'nome de campo:' },
         // outrosCampos.valor (texto, min 1): vazio na funcao REMOVE o campo, entao
         // nao ha valor gravavel que viole a regra; a auditoria cobre (abaixo)
     ],
@@ -314,8 +339,8 @@ test('FCALL_RO so roda as somente leitura; numkeys > 0 e argumentos errados sao 
     await assert.rejects(r('FCALL', 'tv30_sessao_usuario', 1, 'session:current-user', 'u'), e => e.message.startsWith(`${PREFIXO} tv30_sessao_usuario: chamada com numkeys 1`));
     await recusa('sem argumento', 'tv30_sessao_usuario', [], ['uso:']);
     await recusa('pares incompletos', 'tv30_sessao_servico', ['serviceContextId'], ['pares campo valor incompletos']);
-    await recusa('n invalido', 'tv30_perfil_grava', ['p1', 'x', 'id', 'p1'], ['n=']);
-    await recusa('n alem dos argumentos', 'tv30_perfil_grava', ['p1', '9', 'a'], ['n=']);
+    await recusa('n invalido', 'tv30_perfil_grava', [P1, 'x', 'id', P1], ['n=']);
+    await recusa('n alem dos argumentos', 'tv30_perfil_grava', [P1, '9', 'a'], ['n=']);
     await assert.rejects(fcallRo('tv30_auditoria', 'x'), new RegExp(`${PREFIXO} tv30_auditoria: uso:`));
 });
 
@@ -346,7 +371,7 @@ for (const fam of ESQ.familias) {
         if (fam.campos) {
             const [base, chamar] = {
                 'session:current-service': [SVC, h => ['tv30_sessao_servico', plano(h)]],
-                'user:{id}': [PERFIL, h => ['tv30_perfil_grava', perfilArgs('p1', [], h)]],
+                'user:{id}': [PERFIL, h => ['tv30_perfil_grava', perfilArgs(P1, [], h)]],
                 'client:{id}': [CLIENTE, h => ['tv30_cliente_grava', ['c1', ...plano(h)]]],
             }[fam.familia];
             for (const [campo, r0] of Object.entries(fam.campos)) {
@@ -379,31 +404,31 @@ for (const fam of ESQ.familias) {
 }
 
 test('user:{id}: condicionais falsos dispensam os campos; id do hash igual ao da chave', async () => {
-    await fcall('tv30_perfil_grava', ...perfilArgs('p1', [], PERFIL_MIN));
+    await fcall('tv30_perfil_grava', ...perfilArgs(P1, [], PERFIL_MIN));
     assert.deepEqual(await auditoria(), []);
-    await recusa('id diferente', 'tv30_perfil_grava', perfilArgs('p1', [], { ...PERFIL, id: 'p2' }), ['user:p1 campo id: deve ser igual ao {id} da chave']);
+    await recusa('id diferente', 'tv30_perfil_grava', perfilArgs(P1, [], { ...PERFIL, id: P2 }), [`user:${P1} campo id: deve ser igual ao {id} da chave`]);
 });
 
 test('broadcaster-attrs: atributos basicos proibidos e teto de 20 MB no resultado', async () => {
     const f = familia('user:{id}:broadcaster-attrs:{scid}');
     await indexaP1();
     for (const nome of f.camposProibidos.nomes) {
-        await recusa(`redefinir ${nome}`, 'tv30_atributos_emissora', ['p1', 'urn:s:1', nome, 'x'], [`campo ${nome}: atributo basico`]);
-        await recusa(`remover ${nome}`, 'tv30_atributos_emissora', ['p1', 'urn:s:1', nome, ''], [`campo ${nome}: atributo basico`]);
+        await recusa(`redefinir ${nome}`, 'tv30_atributos_emissora', [P1, 'urn:s:1', nome, 'x'], [`campo ${nome}: atributo basico`]);
+        await recusa(`remover ${nome}`, 'tv30_atributos_emissora', [P1, 'urn:s:1', nome, ''], [`campo ${nome}: atributo basico`]);
     }
     // exatamente no teto: aceito; um byte acima: recusado (soma de nomes e valores)
     const nome = 'grande';
-    await fcall('tv30_atributos_emissora', 'p1', 'urn:s:1', nome, 'x'.repeat(f.maxBytes - nome.length));
-    await recusa('acima do teto', 'tv30_atributos_emissora', ['p1', 'urn:s:1', 'b', 'y'], [`acima do teto de ${f.maxBytes}`]);
+    await fcall('tv30_atributos_emissora', P1, 'urn:s:1', nome, 'x'.repeat(f.maxBytes - nome.length));
+    await recusa('acima do teto', 'tv30_atributos_emissora', [P1, 'urn:s:1', 'b', 'y'], [`acima do teto de ${f.maxBytes}`]);
     // remover libera
-    assert.equal(await fcall('tv30_atributos_emissora', 'p1', 'urn:s:1', nome, '', 'b', 'y'), 2);
-    assert.deepEqual(await r('HGETALL', 'user:p1:broadcaster-attrs:urn:s:1'), ['b', 'y']);
+    assert.equal(await fcall('tv30_atributos_emissora', P1, 'urn:s:1', nome, '', 'b', 'y'), 2);
+    assert.deepEqual(await r('HGETALL', `user:${P1}:broadcaster-attrs:urn:s:1`), ['b', 'y']);
 });
 
 // ----------------------------------------------------- efeitos (aceitacao) --
 test('sessao: SET dos dois espelhos (vazio vale) e o hash regravado inteiro', async () => {
-    assert.equal(await fcall('tv30_sessao_usuario', 'p1'), 1);
-    assert.equal(await r('GET', 'session:current-user'), 'p1');
+    assert.equal(await fcall('tv30_sessao_usuario', P1), 1);
+    assert.equal(await r('GET', 'session:current-user'), P1);
     await fcall('tv30_sessao_usuario', '');
     assert.equal(await r('GET', 'session:current-user'), '');
     await fcall('tv30_sessao_servico_id', 'urn:tv30:service:users-test');
@@ -417,42 +442,67 @@ test('sessao: SET dos dois espelhos (vazio vale) e o hash regravado inteiro', as
 });
 
 test('perfil: grava os tres juntos, visibilidade acumula, ultimo acesso so em perfil indexado, remocao leva tudo', async () => {
-    await fcall('tv30_perfil_grava', ...perfilArgs('p1', ['urn:a', 'urn:b'], PERFIL_MIN));
-    await fcall('tv30_perfil_grava', ...perfilArgs('p1', ['urn:c'], { ...PERFIL_MIN, nickname: 'Outro' }));
-    assert.deepEqual((await r('SMEMBERS', 'user:p1:consent')).sort(), ['urn:a', 'urn:b', 'urn:c']);
-    assert.equal(await r('HGET', 'user:p1', 'nickname'), 'Outro');
-    assert.deepEqual(await r('SMEMBERS', 'users:index'), ['p1']);
+    await fcall('tv30_perfil_grava', ...perfilArgs(P1, ['urn:a', 'urn:b'], PERFIL_MIN));
+    await fcall('tv30_perfil_grava', ...perfilArgs(P1, ['urn:c'], { ...PERFIL_MIN, nickname: 'Outro' }));
+    assert.deepEqual((await r('SMEMBERS', `user:${P1}:consent`)).sort(), ['urn:a', 'urn:b', 'urn:c']);
+    assert.equal(await r('HGET', `user:${P1}`, 'nickname'), 'Outro');
+    assert.deepEqual(await r('SMEMBERS', 'users:index'), [P1]);
 
-    assert.equal(await fcall('tv30_perfil_ultimo_acesso', 'p1', '1234'), 1);
-    assert.equal(await r('HGET', 'user:p1', 'lastAccess'), '1234');
+    assert.equal(await fcall('tv30_perfil_ultimo_acesso', P1, '1234'), 1);
+    assert.equal(await r('HGET', `user:${P1}`, 'lastAccess'), '1234');
     assert.equal(await fcall('tv30_perfil_ultimo_acesso', 'desconhecido', '1'), 0);
+    assert.equal(await fcall('tv30_perfil_ultimo_acesso', P2, '1'), 0, 'UUID valido fora de users:index: 0');
     assert.equal(await fcall('tv30_perfil_ultimo_acesso', 'a:b', '1'), 0, 'id que nunca seria perfil: 0, sem erro (espelho de topico)');
     assert.equal(await r('EXISTS', 'user:desconhecido'), 0, 'sem hash fantasma');
-    await recusa('instante invalido', 'tv30_perfil_ultimo_acesso', ['p1', 'ontem'], ['campo lastAccess:']);
+    assert.equal(await r('EXISTS', `user:${P2}`), 0, 'sem hash fantasma');
+    await recusa('instante invalido', 'tv30_perfil_ultimo_acesso', [P1, 'ontem'], ['campo lastAccess:']);
 
-    await fcall('tv30_perfil_grava', ...perfilArgs('a*b', [], { ...PERFIL_MIN, id: 'a*b' }));
-    await fcall('tv30_atributos_emissora', 'p1', 'urn:tv30:service:x', 'cor', 'azul');
-    await fcall('tv30_atributos_emissora', 'p1', 'urn:y', 'k', 'v');
-    await fcall('tv30_atributos_emissora', 'a*b', 'urn:y', 'k', 'v');
+    await fcall('tv30_perfil_grava', ...perfilArgs(P2, [], { ...PERFIL_MIN, id: P2 }));
+    await fcall('tv30_atributos_emissora', P1, 'urn:tv30:service:x', 'cor', 'azul');
+    await fcall('tv30_atributos_emissora', P1, 'urn:y', 'k', 'v');
+    await fcall('tv30_atributos_emissora', P2, 'urn:y', 'k', 'v');
     assert.deepEqual(await auditoria(), []);
-    // 1 (SREM) + user:p1 + consent + 2 broadcaster-attrs
-    assert.equal(await fcall('tv30_perfil_remove', 'p1'), 5);
-    assert.deepEqual((await r('KEYS', 'user:p1*')), []);
-    // o glob do id e escapado: remover 'a*b' nao alcanca outro perfil, e vice-versa
-    await fcall('tv30_perfil_grava', ...perfilArgs('aXb', [], { ...PERFIL_MIN, id: 'aXb' }));
-    await fcall('tv30_atributos_emissora', 'aXb', 'urn:y', 'k', 'v');
-    assert.equal(await fcall('tv30_perfil_remove', 'a*b'), 3);
-    assert.equal(await r('EXISTS', 'user:aXb:broadcaster-attrs:urn:y'), 1);
+    // 1 (SREM) + user:{P1} + consent + 2 broadcaster-attrs
+    assert.equal(await fcall('tv30_perfil_remove', P1), 5);
+    assert.deepEqual((await r('KEYS', `user:${P1}*`)), []);
+    assert.equal(await r('EXISTS', `user:${P2}:broadcaster-attrs:urn:y`), 1, 'remover P1 nao alcanca P2');
+    // o glob do id e escapado: um id com curinga (nunca e UUID, entao nunca e
+    // perfil) que, sem escape, casaria com P2 nao alcanca P2
+    assert.equal(await fcall('tv30_perfil_remove', P2.slice(0, 9) + '*'), 0);
+    assert.equal(await r('EXISTS', `user:${P2}:broadcaster-attrs:urn:y`), 1);
+    assert.equal(await r('EXISTS', `user:${P2}`), 1);
+    assert.equal(await fcall('tv30_perfil_remove', P2), 3);
     assert.equal(await fcall('tv30_perfil_remove', 'nao-existe'), 0);
     assert.deepEqual(await auditoria(), []);
 });
 
+// F-3 (decisao do Luis em 11/10), sem compatibilidade: perfil com id antigo,
+// como fica num volume de antes, gravado a mao. A auditoria o aponta; gravar
+// perfil ou atributo de emissora com esse id e recusado; o ultimo acesso (so o
+// campo escrito num registro que ja existe) e a remocao (sem conferir o id)
+// ainda passam — o despejo continua limpando o volume antigo.
+test('id antigo (volume de antes da F-3): auditoria aponta, gravacao recusada, despejo remove', async () => {
+    const velho = 'user_1760000000000';
+    await r('SADD', 'users:index', velho);
+    await r('HSET', `user:${velho}`, ...plano({ ...PERFIL_MIN, id: velho }));
+    await r('SADD', `user:${velho}:consent`, 'urn:s');
+    const achados = await auditoria();
+    for (const k of ['users:index', `user:${velho}`, `user:${velho}:consent`]) {
+        assert.ok(achados.some(([c, , m]) => c === k && m.includes('RFC 9562')), `${k} apontado: ${JSON.stringify(achados)}`);
+    }
+    await recusa('regravar o perfil antigo', 'tv30_perfil_grava', perfilArgs(velho, [], { ...PERFIL_MIN, id: velho }), ['{id} da chave: deve ser UUID']);
+    await recusa('atributo de emissora no perfil antigo', 'tv30_atributos_emissora', [velho, 'urn:s', 'cor', 'azul'], ['{id} da chave: deve ser UUID']);
+    assert.equal(await fcall('tv30_perfil_ultimo_acesso', velho, '5'), 1);
+    assert.equal(await fcall('tv30_perfil_remove', velho), 3);
+    assert.deepEqual(await auditoria(), []);
+});
+
 test('atributos de emissora: perfil precisa estar indexado; vazio remove', async () => {
-    await recusa('perfil inexistente', 'tv30_atributos_emissora', ['p1', 'urn:s:1', 'cor', 'azul'], ['fora de users:index (invariante perfil-dependentes)']);
+    await recusa('perfil inexistente', 'tv30_atributos_emissora', [P1, 'urn:s:1', 'cor', 'azul'], ['fora de users:index (invariante perfil-dependentes)']);
     await indexaP1();
-    assert.equal(await fcall('tv30_atributos_emissora', 'p1', 'urn:s:1', 'cor', 'azul', 'tam', 'G'), 2);
-    assert.equal(await fcall('tv30_atributos_emissora', 'p1', 'urn:s:1', 'cor', ''), 1);
-    assert.deepEqual(await r('HGETALL', 'user:p1:broadcaster-attrs:urn:s:1'), ['tam', 'G']);
+    assert.equal(await fcall('tv30_atributos_emissora', P1, 'urn:s:1', 'cor', 'azul', 'tam', 'G'), 2);
+    assert.equal(await fcall('tv30_atributos_emissora', P1, 'urn:s:1', 'cor', ''), 1);
+    assert.deepEqual(await r('HGETALL', `user:${P1}:broadcaster-attrs:urn:s:1`), ['tam', 'G']);
 });
 
 test('clientes: autorizar e bloquear trocam o id de conjunto (disjuntos); grava acrescenta; inclusao no boot', async () => {
@@ -480,10 +530,10 @@ test('clientes: autorizar e bloquear trocam o id de conjunto (disjuntos); grava 
 
 test('registro existente: campo novo conferido, o resto antigo nao trava (a auditoria mostra)', async () => {
     // gravado a mao fora do esquema (booleano "False" da carga antiga)
-    await fcall('tv30_perfil_grava', ...perfilArgs('p1', [], PERFIL_MIN));
-    await r('HSET', 'user:p1', 'parentalControl', 'False');
-    assert.equal(await fcall('tv30_perfil_ultimo_acesso', 'p1', '99'), 1);
-    assert.deepEqual(await auditoria(), [['user:p1', 'user:{id}', 'campo parentalControl: deve ser "true" ou "false" (veio "False")']]);
+    await fcall('tv30_perfil_grava', ...perfilArgs(P1, [], PERFIL_MIN));
+    await r('HSET', `user:${P1}`, 'parentalControl', 'False');
+    assert.equal(await fcall('tv30_perfil_ultimo_acesso', P1, '99'), 1);
+    assert.deepEqual(await auditoria(), [[`user:${P1}`, 'user:{id}', 'campo parentalControl: deve ser "true" ou "false" (veio "False")']]);
     // cliente novo confere tudo; existente so o escrito
     await recusa('cliente novo incompleto', 'tv30_cliente_grava', ['c1', 'accessToken', 'a'], ['campo class: obrigatorio, ausente']);
 });
@@ -517,17 +567,17 @@ test('bind-context: RPUSH da entrada exata, LREM de todas as iguais', async () =
 test('atomicidade: tipo errado numa chave posterior ou membro invalido no fim nao deixam gravacao parcial', async () => {
     // perfil: users:index de outro tipo -> user:{id} nao nasce
     await r('SET', 'users:index', 'x');
-    await recusa('users:index STRING', 'tv30_perfil_grava', perfilArgs('p1', [], PERFIL), ['users:index no Redis e string, o esquema pede set']);
+    await recusa('users:index STRING', 'tv30_perfil_grava', perfilArgs(P1, [], PERFIL), ['users:index no Redis e string, o esquema pede set']);
     await limpo();
     // perfil: consent de outro tipo (a ultima chave gravada)
-    await r('SET', 'user:p1:consent', 'x');
-    await recusa('consent STRING', 'tv30_perfil_grava', perfilArgs('p1', ['urn:a'], PERFIL), ['user:p1:consent no Redis e string']);
+    await r('SET', `user:${P1}:consent`, 'x');
+    await recusa('consent STRING', 'tv30_perfil_grava', perfilArgs(P1, ['urn:a'], PERFIL), [`user:${P1}:consent no Redis e string`]);
     await limpo();
     // perfil: o ultimo servico invalido derruba a operacao inteira
-    await recusa('ultimo servico vazio', 'tv30_perfil_grava', perfilArgs('p1', ['urn:a', 'urn:b', ''], PERFIL), ['user:p1:consent membro']);
+    await recusa('ultimo servico vazio', 'tv30_perfil_grava', perfilArgs(P1, ['urn:a', 'urn:b', ''], PERFIL), [`user:${P1}:consent membro`]);
     // regravar perfil existente com dado invalido mantem o anterior intacto
-    await fcall('tv30_perfil_grava', ...perfilArgs('p1', ['urn:a'], PERFIL));
-    await recusa('regravacao invalida', 'tv30_perfil_grava', perfilArgs('p1', ['urn:b'], { ...PERFIL, nickname: '' }), ['campo nickname:']);
+    await fcall('tv30_perfil_grava', ...perfilArgs(P1, ['urn:a'], PERFIL));
+    await recusa('regravacao invalida', 'tv30_perfil_grava', perfilArgs(P1, ['urn:b'], { ...PERFIL, nickname: '' }), ['campo nickname:']);
     // cliente: clients:blocked de outro tipo -> client:{id} nem clients:authorized
     await limpo();
     await r('LPUSH', 'clients:blocked', 'x');
@@ -543,7 +593,7 @@ test('atomicidade: tipo errado numa chave posterior ou membro invalido no fim na
     // atributos: um nome proibido no meio de varios validos
     await limpo();
     await indexaP1();
-    await recusa('um proibido entre validos', 'tv30_atributos_emissora', ['p1', 'urn:s', 'a', '1', 'nickname', 'x', 'z', '2'], ['campo nickname:']);
+    await recusa('um proibido entre validos', 'tv30_atributos_emissora', [P1, 'urn:s', 'a', '1', 'nickname', 'x', 'z', '2'], ['campo nickname:']);
     // bind-context de outro tipo
     await limpo();
     await r('SET', 'bind-context:urn:a', 'x');
@@ -555,11 +605,11 @@ test('atomicidade: tipo errado numa chave posterior ou membro invalido no fim na
 test('auditoria: cada tipo de problema gravado a mao aparece com chave, familia e motivo; limpa, volta vazia', async () => {
     assert.deepEqual(await auditoria(), [], 'banco vazio');
     // estado valido de todas as familias
-    await fcall('tv30_sessao_usuario', 'p1');
+    await fcall('tv30_sessao_usuario', P1);
     await fcall('tv30_sessao_servico_id', 'urn:s');
     await fcall('tv30_sessao_servico', ...plano(SVC));
-    await fcall('tv30_perfil_grava', ...perfilArgs('p1', ['urn:s'], PERFIL));
-    await fcall('tv30_atributos_emissora', 'p1', 'urn:s', 'cor', 'azul');
+    await fcall('tv30_perfil_grava', ...perfilArgs(P1, ['urn:s'], PERFIL));
+    await fcall('tv30_atributos_emissora', P1, 'urn:s', 'cor', 'azul');
     await fcall('tv30_cliente_autoriza', 'c1', ...plano(CLIENTE));
     await fcall('tv30_cliente_bloqueia', 'c2');
     await fcall('tv30_origem_registra', ORIGEM, 'urn:s');
@@ -569,27 +619,32 @@ test('auditoria: cada tipo de problema gravado a mao aparece com chave, familia 
 
     // escritas manuais (o que o redis-cli/commander permitem), uma de cada tipo
     const manuais = [
-        [['SET', 'user:p1:profile', 'x'], ['user:p1:profile', '-', 'chave sem familia']],
+        [['SET', `user:${P1}:profile`, 'x'], [`user:${P1}:profile`, '-', 'chave sem familia']],
         [['HSET', 'session:x', 'a', '1'], ['session:x', '-', 'chave sem familia']],
         [['SET', 'session:current-service', 'x'], ['session:current-service', 'session:current-service', 'no Redis e string, o esquema pede hash']],
         [['SET', 'session:current-user', 'x'.repeat(65)], ['session:current-user', 'session:current-user', 'valor: tem 65 caracteres, maximo 64']],
-        [['HSET', 'user:p1', 'parentalControl', 'False'], ['user:p1', 'user:{id}', 'campo parentalControl:']],
-        [['HDEL', 'user:p1', 'nickname'], ['user:p1', 'user:{id}', 'campo nickname: obrigatorio, ausente']],
-        [['HSET', 'user:p1', 'extra', '1'], ['user:p1', 'user:{id}', 'campo "extra": nao previsto']],
-        [['HSET', 'user:p1:broadcaster-attrs:urn:s', 'vazio', ''], ['user:p1:broadcaster-attrs:urn:s', 'user:{id}:broadcaster-attrs:{scid}', 'campo "vazio": vazio']],
-        [['HSET', 'user:p1:broadcaster-attrs:urn:s', 'nickname', 'x'], ['user:p1:broadcaster-attrs:urn:s', 'user:{id}:broadcaster-attrs:{scid}', 'campo nickname: atributo basico']],
-        [['SADD', 'user:p1:consent', ''], ['user:p1:consent', 'user:{id}:consent', 'membro "": vazio']],
+        [['HSET', `user:${P1}`, 'parentalControl', 'False'], [`user:${P1}`, 'user:{id}', 'campo parentalControl:']],
+        [['HDEL', `user:${P1}`, 'nickname'], [`user:${P1}`, 'user:{id}', 'campo nickname: obrigatorio, ausente']],
+        [['HSET', `user:${P1}`, 'extra', '1'], [`user:${P1}`, 'user:{id}', 'campo "extra": nao previsto']],
+        [['HSET', `user:${P1}:broadcaster-attrs:urn:s`, 'vazio', ''], [`user:${P1}:broadcaster-attrs:urn:s`, 'user:{id}:broadcaster-attrs:{scid}', 'campo "vazio": vazio']],
+        [['HSET', `user:${P1}:broadcaster-attrs:urn:s`, 'nickname', 'x'], [`user:${P1}:broadcaster-attrs:urn:s`, 'user:{id}:broadcaster-attrs:{scid}', 'campo nickname: atributo basico']],
+        [['SADD', `user:${P1}:consent`, ''], [`user:${P1}:consent`, 'user:{id}:consent', 'membro "": vazio']],
         [['HSET', 'client:c1', 'class', 'admin'], ['client:c1', 'client:{id}', 'campo class:']],
         [['HSET', 'origins:associated', 'http://X.example', 'urn:s'], ['origins:associated', 'origins:associated', 'nome de campo: host deve estar em minusculas']],
         [['RPUSH', 'bind-context:urn:s', '{"alg":"none","key":"k","registeredAt":1}'], ['bind-context:urn:s', 'bind-context:{serviceId}', 'item 1: membro "alg"']],
         [['SET', 'users:index', 'x'], ['users:index', 'users:index', 'no Redis e string, o esquema pede set']],
+        // F-3 (Luis, 11/10): ids no formato antigo, como ficam num volume de antes
+        // (a auditoria os mostra; sem compatibilidade)
+        [['SADD', 'users:index', 'user_1760000000000'], ['users:index', 'users:index', 'membro "user_1760000000000": deve ser UUID no formato da RFC 9562']],
+        [['HSET', 'user:c3167a18-5dc5', 'id', 'c3167a18-5dc5'], ['user:c3167a18-5dc5', 'user:{id}', '{id} da chave: deve ser UUID']],
+        [['SADD', `user:${P1.toUpperCase()}:consent`, 'urn:s'], [`user:${P1.toUpperCase()}:consent`, 'user:{id}:consent', '{id} da chave: UUID deve estar em minusculas']],
         // invariantes
-        [['HSET', 'user:fantasma', 'id', 'fantasma', 'nickname', 'F', 'parentalControl', 'false', 'closedCaptioning', 'false', 'closedSigning', 'false', 'audioDescription', 'false', 'dialogEnhancement', 'false', 'voiceGuidance', 'false'],
-            ['user:fantasma', 'user:{id}', 'id fora de users:index (invariante perfil-indexado)']],
-        [['SREM', 'users:index', 'p1'], ['user:p1', 'user:{id}', 'invariante perfil-indexado']],
-        [['SADD', 'users:index', 'sem-hash'], ['users:index', 'users:index', 'membro "sem-hash" sem o hash user:sem-hash (invariante perfil-indexado)']],
-        [['SADD', 'user:orfao:consent', 'urn:s'], ['user:orfao:consent', 'user:{id}:consent', 'perfil "orfao" fora de users:index (invariante perfil-dependentes)']],
-        [['HSET', 'user:orfao:broadcaster-attrs:urn:s', 'a', '1'], ['user:orfao:broadcaster-attrs:urn:s', 'user:{id}:broadcaster-attrs:{scid}', 'invariante perfil-dependentes']],
+        [['HSET', `user:${FANTASMA}`, 'id', FANTASMA, 'nickname', 'F', 'parentalControl', 'false', 'closedCaptioning', 'false', 'closedSigning', 'false', 'audioDescription', 'false', 'dialogEnhancement', 'false', 'voiceGuidance', 'false'],
+            [`user:${FANTASMA}`, 'user:{id}', 'id fora de users:index (invariante perfil-indexado)']],
+        [['SREM', 'users:index', P1], [`user:${P1}`, 'user:{id}', 'invariante perfil-indexado']],
+        [['SADD', 'users:index', SEM_HASH], ['users:index', 'users:index', `membro "${SEM_HASH}" sem o hash user:${SEM_HASH} (invariante perfil-indexado)`]],
+        [['SADD', `user:${ORFAO}:consent`, 'urn:s'], [`user:${ORFAO}:consent`, 'user:{id}:consent', `perfil "${ORFAO}" fora de users:index (invariante perfil-dependentes)`]],
+        [['HSET', `user:${ORFAO}:broadcaster-attrs:urn:s`, 'a', '1'], [`user:${ORFAO}:broadcaster-attrs:urn:s`, 'user:{id}:broadcaster-attrs:{scid}', 'invariante perfil-dependentes']],
         [['SADD', 'clients:blocked', 'c1'], ['clients:authorized', 'clients:authorized', 'membro "c1" tambem em clients:blocked (invariante clientes-disjuntos)']],
         [['SADD', 'clients:authorized', 'c9'], ['clients:authorized', 'clients:authorized', 'membro "c9" sem o hash client:c9 (invariante autorizado-tem-registro)']],
     ];

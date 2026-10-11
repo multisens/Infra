@@ -341,6 +341,7 @@ func TestRedisComandos(t *testing.T) {
 	f.with(func() {
 		f.strs[keyCurrentService] = tSvc
 		f.sets[keyBlocked] = map[string]bool{"cli-bloq": true}
+		f.sets[keyAuthorized] = map[string]bool{"cli-ok": true}
 		f.hashes[keyAssociated] = map[string]string{tAssoc: tSvc}
 		// segundo elemento com CRLF dentro: o bulk tem que ser lido pelo tamanho
 		f.lists[keyBindPrefix+tSvc] = []string{storedJSON("HS256", "a"), "x\r\ny"}
@@ -355,6 +356,13 @@ func TestRedisComandos(t *testing.T) {
 	}
 	if b, err := s.IsBlocked("cli-ok"); err != nil || b {
 		t.Fatalf("SISMEMBER livre: %v %v", b, err)
+	}
+	// E6: SISMEMBER clients:authorized
+	if b, err := s.IsAuthorized("cli-ok"); err != nil || !b {
+		t.Fatalf("SISMEMBER autorizado: %v %v", b, err)
+	}
+	if b, err := s.IsAuthorized("cli-bloq"); err != nil || b {
+		t.Fatalf("SISMEMBER fora do conjunto: %v %v", b, err)
 	}
 	if b, err := s.IsAssociatedOrigin(tAssoc); err != nil || !b {
 		t.Fatalf("HEXISTS: %v %v", b, err)

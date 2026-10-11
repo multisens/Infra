@@ -41,9 +41,17 @@ services:
       # habilita host.docker.internal em Linux (necessario pro cenario de
       # desenvolvimento com backend no host; inocuo no deploy padrao)
       - "host.docker.internal:host-gateway"
+    # C1 (decisao do Luis em 11/10, opcao b): 44642 FIXA (norma, C.3.4); a
+    # 44643 sai numa porta de host ALEATORIA (o Docker escolhe uma livre):
+    # descobrir com `docker compose port edgegateway 44643`. EDGE_EXT_PUBLISH
+    # e o valor que vai em `ports`: so o numero (padrao 44643) = porta do
+    # container com porta de host aleatoria; `host:container` fixa (ex.:
+    # EDGE_EXT_PUBLISH=44643:44643, como era ate 11/10). No modo SSDP (rede do
+    # host, docker-compose.ssdp.yml da raiz) o `ports` inteiro e zerado e a
+    # 44643 fica fixa no host, porque vai no anuncio.
     ports:
       - "44642:44642"   # superficie interna — porta FIXA da norma
-      - "44643:44643"   # superficie externa
+      - "${EDGE_EXT_PUBLISH:-44643}"   # superficie externa: porta de host aleatoria por padrao (C1)
       - "8085"          # docs: porta de host dinamica (V10)
     depends_on:
       # o preflight (compose raiz) BLOQUEIA a subida se a 44642 estiver
@@ -67,10 +75,20 @@ services:
     profiles:
       - mqtt
     ports:
-      - "1883:1883"
-      # MQTT_WS_PORT default 9001 (Linux puro). Em Windows+WSL com 9001/9002
-      # ocupadas no host, definir MQTT_WS_PORT=9003 no .env da raiz do TV30.
-      - "${MQTT_WS_PORT:-9001}:9001"
+      - "1883:1883"   # MQTT: porta FIXA (C1)
+      # C1 (decisao do Luis em 11/10): o MQTT por WebSocket (9001 do
+      # container) sai numa porta de host ALEATORIA por padrao — descobrir com
+      # `docker compose port mosquitto 9001`. MQTT_WS_PUBLISH e o valor que vai
+      # em `ports`: so o numero (padrao 9001) = porta do container com porta de
+      # host aleatoria; `host:container` fixa (ex.: MQTT_WS_PUBLISH=9003:9001).
+      # Substitui o MQTT_WS_PORT neste publish (ate 11/10,
+      # "${MQTT_WS_PORT:-9001}:9001", porta de host fixa). A pagina da TV nao
+      # conecta mais nesta porta: o AoP atende o MQTT por WebSocket na propria
+      # porta, no caminho /mqtt, e repassa para a 9001 INTERNA do mosquitto
+      # (MQTT_WS_PORT do servico aop, no compose da raiz). No dev-host, com o
+      # AoP no host, ele usa a porta publicada (MQTT_WS_PORT = `docker compose
+      # port mosquitto 9001`).
+      - "${MQTT_WS_PUBLISH:-9001}"
     volumes:
       - mosquitto_data:/mosquitto/data
       - mosquitto_logs:/mosquitto/log

@@ -173,8 +173,10 @@ type harness struct {
 	onOpen func(n int, c *fakeConn) // n-esima conexao aberta
 }
 
+// O SSDP_ADVERTISE_HOST e obrigatorio (B2, Luis 11/10): o harness ja traz o
+// IPv4 do Wi-Fi de teste (wifi2); o teste que quer outro troca ou apaga.
 func newHarness(t *testing.T) *harness {
-	h := &harness{t: t, env: map[string]string{}, stop: make(chan os.Signal, 4),
+	h := &harness{t: t, env: map[string]string{"SSDP_ADVERTISE_HOST": "192.168.2.7"}, stop: make(chan os.Signal, 4),
 		clock: time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)}
 	h.net = &fakeNet{h: h, names: map[string]bool{}}
 	return h
@@ -294,7 +296,8 @@ const (
 
 // Teste 44 de docs/ssdp-verificacao.md: o Wi-Fi ainda sem IPv4 na partida.
 // A borda nao cai: o anunciante espera (1, 2, 4, 8 s), avisa uma vez e, com
-// a rede de volta, anuncia (com o IP local da rede de agora).
+// a rede de volta, anuncia pela interface que tem o IPv4 de
+// SSDP_ADVERTISE_HOST.
 func TestSemRedeNaPartidaEsperaEVolta(t *testing.T) {
 	h := newHarness(t)
 	h.net.names["wlp2s0"] = true // existe, ainda sem IPv4
@@ -313,7 +316,7 @@ func TestSemRedeNaPartidaEsperaEVolta(t *testing.T) {
 	h.wantLog("nenhuma interface de pe com IPv4 externo", 1)
 	h.wantLog(deVolta+": anunciando de novo depois de 15s sem anunciar (4 tentativas sem rede)", 1)
 	h.wantLog(anunciando+" em UDP 1900 pela interface wlp2s0 (192.168.2.7, via host-ip); "+
-		"LOCATION http://192.168.2.7:44642/manifest (host via local-ip)", 1)
+		"LOCATION http://192.168.2.7:44642/manifest (host de SSDP_ADVERTISE_HOST)", 1)
 	h.wantLog(falha, 0)
 	cs := h.net.conns()
 	if len(cs) != 1 || cs[0].count(ssdpAlive) != 2 || cs[0].count(ssdpByebye) != 2 || !cs[0].isClosed() {
@@ -325,7 +328,6 @@ func TestSemRedeNaPartidaEsperaEVolta(t *testing.T) {
 // 0 e sem byebye (nao ha socket).
 func TestEsperaCrescenteAte30s(t *testing.T) {
 	h := newHarness(t)
-	h.env["SSDP_ADVERTISE_HOST"] = "192.168.2.7"
 	h.onWait = func(n int) {
 		if n == 8 {
 			h.sigterm()
@@ -346,9 +348,11 @@ func TestEsperaCrescenteAte30s(t *testing.T) {
 
 // Queda de rede no meio do anuncio (troca de Wi-Fi, docker network
 // disconnect): fecha os sockets, espera e volta na rede nova, com a interface
-// e o IP escolhidos de novo. O erro de envio vale como falta de rede pelo
-// errno ou porque o IPv4 da sessao sumiu; com o IPv4 ainda la e errno fora da
-// lista, e erro de configuracao.
+// e o IPv4 de origem escolhidos de novo. O LOCATION nao muda: o host e o
+// SSDP_ADVERTISE_HOST (B2, Luis 11/10), e o aviso diz que o IPv4 configurado
+// nao esta mais em nenhuma interface. O erro de envio vale como falta de rede
+// pelo errno ou porque o IPv4 da sessao sumiu; com o IPv4 ainda la e errno
+// fora da lista, e erro de configuracao.
 func TestQuedaDeRedeDuranteOAnuncio(t *testing.T) {
 	for _, c := range []struct {
 		name    string
@@ -406,8 +410,11 @@ func TestQuedaDeRedeDuranteOAnuncio(t *testing.T) {
 			}
 			h.wantLog(semRede+" (envio do NOTIFY: ", 1)
 			h.wantLog(deVolta, 1)
-			h.wantLog("LOCATION http://192.168.2.7:44642/manifest", 1)
-			h.wantLog("LOCATION http://192.168.0.23:44642/manifest (host via local-ip)", 1)
+			h.wantLog("pela interface wlp2s0 (192.168.2.7, via host-ip); LOCATION http://192.168.2.7:44642/manifest", 1)
+			h.wantLog("pela interface wlp2s0 (192.168.0.23, via default-route); LOCATION http://192.168.2.7:44642/manifest", 1)
+			h.wantLog("AVISO host anunciado: o IPv4 192.168.2.7 nao esta em nenhuma interface externa desta maquina; "+
+				"o anuncio sai pela interface da rota padrao wlp2s0 (192.168.0.23)", 1)
+			h.wantLog("192.168.0.23:44642/manifest", 0)
 			h.wantLog(falha, 0)
 			if c.netGone {
 				h.wantWaits(1*time.Second, 2*time.Second)
@@ -445,16 +452,28 @@ func TestErroDeLeitura(t *testing.T) {
 // Erros de configuracao: exit 1 (a borda cai), sem esperar a rede.
 func TestErrosDeConfiguracaoEncerram(t *testing.T) {
 	inUse := sockErr("listen", "bind", syscall.EADDRINUSE)
+	const cfg = falha + " configuracao do anuncio (SSDP_ADVERTISE_HOST, EDGE_HTTP_PORT, EDGE_HTTPS_PORT): "
 	for _, c := range []struct {
 		name    string
-		env     map[string]string
+		env     map[string]string // "-" = apaga a variavel
 		openErr []error
 		noNet   bool // sem rede na 1a tentativa
 		want    string
 		opens   int
 	}{
+		// B2 (decisao do Luis em 11/10): SSDP_ADVERTISE_HOST obrigatorio
+		{"SSDP_ADVERTISE_HOST ausente", map[string]string{"SSDP_ADVERTISE_HOST": "-"}, nil, false,
+			cfg + "SSDP_ADVERTISE_HOST ausente ou vazio", 0},
+		{"SSDP_ADVERTISE_HOST ausente com SERVER_URL", map[string]string{"SSDP_ADVERTISE_HOST": "-", "SERVER_URL": "192.168.2.7"}, nil, false,
+			cfg + "SSDP_ADVERTISE_HOST ausente ou vazio", 0},
+		{"SSDP_ADVERTISE_HOST vazio", map[string]string{"SSDP_ADVERTISE_HOST": ""}, nil, false,
+			cfg + "SSDP_ADVERTISE_HOST ausente ou vazio", 0},
+		{"SSDP_ADVERTISE_HOST so com espacos e sem rede", map[string]string{"SSDP_ADVERTISE_HOST": "  "}, nil, true,
+			cfg + "SSDP_ADVERTISE_HOST ausente ou vazio", 0},
+		{"SSDP_ADVERTISE_HOST sem host", map[string]string{"SSDP_ADVERTISE_HOST": "http://:44642"}, nil, false,
+			cfg + "SSDP_ADVERTISE_HOST=\"http://:44642\" sem host", 0},
 		{"porta invalida", map[string]string{"EDGE_HTTP_PORT": "abc"}, nil, false,
-			falha + " configuracao do anuncio (EDGE_HTTP_PORT/EDGE_HTTPS_PORT): EDGE_HTTP_PORT='abc'", 0},
+			cfg + "EDGE_HTTP_PORT='abc'", 0},
 		{"SSDP_INTERFACE inexistente", map[string]string{"SSDP_INTERFACE": "eth9"}, nil, false,
 			falha + " configuracao da interface do anuncio (SSDP_INTERFACE): SSDP_INTERFACE='eth9' nao existe", 0},
 		{"SSDP_INTERFACE inexistente e sem rede", map[string]string{"SSDP_INTERFACE": "eth9"}, nil, true,
@@ -470,7 +489,11 @@ func TestErrosDeConfiguracaoEncerram(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			h := newHarness(t)
 			for k, v := range c.env {
-				h.env[k] = v
+				if v == "-" {
+					delete(h.env, k)
+				} else {
+					h.env[k] = v
+				}
 			}
 			h.net.openErr = c.openErr
 			if !c.noNet {

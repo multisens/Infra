@@ -1,7 +1,10 @@
 #!/bin/sh
 # Redis consolidado: server (principal) + biblioteca de funcoes (P4) + carga
-# inicial + commander (debug). Morte do commander NAO derruba o banco; morte
-# do redis derruba tudo.
+# inicial + commander (debug). MORRE-INTEIRO para os dois processos (C2,
+# decisao do Luis em 11/10): se o redis-server OU o commander cair, o
+# container encerra por completo (o restart do compose o traz de volta). Ate
+# 11/10 o commander era excecao (decisao V8/V9: a morte dele nao derrubava o
+# banco).
 set -u
 
 # Marca de "pronto" do healthcheck (docker-compose.yml): so existe depois de
@@ -13,7 +16,18 @@ rm -f "$PRONTO"
 
 redis-server --appendonly yes --appendfsync everysec &
 REDIS_PID=$!
-trap 'kill "$REDIS_PID" 2>/dev/null' TERM INT
+CMD_PID=""
+
+# Parada pedida (docker stop: o dumb-init encaminha o SIGTERM): para o
+# commander e espera o redis-server terminar o desligamento dele (AOF), em vez
+# de sair com o banco ainda gravando.
+shutdown() {
+  [ -n "$CMD_PID" ] && kill "$CMD_PID" 2>/dev/null
+  kill "$REDIS_PID" 2>/dev/null
+  wait "$REDIS_PID" 2>/dev/null
+  exit 0
+}
+trap shutdown TERM INT
 
 until redis-cli ping >/dev/null 2>&1; do
   kill -0 "$REDIS_PID" 2>/dev/null || { echo "[redis] ERRO: o redis-server saiu durante a partida"; exit 1; }
@@ -86,6 +100,23 @@ CMD_PASS="${REDIS_COMMANDER_PASSWORD:-tv30-redis-admin}"
 HTTP_USER="$CMD_USER" HTTP_PASSWORD="$CMD_PASS" \
   redis-commander --redis-host 127.0.0.1 --redis-port 6379 \
   --port "${COMMANDER_PORT:-18081}" >/dev/null 2>&1 &
+CMD_PID=$!
 echo "[redis] commander (debug) na porta ${COMMANDER_PORT:-18081}, com login (usuario: ${CMD_USER})"
 
-wait "$REDIS_PID"
+# C2 (decisao do Luis em 11/10): morre-inteiro, como o edgegateway. ash nao
+# tem `wait -n`: vigia por polling (o `sleep` em primeiro plano recolhe o
+# processo que saiu, e o `kill -0` passa a falhar). Se um dos dois cair, o
+# outro e encerrado e o container sai com 1. O redis-server recebe SIGTERM e
+# a vigia espera ele terminar (AOF gravado) antes de sair.
+while :; do
+  for p in "$REDIS_PID" "$CMD_PID"; do
+    if ! kill -0 "$p" 2>/dev/null; then
+      if [ "$p" = "$CMD_PID" ]; then QUEM=commander; else QUEM=redis-server; fi
+      echo "[redis] $QUEM (pid $p) morreu — derrubando o container inteiro (morre-inteiro, C2)"
+      kill "$CMD_PID" "$REDIS_PID" 2>/dev/null
+      wait "$REDIS_PID" 2>/dev/null
+      exit 1
+    fi
+  done
+  sleep 1
+done
