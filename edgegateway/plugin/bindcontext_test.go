@@ -472,6 +472,38 @@ func TestBindRedisFora(t *testing.T) {
 	}
 }
 
+// P4 (Luis, 10/10): a funcao do Redis recusa a entrada (esquema) -> 404
+// {error:200} com o motivo no description (defeito da borda, nao "redis
+// indisponivel"), nos dois modos e nas duas escritas.
+func TestBindRecusaDoEsquema(t *testing.T) {
+	msg := `TV30ESQUEMA tv30_bind_registra: bind-context:` + tSvc + ` entrada: membro "alg": deve ser um de HS256, HS512, RS256, RS512 (veio "none")`
+	for _, mode := range []string{modeEnforce, modeWarn} {
+		st := twoServices(t)
+		st.current = tSvc
+		st.writeErr = redisError(msg)
+		h := newTestHandler(t, mode, st, nil)
+		for _, c := range []struct {
+			nome string
+			r    edgeResp
+		}{{"POST", postBind(t, h, regBody("HS256", "nova"))}, {"DELETE", bindDelete(t, h, "segredo-a")}} {
+			wantErr(t, mode+" "+c.nome, c.r, 200)
+			d, _ := c.r.json["description"].(string)
+			if !strings.Contains(d, "escrita recusada pelo esquema do Redis ("+msg+")") || strings.Contains(d, "indisponivel") {
+				t.Errorf("%s %s: description %q", mode, c.nome, d)
+			}
+		}
+		if got := st.keys[tSvc]; len(got) != 1 {
+			t.Errorf("%s: lista mudou com a escrita recusada: %q", mode, got)
+		}
+	}
+	if _, ok := schemaRefusal(errorString("dial tcp: connection refused")); ok {
+		t.Error("erro de rede nao e recusa do esquema")
+	}
+	if _, ok := schemaRefusal(redisError("WRONGTYPE Operation against a key holding the wrong kind of value")); ok {
+		t.Error("WRONGTYPE nao e recusa do esquema")
+	}
+}
+
 type errorString string
 
 func (e errorString) Error() string { return string(e) }

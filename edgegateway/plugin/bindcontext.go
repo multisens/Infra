@@ -19,6 +19,9 @@ import (
 //
 //	bind-context:{serviceId}  LIST de JSON {"alg","key","registeredAt"(ms)}
 //
+// gravado so pelas funcoes do Redis tv30_bind_registra e tv30_bind_remove
+// (P4, Luis em 10/10; redis.go), que conferem o esquema da entrada.
+//
 // serviceId = session:current-service-id no momento da chamada. A classe que
 // pode chamar cada rota (106: POST/DELETE so associado; GET so autonomo e
 // nao local) e o access token do GET (107) ficam na politica da rota
@@ -155,10 +158,12 @@ func sameRegisteredKey(alg, a, b string) bool {
 // erro para "sem servico" na C.47; 300 eh o codigo do catalogo para "No DTV
 // service currently in use" (mesma escolha do tv3ws).
 //
-// Leitura e escrita nao sao atomicas (LRANGE e depois RPUSH, como no tv3ws):
-// dois registros simultaneos da mesma chave podem gravar uma duplicata, que
-// nao muda o resultado (qualquer chave da lista valida; a revogacao remove
-// todas as iguais).
+// Leitura e escrita nao sao atomicas (LRANGE e depois a funcao de registro,
+// como no tv3ws): dois registros simultaneos da mesma chave podem gravar uma
+// duplicata, que nao muda o resultado (qualquer chave da lista valida; a
+// revogacao remove todas as iguais). A deteccao de duplicata fica aqui porque
+// compara chaves RSA pela chave publica (sameRegisteredKey), o que a funcao do
+// Redis nao faz; a funcao confere o formato da entrada (P4).
 func (h *authHandler) bindRegister(r *http.Request, _ map[string]string) edgeReply {
 	alg, key, code, detail := checkRegistration(r)
 	if code != 0 {
@@ -190,7 +195,7 @@ func (h *authHandler) bindRegister(r *http.Request, _ map[string]string) edgeRep
 		return edgeReply{Code: 200, Detail: "falha interna da borda"}
 	}
 	if err := h.store.AddBindKey(sid, string(entry)); err != nil {
-		return redisDown(err)
+		return redisWriteFailed(err)
 	}
 	logf("bind-context %s registrada para %q", alg, sid)
 	return ok
@@ -329,7 +334,7 @@ func (h *authHandler) bindRemove(r *http.Request, _ map[string]string) edgeReply
 		if e, ok := parseStoredEntry(raw); ok && sameKey(e.Key, key) {
 			n, err := h.store.RemoveBindKey(sid, raw)
 			if err != nil {
-				return redisDown(err)
+				return redisWriteFailed(err)
 			}
 			removed += n
 		}

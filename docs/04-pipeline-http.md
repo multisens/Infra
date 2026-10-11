@@ -32,7 +32,7 @@ flowchart LR
     end
 
     P -.->|"GET / SISMEMBER /<br/>HEXISTS / LRANGE"| R[("Redis")]
-    A -.->|"C.6.8: LRANGE / RPUSH / LREM /<br/>SCAN / HGETALL / GET"| R
+    A -.->|"C.6.8: LRANGE / SCAN / HGETALL / GET<br/>e FCALL tv30_bind_registra / tv30_bind_remove (P4)"| R
     A -->|"200 ou erro C.3.2"| C
     P -->|"negada (enforce)<br/>404 + {error, description}"| C
     G -->|"interna: http://tv3ws:44652<br/>externa: https://tv3ws:44653"| T["tv3ws"]

@@ -1,0 +1,259 @@
+{
+  "$comentario": [
+    "Esquema das chaves do Redis do testbed TV30 (P4: decisao do Luis em 10/10, 'Funcoes + auditoria').",
+    "FONTE UNICA DE VERDADE dos esquemas: a biblioteca de funcoes do Redis (funcoes.lua) recebe este",
+    "arquivo embutido (biblioteca.sh monta a biblioteca; o entrypoint.sh a carrega com FUNCTION LOAD",
+    "REPLACE a cada partida) e os testes (infra/redis/test) o leem. Mude a regra AQUI; a funcao e a",
+    "auditoria passam a aplicar a regra nova na proxima partida do container redis.",
+    "Redis, funcoes e este esquema sao decisoes de implementacao do testbed, nao da ABNT NBR 25608;",
+    "o campo 'fonte' de cada regra diz de onde ela veio (secao da norma, schemas.json do broker ou codigo).",
+    "Documentacao para quem chega: docs/modelo-redis.md e infra/redis/README.md."
+  ],
+  "versao": "1",
+  "biblioteca": "tv30",
+  "prefixoErro": "TV30ESQUEMA",
+
+  "prefixosAuditados": ["session:", "users:", "user:", "clients:", "client:", "origins:", "bind-context:"],
+
+  "definicoes": {
+    "idPerfil": {
+      "tipo": "texto", "min": 1, "max": 64, "proibe": ":",
+      "fonte": "max 64: schemas.json do broker, aop/currentUser (maxLength 64), o topico que carrega o id do perfil corrente; sem ':' para a chave user:{id}:consent nao se confundir com o perfil de id 'x:consent' (decisao de implementacao)"
+    },
+    "idServico": {
+      "tipo": "texto", "min": 1, "max": 256,
+      "fonte": "schemas.json do broker, aop/currentService (maxLength 256): o valor que o AoP publica e o tv3ws espelha em session:current-service-id"
+    },
+    "idCliente": {
+      "tipo": "texto", "min": 1,
+      "fonte": "C.6.1.4.3 recomenda UUID (IETF RFC 9562) mas aceita 'qualquer alternativa com as mesmas propriedades'; o tv3ws nao valida o formato. So nao vazio."
+    },
+    "booleano": { "tipo": "booleano", "fonte": "Tabela 7: (true | false); gravado como o texto 'true' ou 'false', como o AoP grava" },
+    "idioma": { "tipo": "idioma", "fonte": "Tabela 7: IETF RFC 5646 (ex.: pt-BR); conferido o formato das subetiquetas, nao o registro IANA" }
+  },
+
+  "familias": [
+    {
+      "familia": "session:current-user",
+      "chave": "session:current-user",
+      "tipo": "string",
+      "dono": "tv3ws",
+      "descricao": "Id do perfil corrente: espelho do topico retido aop/currentUser e escrita da C.6.14.4. Vazio = sem usuario corrente.",
+      "valor": { "tipo": "texto", "max": 64, "fonte": "schemas.json do broker, aop/currentUser (string, maxLength 64), mesma forma do topico espelhado" },
+      "funcoes": ["tv30_sessao_usuario"]
+    },
+    {
+      "familia": "session:current-service-id",
+      "chave": "session:current-service-id",
+      "tipo": "string",
+      "dono": "tv3ws",
+      "descricao": "Id do servico corrente: espelho do topico retido aop/currentService. Vazio = sem servico corrente (a borda responde 300 na C.6.8.2).",
+      "valor": { "tipo": "texto", "max": 256, "fonte": "schemas.json do broker, aop/currentService (string, maxLength 256), mesma forma do topico espelhado" },
+      "funcoes": ["tv30_sessao_servico_id"]
+    },
+    {
+      "familia": "session:current-service",
+      "chave": "session:current-service",
+      "tipo": "hash",
+      "dono": "tv3ws",
+      "descricao": "Servico corrente com os campos de GET /tv3/current-service (Tabela C.8), regravado inteiro pelo tv3ws a cada troca de servico; a borda le na C.6.8.3.",
+      "campos": {
+        "serviceContextId": { "tipo": "texto", "min": 1, "obrigatorio": true, "fonte": "Tabela C.8; constante do tv3ws (lacuna L2)" },
+        "serviceId": { "tipo": "inteiro", "min": 0, "vazio": true, "obrigatorio": true, "fonte": "Tabela C.8: serviceId inteiro; vazio quando o testbed nao o conhece (sem SLT, A6)" },
+        "serviceName": { "tipo": "texto", "obrigatorio": true, "fonte": "Tabela C.8; vazio quando desconhecido" },
+        "transportStreamId": { "tipo": "texto", "min": 1, "obrigatorio": true, "fonte": "Tabela C.8; constante do tv3ws" },
+        "originalNetworkId": { "tipo": "texto", "min": 1, "obrigatorio": true, "fonte": "Tabela C.8; constante do tv3ws" }
+      },
+      "outrosCampos": false,
+      "funcoes": ["tv30_sessao_servico"]
+    },
+    {
+      "familia": "users:index",
+      "chave": "users:index",
+      "tipo": "set",
+      "dono": "AoP",
+      "descricao": "Ids de todos os perfis. Anda junto com user:{id} (invariante perfil-indexado).",
+      "membros": { "ref": "idPerfil" },
+      "funcoes": ["tv30_perfil_grava", "tv30_perfil_remove"]
+    },
+    {
+      "familia": "user:{id}",
+      "chave": "user:{id}",
+      "tipo": "hash",
+      "dono": "AoP",
+      "descricao": "Perfil do telespectador: atributos basicos da Tabela 7 mais lastAccess (despejo P3).",
+      "partes": { "id": { "ref": "idPerfil" } },
+      "campos": {
+        "id": { "ref": "idPerfil", "obrigatorio": true, "fonte": "Tabela 7: required (a norma pede UUID; ver divergencias)" },
+        "nickname": { "tipo": "texto", "min": 1, "max": 20, "obrigatorio": true, "fonte": "Tabela 7: string (up to 20 characters), required" },
+        "avatar": { "tipo": "texto", "fonte": "Tabela 7: file path, optional (o testbed grava SVG em linha; ver divergencias)" },
+        "parentalControl": { "ref": "booleano", "obrigatorio": true, "fonte": "Tabela 7: (true | false), required" },
+        "maxContentRating": { "tipo": "enum", "valores": ["L", "10", "12", "14", "16", "18"], "obrigatorioSe": { "campo": "parentalControl", "valor": "true" }, "fonte": "Tabela 7: valores predefinidos do pais (classificacao indicativa do Brasil, os mesmos do AoP); required only if parentalControl = true" },
+        "audioLanguage": { "ref": "idioma", "fonte": "Tabela 7: IETF RFC 5646, optional" },
+        "closedCaptioningLanguage": { "ref": "idioma", "fonte": "Tabela 7: IETF RFC 5646, optional (aplicavel se closedCaptioning = true)" },
+        "userInterfaceLanguage": { "ref": "idioma", "fonte": "Tabela 7: IETF RFC 5646, optional" },
+        "closedCaptioning": { "ref": "booleano", "obrigatorio": true, "fonte": "Tabela 7: (true | false), required" },
+        "closedSigning": { "ref": "booleano", "obrigatorio": true, "fonte": "Tabela 7: (true | false), required" },
+        "closedSigningSide": { "tipo": "enum", "valores": ["left", "right"], "obrigatorioSe": { "campo": "closedSigning", "valor": "true" }, "fonte": "Tabela 7: (left | right), aplicavel se closedSigning = true" },
+        "closedSigningWidth": { "tipo": "inteiro", "min": 14, "max": 28, "obrigatorioSe": { "campo": "closedSigning", "valor": "true" }, "fonte": "Tabela 7: integer (14 to 28), aplicavel se closedSigning = true" },
+        "audioDescription": { "ref": "booleano", "obrigatorio": true, "fonte": "Tabela 7: (true | false), required" },
+        "dialogEnhancement": { "ref": "booleano", "obrigatorio": true, "fonte": "Tabela 7: (true | false), required" },
+        "voiceGuidance": { "ref": "booleano", "obrigatorio": true, "fonte": "Tabela 7: (true | false), required" },
+        "lastAccess": { "tipo": "inteiro", "min": 0, "fonte": "P3 (despejo pelo ultimo acesso): instante em ms, decisao de implementacao; fora da Tabela 7" }
+      },
+      "outrosCampos": false,
+      "campoIgualAParte": { "campo": "id", "parte": "id" },
+      "divergencias": [
+        "Tabela 7 pede 'UUID string' no id. O AoP gera user_<epoch-ms> e a carga inicial traz c3167a18-5dc5 (tambem citado pelo bcast/webmedia); o esquema exige so idPerfil. PENDENTE (Joel): adotar UUID ou registrar a excecao.",
+        "Tabela 7 pede 'file path' no avatar. O AoP e a carga gravam o SVG em linha; o esquema aceita qualquer texto."
+      ],
+      "funcoes": ["tv30_perfil_grava", "tv30_perfil_ultimo_acesso", "tv30_perfil_remove"]
+    },
+    {
+      "familia": "user:{id}:consent",
+      "chave": "user:{id}:consent",
+      "tipo": "set",
+      "dono": "AoP",
+      "descricao": "Servicos para os quais o perfil e visivel (NAO e o consentimento da secao 8.8 da norma).",
+      "partes": { "id": { "ref": "idPerfil" } },
+      "membros": { "ref": "idServico" },
+      "funcoes": ["tv30_perfil_grava", "tv30_perfil_remove"]
+    },
+    {
+      "familia": "user:{id}:broadcaster-attrs:{scid}",
+      "chave": "user:{id}:broadcaster-attrs:{scid}",
+      "tipo": "hash",
+      "dono": "tv3ws (grava) e AoP (apaga no despejo) - PENDENTE (Joel), E4",
+      "descricao": "Atributos de emissora do perfil num contexto de servico (C.6.14.5); valor vazio na API remove o atributo.",
+      "partes": { "id": { "ref": "idPerfil" }, "scid": { "ref": "idServico" } },
+      "outrosCampos": {
+        "nome": { "tipo": "texto", "min": 1, "fonte": "C.6.14.5: nome do atributo de emissora" },
+        "valor": { "tipo": "texto", "min": 1, "fonte": "C.6.14.5: valor vazio remove o atributo, entao o gravado nunca e vazio" }
+      },
+      "camposProibidos": {
+        "nomes": ["id", "nickname", "parentalControl", "maxContentRating"],
+        "fonte": "C.6.14.5",
+        "descricao": "Atributos basicos que a C.6.14.5 proibe redefinir no contexto da emissora; o tv3ws responde 101 antes de chegar aqui."
+      },
+      "maxBytes": 20971520,
+      "maxBytesFonte": "P3 / 10.3.3",
+      "maxBytesDescricao": "Ate 20 MB de dados privados por perfil e contexto de servico, medidos como o tv3ws mede: soma dos bytes dos nomes e valores.",
+      "funcoes": ["tv30_atributos_emissora", "tv30_perfil_remove"]
+    },
+    {
+      "familia": "client:{id}",
+      "chave": "client:{id}",
+      "tipo": "hash",
+      "dono": "tv3ws",
+      "descricao": "Cliente autorizado (C.6.1): classe e credenciais emitidas. Fica tambem depois de um bloqueio.",
+      "partes": { "id": { "ref": "idCliente" } },
+      "campos": {
+        "class": { "tipo": "enum", "valores": ["local-associated", "local-autonomous", "non-local"], "obrigatorio": true, "fonte": "P1: classes de cliente do testbed (C.4.1)" },
+        "refreshToken": { "tipo": "texto", "min": 1, "obrigatorio": true, "fonte": "C.6.1.2/C.6.1.3" },
+        "accessToken": { "tipo": "texto", "min": 1, "fonte": "C.6.1.3; ausente ate o primeiro /tv3/token" }
+      },
+      "outrosCampos": false,
+      "funcoes": ["tv30_cliente_grava", "tv30_cliente_autoriza"]
+    },
+    {
+      "familia": "clients:authorized",
+      "chave": "clients:authorized",
+      "tipo": "set",
+      "dono": "tv3ws",
+      "descricao": "Clientes autorizados pelo espectador (D-0510-4). Disjunto de clients:blocked.",
+      "membros": { "ref": "idCliente" },
+      "funcoes": ["tv30_cliente_autoriza", "tv30_cliente_bloqueia", "tv30_cliente_inclui_autorizado"]
+    },
+    {
+      "familia": "clients:blocked",
+      "chave": "clients:blocked",
+      "tipo": "set",
+      "dono": "tv3ws",
+      "descricao": "Clientes recusados ou bloqueados pelo espectador (C.4.2.2); a borda responde 107 ao token deles.",
+      "membros": { "ref": "idCliente" },
+      "funcoes": ["tv30_cliente_autoriza", "tv30_cliente_bloqueia"]
+    },
+    {
+      "familia": "origins:associated",
+      "chave": "origins:associated",
+      "tipo": "hash",
+      "dono": "AoP",
+      "descricao": "Origem propria de cada aplicacao de emissora lancada (P1.3) -> id do servico corrente (ou 'current-service' sem servico). Limpo no boot do AoP.",
+      "outrosCampos": {
+        "nome": { "tipo": "origem", "fonte": "P1.3 (Luis, 10/10): a origem como o navegador a manda no Origin (RFC 6454): esquema http/https e host em minusculas, porta so se nao for a padrao" },
+        "valor": { "ref": "idServico" }
+      },
+      "funcoes": ["tv30_origem_registra", "tv30_origem_remove", "tv30_origens_limpa"]
+    },
+    {
+      "familia": "bind-context:{serviceId}",
+      "chave": "bind-context:{serviceId}",
+      "tipo": "list",
+      "dono": "borda",
+      "descricao": "Chaves de validacao de bind-token registradas pela emissora (C.6.8.2), uma entrada JSON por chave.",
+      "partes": { "serviceId": { "ref": "idServico" } },
+      "itens": {
+        "tipo": "json",
+        "campos": {
+          "alg": { "tipo": "enum", "valores": ["HS256", "HS512", "RS256", "RS512"], "obrigatorio": true, "fonte": "C.4.1.4.8" },
+          "key": { "tipo": "texto", "min": 1, "obrigatorio": true, "fonte": "C.6.8.2 (o texto recebido; a borda ja confere o formato da chave)" },
+          "registeredAt": { "tipo": "inteiro", "min": 0, "obrigatorio": true, "fonte": "instante do registro em ms (decisao de implementacao)" }
+        },
+        "outrosCampos": false
+      },
+      "funcoes": ["tv30_bind_registra", "tv30_bind_remove"]
+    }
+  ],
+
+  "invariantes": [
+    {
+      "id": "perfil-indexado",
+      "descricao": "Todo membro de users:index tem o hash user:{id}, e todo hash user:{id} tem o id em users:index.",
+      "fonte": "Decisao do Luis em 10/10 (P4): user:<id> e users:index juntos"
+    },
+    {
+      "id": "perfil-dependentes",
+      "descricao": "user:{id}:consent e user:{id}:broadcaster-attrs:{scid} so existem para id em users:index.",
+      "fonte": "Derivada do codigo: a criacao grava perfil e visibilidade juntos e o despejo (P3) apaga as quatro familias juntas"
+    },
+    {
+      "id": "clientes-disjuntos",
+      "descricao": "Nenhum id esta ao mesmo tempo em clients:authorized e clients:blocked.",
+      "fonte": "D-0510-4 (reuniao de 05/10 com o Joel)"
+    },
+    {
+      "id": "autorizado-tem-registro",
+      "descricao": "Todo membro de clients:authorized tem o hash client:{id}.",
+      "fonte": "Derivada do codigo: a autorizacao grava os dois na mesma operacao e a inclusao no boot so considera quem tem client:{id}"
+    }
+  ],
+
+  "funcoes": [
+    { "nome": "tv30_sessao_usuario", "argumentos": "<id do perfil corrente, ou vazio>", "efeito": "SET session:current-user", "retorno": "1", "chamadores": ["tv3ws (espelho de aop/currentUser; C.6.14.4)"] },
+    { "nome": "tv30_sessao_servico_id", "argumentos": "<id do servico corrente, ou vazio>", "efeito": "SET session:current-service-id", "retorno": "1", "chamadores": ["tv3ws (espelho de aop/currentService)"] },
+    { "nome": "tv30_sessao_servico", "argumentos": "<campo> <valor> [<campo> <valor> ...]", "efeito": "regrava inteiro o hash session:current-service (DEL + HSET)", "retorno": "1", "chamadores": ["tv3ws (core.ts, troca de servico)"] },
+    { "nome": "tv30_perfil_grava", "argumentos": "<id> <n> <servico 1> ... <servico n> <campo> <valor> [...]", "efeito": "SADD users:index; regrava user:{id} (DEL + HSET); acrescenta os n servicos a user:{id}:consent", "retorno": "1", "chamadores": ["AoP (criacao de perfil)", "carga inicial (emit_seed.py)", "migrate_to_redis.py (depuracao manual)"] },
+    { "nome": "tv30_perfil_ultimo_acesso", "argumentos": "<id> <instante em ms>", "efeito": "HSET user:{id} lastAccess, so se o id estiver em users:index", "retorno": "1 se gravou, 0 se o perfil nao existe", "chamadores": ["AoP (troca de usuario corrente)"] },
+    { "nome": "tv30_perfil_remove", "argumentos": "<id>", "efeito": "SREM users:index; DEL user:{id}, user:{id}:consent e todo user:{id}:broadcaster-attrs:*", "retorno": "numero de chaves e membros removidos", "chamadores": ["AoP (despejo P3)"] },
+    { "nome": "tv30_atributos_emissora", "argumentos": "<id> <scid> <campo> <valor> [...] (valor vazio remove o campo)", "efeito": "HDEL/HSET user:{id}:broadcaster-attrs:{scid}, com o teto de 20 MB conferido no resultado", "retorno": "numero de campos alterados", "chamadores": ["tv3ws (C.6.14.5)"] },
+    { "nome": "tv30_cliente_grava", "argumentos": "<id> <campo> <valor> [...]", "efeito": "HSET client:{id} (acrescenta ou troca campos)", "retorno": "1", "chamadores": ["tv3ws (rotacao do refresh token, emissao do access token)"] },
+    { "nome": "tv30_cliente_autoriza", "argumentos": "<id> <campo> <valor> [...]", "efeito": "HSET client:{id}; SREM clients:blocked; SADD clients:authorized", "retorno": "1", "chamadores": ["tv3ws (C.6.1.2, pop-up aceito)"] },
+    { "nome": "tv30_cliente_bloqueia", "argumentos": "<id>", "efeito": "SREM clients:authorized; SADD clients:blocked", "retorno": "1", "chamadores": ["tv3ws (C.6.1.2, pop-up recusado)"] },
+    { "nome": "tv30_cliente_inclui_autorizado", "argumentos": "<id>", "efeito": "SADD clients:authorized, se o id nao estiver em clients:blocked", "retorno": "1 se incluiu, 0 se nao", "chamadores": ["tv3ws (boot: clientes anteriores ao conjunto)"] },
+    { "nome": "tv30_origem_registra", "argumentos": "<origem> <id do servico>", "efeito": "HSET origins:associated", "retorno": "1", "chamadores": ["AoP (lancamento de aplicacao, P1.3)"] },
+    { "nome": "tv30_origem_remove", "argumentos": "<origem>", "efeito": "HDEL origins:associated", "retorno": "1 se removeu, 0 se nao havia", "chamadores": ["AoP (encerramento ou troca de aplicacao)"] },
+    { "nome": "tv30_origens_limpa", "argumentos": "(nenhum)", "efeito": "DEL origins:associated", "retorno": "1 se havia, 0 se nao", "chamadores": ["AoP (boot)"] },
+    { "nome": "tv30_bind_registra", "argumentos": "<id do servico> <entrada JSON>", "efeito": "RPUSH bind-context:{serviceId}", "retorno": "tamanho da lista", "chamadores": ["borda (C.6.8.2)"] },
+    { "nome": "tv30_bind_remove", "argumentos": "<id do servico> <entrada JSON exata>", "efeito": "LREM bind-context:{serviceId} 0", "retorno": "numero de entradas removidas", "chamadores": ["borda (C.6.8.4)"] },
+    { "nome": "tv30_auditoria", "somenteLeitura": true, "argumentos": "(nenhum)", "efeito": "percorre as familias e as invariantes e devolve o que esta fora do esquema", "retorno": "lista de [chave, familia, motivo]; vazia = tudo no esquema", "chamadores": ["testes (scripts/test-auth.sh, scripts/test-consolidacao.sh, infra/redis/test)", "desenvolvedor: docker exec redis redis-cli FCALL_RO tv30_auditoria 0"] },
+    { "nome": "tv30_versao", "somenteLeitura": true, "argumentos": "(nenhum)", "efeito": "nenhum", "retorno": "a versao deste esquema", "chamadores": ["desenvolvedor: docker exec redis redis-cli FCALL_RO tv30_versao 0"] }
+  ],
+
+  "foraDoAlcance": [
+    { "chave": "remote-devices:index", "dono": "tv3ws", "motivo": "Espelho dos dispositivos remotos conectados (WebSockets vivos), limpo no boot e lido so pelo proprio tv3ws; nao entrou no alcance da decisao de 10/10. Escrita direta em tv3ws/src/modules/remotedevice-manager/manager.ts." },
+    { "chave": "remote-devices:class:{classe}", "dono": "tv3ws", "motivo": "Idem (mesmo espelho)." },
+    { "chave": "remote-device:{handle}", "dono": "tv3ws", "motivo": "Idem (mesmo espelho)." },
+    { "chave": "seed:done", "dono": "entrypoint do container redis", "motivo": "Marca de controle da carga inicial (o healthcheck a le); nao e estado do testbed." },
+    { "chave": "tv30:{componente}:exemplo", "dono": "scripts/test-template.sh e scripts/test-dev-host.sh", "motivo": "Chave do exemplo do template de componente (templates/componente), gravada so pelos scripts de teste e lida pelo exemplo." }
+  ]
+}

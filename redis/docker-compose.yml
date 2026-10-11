@@ -1,8 +1,10 @@
 services:
-  # Redis consolidado (fase 3): server + carga inicial no entrypoint +
-  # redis-commander embutido como processo auxiliar de debug.
-  # Healthcheck so fica saudavel APOS a carga (chave seed:done) — quem
-  # precisa do estado semeado depende de service_healthy.
+  # Redis consolidado (fase 3): server + biblioteca de funcoes (P4) + carga
+  # inicial no entrypoint + redis-commander embutido como processo auxiliar
+  # de debug. Healthcheck so fica saudavel APOS a biblioteca de funcoes
+  # carregar NESTA partida e a carga estar aplicada (marca
+  # /tmp/tv30-redis-pronto, que o entrypoint cria, e chave seed:done) — quem
+  # precisa do estado semeado e das funcoes depende de service_healthy.
   redis:
     image: ${DOCKERHUB_NS:-tv30}/tv30-redis:${IMAGE_TAG:-latest}
     build:
@@ -21,7 +23,7 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "test \"$$(redis-cli --raw EXISTS seed:done)\" = \"1\""]
+      test: ["CMD-SHELL", "test -f /tmp/tv30-redis-pronto && test \"$$(redis-cli --raw EXISTS seed:done)\" = \"1\""]
       interval: 2s
       timeout: 3s
       retries: 30
