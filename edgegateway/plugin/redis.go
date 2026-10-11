@@ -13,11 +13,17 @@ import (
 
 // Mini cliente Redis (protocolo RESP2) so com net da biblioteca padrao —
 // leitura (GET, SISMEMBER, HEXISTS, LRANGE, HGETALL, SCAN) e, para a C.6.8
-// respondida pela borda, escrita (RPUSH, LREM). Pool pequeno de conexoes,
-// timeout curto por comando e reconexao: conexao com erro de rede eh
-// descartada e o comando eh repetido UMA vez numa conexao nova — menos o
-// RPUSH quando a falha veio DEPOIS de o comando sair (resposta perdida de um
-// comando talvez executado: repetir duplicaria a entrada).
+// respondida pela borda, escrita SO por FCALL (P4, decisao do Luis em 10/10,
+// "Funcoes + auditoria"): o registro e a revogacao chamam as funcoes
+// tv30_bind_registra e tv30_bind_remove da biblioteca de funcoes do Redis
+// (infra/redis/funcoes.lua), que conferem o esquema da entrada
+// (infra/redis/esquema.json) antes de gravar. Antes eram RPUSH e LREM diretos.
+// O teste estatico (escritas_test.go) falha se o codigo da borda voltar a ter
+// comando de escrita que nao seja FCALL. Pool pequeno de conexoes, timeout
+// curto por comando e reconexao: conexao com erro de rede eh descartada e o
+// comando eh repetido UMA vez numa conexao nova — menos o registro quando a
+// falha veio DEPOIS de o comando sair (resposta perdida de um comando talvez
+// executado: repetir duplicaria a entrada).
 
 type redisError string
 
@@ -88,10 +94,26 @@ func (rc *redisClient) do(args ...string) (interface{}, error) {
 	return rc.exec(true, args)
 }
 
-// doWrite executa um comando que NAO pode ser repetido as cegas (RPUSH): so
-// repete se a falha foi antes de o comando terminar de sair.
-func (rc *redisClient) doWrite(args ...string) (interface{}, error) {
-	return rc.exec(false, args)
+// fcall chama uma funcao da biblioteca tv30 do Redis (P4) com numkeys 0 —
+// as funcoes derivam as chaves dos argumentos. idempotente=false (o registro
+// de bind-context): NAO repete as cegas, so se a falha foi antes de o comando
+// terminar de sair.
+func (rc *redisClient) fcall(idempotente bool, nome string, args ...string) (interface{}, error) {
+	full := append([]string{"FCALL", nome, "0"}, args...)
+	return rc.exec(idempotente, full)
+}
+
+// prefixo das respostas de erro das funcoes tv30 para dado fora do esquema
+const schemaErrorPrefix = "TV30ESQUEMA "
+
+// schemaRefusal: a funcao recusou o dado (esquema). E defeito de quem
+// grava, nao Redis fora do ar; a mensagem diz funcao, chave, campo e motivo.
+func schemaRefusal(err error) (string, bool) {
+	var re redisError
+	if errors.As(err, &re) && strings.HasPrefix(string(re), schemaErrorPrefix) {
+		return string(re), true
+	}
+	return "", false
 }
 
 func (rc *redisClient) exec(idempotent bool, args []string) (interface{}, error) {
@@ -334,7 +356,8 @@ func (rc *redisClient) scanKeys(match string) ([]string, error) {
 //	session:current-service-id   STRING le    — tv3ws (api/user/service.ts): servico corrente
 //	session:current-service      HASH   le    — tv3ws (core.ts): serviceName/serviceId do corrente (C.6.8.3)
 //	bind-context:{serviceId}     LIST   le e ESCREVE — a propria borda (C.6.8.2/C.6.8.4, bindcontext.go):
-//	                                    {alg,key,registeredAt}
+//	                                    {alg,key,registeredAt}; escrita so pelas funcoes
+//	                                    tv30_bind_registra/tv30_bind_remove (P4)
 const (
 	keyBlocked        = "clients:blocked"
 	keyAssociated     = "origins:associated"
@@ -351,8 +374,8 @@ type store interface {
 	BindKeys(serviceID string) ([]string, error)
 
 	// C.6.8 respondida pela borda
-	AddBindKey(serviceID, raw string) error             // RPUSH
-	RemoveBindKey(serviceID, raw string) (int64, error) // LREM 0 (todas as iguais)
+	AddBindKey(serviceID, raw string) error             // FCALL tv30_bind_registra (RPUSH)
+	RemoveBindKey(serviceID, raw string) (int64, error) // FCALL tv30_bind_remove (LREM 0: todas as iguais)
 	BindServices() ([]string, error)                    // serviceIds com bind-context:* (SCAN)
 	CurrentService() (map[string]string, error)         // HGETALL session:current-service
 }
@@ -380,19 +403,33 @@ func (s *redisStore) BindKeys(serviceID string) ([]string, error) {
 	return s.c.lrange(keyBindPrefix + serviceID)
 }
 
+// AddBindKey: a funcao confere o esquema da entrada ({alg em HS256, HS512,
+// RS256, RS512; key nao vazia; registeredAt inteiro}) e do serviceId e faz o
+// RPUSH em bind-context:{serviceId}; dado fora do esquema volta como erro
+// TV30ESQUEMA (schemaRefusal) e nada e gravado.
 func (s *redisStore) AddBindKey(serviceID, raw string) error {
-	v, err := s.c.doWrite("RPUSH", keyBindPrefix+serviceID, raw)
+	v, err := s.c.fcall(false, "tv30_bind_registra", serviceID, raw)
 	if err != nil {
 		return err
 	}
 	if _, ok := v.(int64); !ok {
-		return errors.New("RPUSH: resposta inesperada")
+		return errors.New("tv30_bind_registra: resposta inesperada")
 	}
 	return nil
 }
 
+// RemoveBindKey: LREM 0 (todas as entradas iguais) pela funcao; repetir e
+// inofensivo, entao pode ser refeito numa conexao nova.
 func (s *redisStore) RemoveBindKey(serviceID, raw string) (int64, error) {
-	return s.c.intCmd("LREM", keyBindPrefix+serviceID, "0", raw)
+	v, err := s.c.fcall(true, "tv30_bind_remove", serviceID, raw)
+	if err != nil {
+		return 0, err
+	}
+	n, ok := v.(int64)
+	if !ok {
+		return 0, errors.New("tv30_bind_remove: resposta inesperada")
+	}
+	return n, nil
 }
 
 func (s *redisStore) BindServices() ([]string, error) {

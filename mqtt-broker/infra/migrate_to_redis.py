@@ -6,7 +6,15 @@ Popula as chaves Redis conforme o schema definido na estratégia de persistênci
   - user:{userId}                             HASH — atributos do perfil (ABNT NBR 25608)
   - user:{userId}:consent                     SET  — IDs de serviço com consentimento
 
-Executa no boot do container Mosquitto (entrypoint.sh).
+Não roda sozinho: fica embarcado na imagem do broker só para depuração manual
+(mqtt-broker/infra/entrypoint.sh). A carga inicial de verdade é do container
+redis (infra/redis/emit_seed.py, que reaproveita normalize_user e
+perfil_fcall_args daqui).
+
+P4 (decisão do Luis em 10/10, "Funções + auditoria"): a escrita passa pela
+função tv30_perfil_grava da biblioteca de funções do Redis (infra/redis), que
+confere o esquema (infra/redis/esquema.json) e grava as três chaves juntas.
+Perfil fora do esquema é recusado com erro TV30ESQUEMA e nada é gravado.
 """
 
 import json
@@ -55,6 +63,31 @@ def normalize_user(user: dict) -> dict:
     return result
 
 
+def redis_text(v) -> str:
+    """Valor como texto no Redis. Booleano do JSON vira 'true'/'false', como o
+    AoP grava e o esquema exige; o str() do Python daria 'True'/'False' (era o
+    que a carga gravava até o P4)."""
+    if isinstance(v, bool):
+        return 'true' if v else 'false'
+    return str(v)
+
+
+def perfil_fcall_args(user: dict):
+    """Argumentos de FCALL tv30_perfil_grava para um perfil do userData.json, ou
+    None se o perfil não tem id. Formato da função (infra/redis/esquema.json):
+      FCALL tv30_perfil_grava 0 <id> <n> <serviço 1..n> <campo> <valor> ...
+    Semântica igual à da carga antiga: users:index recebe o id, user:{id} é
+    regravado inteiro e a visibilidade (accessConsent) é ACRESCENTADA a
+    user:{id}:consent (sem apagar a concedida fora do JSON)."""
+    user_id = user.get('id')
+    if not user_id:
+        return None
+    fields = {k: redis_text(v) for k, v in normalize_user(user).items() if v is not None}
+    consent = [redis_text(s) for s in (user.get('accessConsent') or user.get('consent') or [])]
+    flat = [x for kv in fields.items() for x in kv]
+    return ['FCALL', 'tv30_perfil_grava', '0', redis_text(user_id), str(len(consent)), *consent, *flat]
+
+
 def migrate(r, user_data_path: str) -> None:
     # --------------------------------------------------------------- Users --
     with open(user_data_path, 'r') as f:
@@ -62,28 +95,14 @@ def migrate(r, user_data_path: str) -> None:
 
     users = raw.get('users', raw)  # suporta tanto {users:[...]} quanto [...]
 
+    # Uma chamada da função por perfil (users:index, user:{id} e
+    # user:{id}:consent juntos e atômicos). Merge da visibilidade (sem DEL):
+    # a concedida fora do JSON sobrevive ao re-seed.
     pipe = r.pipeline()
     for user in users:
-        user_id = user.get('id')
-        if not user_id:
-            continue
-
-        # users:index
-        pipe.sadd('users:index', user_id)
-
-        # user:{id} — Hash com atributos normalizados
-        fields = normalize_user(user)
-        hash_fields = {k: str(v) for k, v in fields.items() if v is not None}
-        if hash_fields:
-            pipe.delete(f'user:{user_id}')
-            pipe.hset(f'user:{user_id}', mapping=hash_fields)
-
-        # user:{id}:consent — Set de IDs de serviço
-        # Merge (SADD sem DEL): consents concedidos fora do JSON sobrevivem
-        # ao re-seed. Mesmo comportamento do syncUsersFromFile do tv3ws.
-        consent = user.get('accessConsent') or user.get('consent') or []
-        if consent:
-            pipe.sadd(f'user:{user_id}:consent', *consent)
+        args = perfil_fcall_args(user)
+        if args:
+            pipe.execute_command(*args)
 
     pipe.execute()
 

@@ -5,12 +5,20 @@ Gera, EM TEMPO DE BUILD, o seed do Redis em protocolo RESP (consumido por
 migrate_to_redis.py (fonte unica da regra nickname/closedCaptioning/etc.),
 eliminando a dependencia de rede na partida (antigo defeito 1).
 
+P4 (decisao do Luis em 10/10, "Funcoes + auditoria"): cada perfil vira UMA
+chamada FCALL tv30_perfil_grava (biblioteca de funcoes do Redis, ver
+infra/redis/README.md), que confere o esquema e grava users:index, user:{id}
+e user:{id}:consent juntos. Antes eram SADD/DEL/HSET/SADD avulsos. Os
+argumentos saem de perfil_fcall_args (migrate_to_redis.py), o mesmo que a
+migracao manual usa. Perfil fora do esquema e recusado pela funcao; o build
+da imagem confere a carga (confere-imagem.sh) e falha nesse caso.
+
 Uso: emit_seed.py <userData.json> <saida.resp>
 """
 import json
 import sys
 
-from migrate_to_redis import normalize_user  # mesma regra do seed legado
+from migrate_to_redis import perfil_fcall_args  # mesma regra da migracao manual
 
 
 def resp(*args) -> bytes:
@@ -29,25 +37,13 @@ def main(src: str, dst: str) -> None:
 
     cmds = []
     for user in users:
-        uid = user.get("id")
-        if not uid:
-            continue
-        cmds.append(resp("SADD", "users:index", uid))
-
-        fields = {k: str(v) for k, v in normalize_user(user).items() if v is not None}
-        if fields:
-            cmds.append(resp("DEL", f"user:{uid}"))
-            flat = [x for kv in fields.items() for x in kv]
-            cmds.append(resp("HSET", f"user:{uid}", *flat))
-
-        consent = user.get("accessConsent") or user.get("consent") or []
-        if consent:
-            # merge (sem DEL): visibilidade concedida fora do JSON sobrevive
-            cmds.append(resp("SADD", f"user:{uid}:consent", *consent))
+        args = perfil_fcall_args(user)
+        if args:
+            cmds.append(resp(*args))
 
     with open(dst, "wb") as f:
         f.writelines(cmds)
-    print(f"seed: {len(users)} usuarios, {len(cmds)} comandos -> {dst}")
+    print(f"seed: {len(users)} usuarios, {len(cmds)} chamadas tv30_perfil_grava -> {dst}")
 
 
 if __name__ == "__main__":

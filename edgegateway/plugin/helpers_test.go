@@ -109,6 +109,7 @@ type fakeStore struct {
 	svcHash    map[string]string   // session:current-service
 	wrongType  map[string]bool     // bind-context:{serviceId} de outro tipo (WRONGTYPE)
 	err        error
+	writeErr   error // so nas escritas (a funcao do Redis recusando o dado, P4)
 	calls      int
 }
 
@@ -136,6 +137,9 @@ func (f *fakeStore) AddBindKey(id, raw string) error {
 	if f.err != nil {
 		return f.err
 	}
+	if f.writeErr != nil {
+		return f.writeErr
+	}
 	if f.keys == nil {
 		f.keys = map[string][]string{}
 	}
@@ -146,6 +150,9 @@ func (f *fakeStore) RemoveBindKey(id, raw string) (int64, error) {
 	f.calls++
 	if f.err != nil {
 		return 0, f.err
+	}
+	if f.writeErr != nil {
+		return 0, f.writeErr
 	}
 	var kept []string
 	var n int64

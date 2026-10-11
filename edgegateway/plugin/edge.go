@@ -136,6 +136,17 @@ func redisDown(err error) edgeReply {
 	return edgeReply{Code: 200, Detail: "redis indisponivel (" + err.Error() + ")"}
 }
 
+// redisWriteFailed: falha numa escrita (C.6.8.2, C.6.8.4). A recusa da
+// funcao do Redis por dado fora do esquema (P4, Luis em 10/10) e defeito da
+// borda, nao Redis fora do ar: responde como a falha de Redis (404
+// {error:200}) e o detalhe diz o que a funcao recusou (serveEdge loga).
+func redisWriteFailed(err error) edgeReply {
+	if msg, ok := schemaRefusal(err); ok {
+		return edgeReply{Code: 200, Detail: "escrita recusada pelo esquema do Redis (" + msg + ")"}
+	}
+	return redisDown(err)
+}
+
 // encodeJSON sem o escape de <, > e & do json.Marshal (o JSON.stringify do
 // tv3ws, que gravava as mesmas chaves no Redis, nao escapa) e sem a quebra
 // de linha final do Encoder.

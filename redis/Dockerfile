@@ -3,11 +3,19 @@
 # pip-install em tempo de partida) + redis-commander embutido como processo
 # auxiliar de debug.
 #
+# P4 (decisao do Luis em 10/10, "Funcoes + auditoria"): a imagem leva a
+# biblioteca de funcoes do Redis (esquema.json + funcoes.lua, montados por
+# biblioteca.sh), que o entrypoint carrega a cada partida antes da carga
+# inicial; a carga tambem passa pelas funcoes. O build roda confere-imagem.sh:
+# biblioteca que nao carrega, carga fora do esquema ou auditoria com achados
+# depois da carga nao viram imagem. Ver README.md desta pasta.
+#
 # Semantica registrada (decisao V8/V9): o redis-server e o processo
 # principal — se ELE morrer, o container cai; se o COMMANDER morrer, o
 # banco segue (excecao consciente ao morre-inteiro, por ser ferramenta de
-# inspecao). O healthcheck so fica saudavel APOS a carga (chave seed:done),
-# substituindo o antigo depends_on service_completed_successfully.
+# inspecao). O healthcheck so fica saudavel APOS a biblioteca carregar nesta
+# partida e a carga estar aplicada (marca /tmp/tv30-redis-pronto e chave
+# seed:done), substituindo o antigo depends_on service_completed_successfully.
 #
 # Build context: infra/  (precisa do template de userData e do script de
 # normalizacao compartilhado com o mqtt-broker)
@@ -33,6 +41,8 @@ RUN apk add --no-cache nodejs npm dumb-init && \
     npm cache clean --force
 
 COPY --from=seedgen /seed.resp /seed.resp
+COPY redis/esquema.json redis/funcoes.lua redis/biblioteca.sh redis/confere-imagem.sh /opt/tv30-redis/
+RUN sh /opt/tv30-redis/confere-imagem.sh
 COPY redis/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

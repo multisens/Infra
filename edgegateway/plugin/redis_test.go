@@ -26,6 +26,9 @@ type fakeRedis struct {
 	// dropNext: le o proximo comando, NAO o executa e fecha a conexao sem
 	// responder (resposta perdida)
 	dropNext bool
+	// recusa: resposta de erro das funcoes tv30 (como a de dado fora do
+	// esquema, P4); vazio = executa
+	recusa string
 }
 
 func startFakeRedis(t *testing.T) *fakeRedis {
@@ -89,6 +92,9 @@ func (f *fakeRedis) serve(c net.Conn) {
 		f.dropNext = false
 		if len(args) > 0 {
 			f.cmds[strings.ToUpper(args[0])]++
+			if strings.ToUpper(args[0]) == "FCALL" && len(args) > 1 {
+				f.cmds["FCALL "+args[1]]++
+			}
 		}
 		f.mu.Unlock()
 		if drop {
@@ -159,25 +165,36 @@ func (f *fakeRedis) exec(a []string) string {
 			out += bulk(e)
 		}
 		return out
-	case "RPUSH":
-		f.lists[a[1]] = append(f.lists[a[1]], a[2:]...)
-		return ":" + strconv.Itoa(len(f.lists[a[1]])) + "\r\n"
-	case "LREM": // so count 0 (todas as ocorrencias)
-		var kept []string
-		n := 0
-		for _, e := range f.lists[a[1]] {
-			if e == a[3] {
-				n++
-				continue
+	case "FCALL": // P4: so as funcoes tv30_bind_* (o EFEITO, sem o esquema), numkeys 0
+		if len(a) != 5 || a[2] != "0" {
+			return "-ERR FCALL do duble: esperado FCALL <funcao> 0 <serviceId> <entrada>\r\n"
+		}
+		if f.recusa != "" {
+			return "-" + f.recusa + "\r\n"
+		}
+		key := keyBindPrefix + a[3]
+		switch a[1] {
+		case "tv30_bind_registra": // RPUSH
+			f.lists[key] = append(f.lists[key], a[4])
+			return ":" + strconv.Itoa(len(f.lists[key])) + "\r\n"
+		case "tv30_bind_remove": // LREM 0 (todas as ocorrencias)
+			var kept []string
+			n := 0
+			for _, e := range f.lists[key] {
+				if e == a[4] {
+					n++
+					continue
+				}
+				kept = append(kept, e)
 			}
-			kept = append(kept, e)
+			if len(kept) == 0 {
+				delete(f.lists, key) // como no Redis: lista vazia some
+			} else {
+				f.lists[key] = kept
+			}
+			return ":" + strconv.Itoa(n) + "\r\n"
 		}
-		if len(kept) == 0 {
-			delete(f.lists, a[1]) // como no Redis: lista vazia some
-		} else {
-			f.lists[a[1]] = kept
-		}
-		return ":" + strconv.Itoa(n) + "\r\n"
+		return "-ERR Function not found\r\n"
 	case "HGETALL":
 		h := f.hashes[a[1]]
 		fields := make([]string, 0, len(h))
@@ -205,8 +222,9 @@ func (f *fakeRedis) exec(a []string) string {
 	return "-ERR unknown command\r\n"
 }
 
-// Comandos da C.6.8 respondida pela borda: RPUSH, LREM, SCAN (varias
-// paginas), HGETALL; LRANGE de chave de outro tipo eh erro do servidor.
+// Comandos da C.6.8 respondida pela borda: as funcoes tv30_bind_registra e
+// tv30_bind_remove (FCALL; antes RPUSH e LREM), SCAN (varias paginas),
+// HGETALL; LRANGE de chave de outro tipo eh erro do servidor.
 func TestRedisComandosC68(t *testing.T) {
 	f := startFakeRedis(t)
 	f.with(func() {
@@ -261,9 +279,9 @@ func TestRedisComandosC68(t *testing.T) {
 	}
 }
 
-// Resposta perdida depois de o comando sair: RPUSH NAO eh repetido (poderia
-// duplicar a entrada); leitura numa conexao do pool que morreu eh repetida
-// (TestRedisReconecta).
+// Resposta perdida depois de o comando sair: o registro (FCALL
+// tv30_bind_registra, um RPUSH) NAO eh repetido (poderia duplicar a entrada);
+// leitura numa conexao do pool que morreu eh repetida (TestRedisReconecta).
 func TestRedisRPUSHNaoRepete(t *testing.T) {
 	f := startFakeRedis(t)
 	f.with(func() { f.strs[keyCurrentService] = tSvc })
@@ -276,8 +294,8 @@ func TestRedisRPUSHNaoRepete(t *testing.T) {
 		t.Fatal("esperado erro com a resposta perdida")
 	}
 	f.with(func() {
-		if f.cmds["RPUSH"] != 1 {
-			t.Errorf("RPUSH enviado %d vezes, esperado 1", f.cmds["RPUSH"])
+		if f.cmds["FCALL tv30_bind_registra"] != 1 {
+			t.Errorf("tv30_bind_registra enviado %d vezes, esperado 1", f.cmds["FCALL tv30_bind_registra"])
 		}
 	})
 	// o cliente segue usavel
@@ -287,6 +305,35 @@ func TestRedisRPUSHNaoRepete(t *testing.T) {
 	if l, _ := s.BindKeys("urn:a"); strings.Join(l, ",") != "e2" {
 		t.Fatalf("lista %q", l)
 	}
+}
+
+// P4 (Luis, 10/10): recusa da funcao (dado fora do esquema) volta como erro
+// do servidor com prefixo TV30ESQUEMA, reconhecido por schemaRefusal; a
+// conexao segue boa e a recusa nao e repetida.
+func TestRedisRecusaDoEsquema(t *testing.T) {
+	f := startFakeRedis(t)
+	s := &redisStore{c: newRedisClient(f.ln.Addr().String(), time.Second)}
+	msg := `TV30ESQUEMA tv30_bind_registra: bind-context:urn:a entrada: membro "alg": deve ser um de HS256, HS512, RS256, RS512 (veio "none")`
+	f.with(func() { f.recusa = msg })
+	err := s.AddBindKey("urn:a", `{"alg":"none","key":"k","registeredAt":1}`)
+	if got, ok := schemaRefusal(err); !ok || got != msg {
+		t.Fatalf("esperada recusa do esquema, veio %v", err)
+	}
+	if _, err := s.RemoveBindKey("urn:a", "x"); err == nil {
+		t.Fatal("remocao recusada deveria dar erro")
+	}
+	f.with(func() { f.recusa = "" })
+	if err := s.AddBindKey("urn:a", "e"); err != nil {
+		t.Fatalf("depois da recusa: %v", err)
+	}
+	f.with(func() {
+		if n := f.cmds["FCALL tv30_bind_registra"]; n != 2 {
+			t.Errorf("tv30_bind_registra enviado %d vezes, esperado 2 (sem repetir a recusa)", n)
+		}
+		if f.cmds["RPUSH"]+f.cmds["LREM"] != 0 {
+			t.Errorf("escrita direta: RPUSH=%d LREM=%d", f.cmds["RPUSH"], f.cmds["LREM"])
+		}
+	})
 }
 
 func TestRedisComandos(t *testing.T) {
