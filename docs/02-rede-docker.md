@@ -4,9 +4,10 @@
 > - não há mais `redis-auth` nem container `rediscommander/redis-commander` na `:8081`. O container `redis` (imagem `tv30-redis`) embute a carga inicial e o redis-commander como processo auxiliar, na porta `18081` do container e em porta de host dinâmica (`docker port redis 18081`), com login (D-L1, Luís, 03/10). A 6379 segue publicada e sem senha;
 > - não há mais `krakend-gateway` na `:8090`. A borda é o container `edgegateway`, com as superfícies interna (`44642`, fixa da norma C.3.4) e externa (`44643`) e a documentação em porta dinâmica (`docker port edgegateway 8085`);
 > - o `mqtt-broker` não consulta o Redis: o controle de acesso a tópicos foi removido, e o plugin só valida esquema e mede latência (`infra/mqtt-broker/plugin/src/mosquitto_plugin.c`). A seta `hiredis` do primeiro diagrama e o passo "migrate_to_redis.py popula Redis" do segundo não existem mais: o `entrypoint.sh` do broker só sobe o Mosquitto, e o `migrate_to_redis.py` fica na imagem só para depuração manual (`infra/mqtt-broker/infra/entrypoint.sh`);
+> - as portas de host mudaram em 11/10 (C1, decisão do Luís): ficaram fixas a 44642, a do AoP (8080), a 1883, a 6379 e a faixa 45000–45199 (e a 44643 no modo SSDP); a 44643 na bridge e a 9001 do Mosquitto saem numa porta de host escolhida pelo Docker (`EDGE_EXT_PUBLISH` e `MQTT_WS_PUBLISH` em `infra/docker-compose.yml`), e a página da TV fala MQTT pelo `/mqtt` do AoP, e não mais pela `:9001` do host. A porta 9001 dos diagramas é a do container;
 > - as pastas dos diagramas têm nomes antigos: `mosquitto_plugin/` é hoje `infra/mqtt-broker/`, e `krakenD/` deu lugar a `infra/edgegateway/`. Os três `docker compose up` em sequência também não existem mais: o `infra/docker-compose.yml`, incluído pelo compose da raiz do TV30, sobe tudo de uma vez e cria a `ginga_net`.
 >
-> O estado atual está em `infra/README.md` e `infra/ARCHITECTURE.md`. Revisão deste documento: pendente.
+> O estado atual está em `infra/README.md` e, na raiz do TV30, em `docs/arquitetura.md`. O `infra/ARCHITECTURE.md`, citado aqui até 11/10 como estado atual, também é documento histórico (aviso no topo dele). Revisão deste documento: pendente.
 
 Containers, portas expostas e comunicação interna via `ginga_net`.
 

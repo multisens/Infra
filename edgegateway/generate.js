@@ -253,11 +253,11 @@ function pluginConfig(t, surface) {
     // P1.9, a externa deixa de listar as APIs das rotas que so existem na
     // interna (hoje tv3ws-bind-context-register e tv3ws-bind-context-remove),
     // e GET /tv3/api-info/<id> delas da 101 na 44643.
-    // PENDENTE (Joel): a lista por superficie ja era assim desde a D-0510-3
-    // (05/10), mas com as duas superficies iguais a diferenca nao aparecia. A
-    // C.6.7.9 (Tabela C.46, p. 301 do PDF) descreve "all APIs of a given
-    // category", no campo "receiverApis", sem falar de superficie; se a
-    // externa deve listar tambem as APIs que nao oferece nao foi decidido.
+    // DECIDIDO (Luis, 11/10; F-2): cada superficie lista so as APIs que
+    // oferece. A lista por superficie ja era assim desde a D-0510-3 (05/10),
+    // mas com as duas superficies iguais a diferenca nao aparecia. A C.6.7.9
+    // (Tabela C.46, p. 301 do PDF) descreve "all APIs of a given category",
+    // no campo "receiverApis", sem falar de superficie.
     apis: apisOf(routes),
   };
   // PENDENTE (Joel): lacuna L2 — serviceContextId constante do tv3ws
