@@ -41,17 +41,22 @@ services:
       # habilita host.docker.internal em Linux (necessario pro cenario de
       # desenvolvimento com backend no host; inocuo no deploy padrao)
       - "host.docker.internal:host-gateway"
-    # C1 (decisao do Luis em 11/10, opcao b): 44642 FIXA (norma, C.3.4); a
-    # 44643 sai numa porta de host ALEATORIA (o Docker escolhe uma livre):
-    # descobrir com `docker compose port edgegateway 44643`. EDGE_EXT_PUBLISH
-    # e o valor que vai em `ports`: so o numero (padrao 44643) = porta do
-    # container com porta de host aleatoria; `host:container` fixa (ex.:
-    # EDGE_EXT_PUBLISH=44643:44643, como era ate 11/10). No modo SSDP (rede do
-    # host, docker-compose.ssdp.yml da raiz) o `ports` inteiro e zerado e a
-    # 44643 fica fixa no host, porque vai no anuncio.
+    # Portas: 44642 FIXA (norma, C.3.4). A 44643 tambem e FIXA por padrao na
+    # bridge (decisao do Luis em 12/10, revendo a C1 de 11/10): o /manifest do
+    # tv3ws anuncia o Server-SecureBaseURL em <host>:44643 (EDGE_HTTPS_PORT,
+    # padrao 44643) e nao sabe a porta de host que o Docker escolheria.
+    # EDGE_EXT_PUBLISH e o valor que vai em `ports`: `host:container` fixa
+    # (padrao 44643:44643; outra porta de host pede o mesmo numero no
+    # EDGE_HTTPS_PORT do tv3ws, senao o /manifest anuncia a errada); so o
+    # numero (EDGE_EXT_PUBLISH=44643) = porta do container com porta de host
+    # livre escolhida pelo Docker, descoberta com
+    # `docker compose port edgegateway 44643`, que o /manifest NAO anuncia.
+    # De 11/10 (C1, opcao b) a 12/10 o padrao era so o numero. No modo SSDP
+    # (rede do host, docker-compose.ssdp.yml da raiz) o `ports` inteiro e
+    # zerado e a 44643 fica fixa no host, porque vai no anuncio.
     ports:
       - "44642:44642"   # superficie interna — porta FIXA da norma
-      - "${EDGE_EXT_PUBLISH:-44643}"   # superficie externa: porta de host aleatoria por padrao (C1)
+      - "${EDGE_EXT_PUBLISH:-44643:44643}"   # superficie externa: porta de host FIXA por padrao (Luis, 12/10)
       - "8085"          # docs: porta de host dinamica (V10)
     depends_on:
       # o preflight (compose raiz) BLOQUEIA a subida se a 44642 estiver

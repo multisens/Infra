@@ -165,7 +165,7 @@ func TestExternaMantemGetEOptions(t *testing.T) {
 }
 
 // C.6.7.8/C.6.7.9 na externa: o catalogo eh o das rotas da superficie (ver
-// o PENDENTE no generate.js, pluginConfig).
+// o DECIDIDO (Luis, 11/10; F-2) no generate.js, pluginConfig).
 func TestExternaAPIInfo(t *testing.T) {
 	h := externalHandler(t, modeEnforce, baseStore(), nil)
 	wantOK(t, "externa: lista", apiGet(t, h, "/tv3/api-info", nil), `{"receiverApis":[`+

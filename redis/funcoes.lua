@@ -207,7 +207,14 @@ end
 -- F-3 (decisao do Luis em 11/10): id do perfil em UUID, no formato textual da
 -- RFC 9562 (8-4-4-4-12 digitos hexadecimais), em minusculas. Literal (e nao
 -- string.rep): na carga da biblioteca o Redis nao expoe as bibliotecas.
+-- UUID estrito (decisao do Luis em 12/10, versao 3 do esquema): alem do
+-- formato, a versao (1o digito do 3o grupo) tem de ser de 1 a 8 e a variante
+-- (1o digito do 4o grupo) a da RFC 9562 (8, 9, a ou b). O UUID nulo (todo 0)
+-- e o maximo (todo f) ficam de fora: nao servem de id de perfil. Ate 12/10
+-- (versao 2) versao e variante nao eram conferidas.
 local UUID_FORMATO = '^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$'
+local UUID_NULO = '00000000-0000-0000-0000-000000000000'
+local UUID_MAXIMO = 'ffffffff-ffff-ffff-ffff-ffffffffffff'
 
 local function motivoUuid(v)
   if not string.find(v, UUID_FORMATO) then
@@ -215,6 +222,22 @@ local function motivoUuid(v)
       'c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10; veio ' .. amostra(v) .. ')'
   end
   if string.find(v, '%u') then return 'UUID deve estar em minusculas (veio ' .. amostra(v) .. ')' end
+  -- nulo e maximo antes da versao: a mensagem diz o que o valor e
+  if v == UUID_NULO then
+    return 'UUID nulo (Nil UUID da RFC 9562, todo 0) nao serve de id de perfil (versao 0 e variante 0)'
+  end
+  if v == UUID_MAXIMO then
+    return 'UUID maximo (Max UUID da RFC 9562, todo f) nao serve de id de perfil (versao f e variante f)'
+  end
+  local versao = string.sub(v, 15, 15)
+  if not string.find(versao, '^[1-8]$') then
+    return 'versao do UUID deve ser de 1 a 8 (1o digito do 3o grupo; veio ' .. versao .. ' em ' .. amostra(v) .. ')'
+  end
+  local variante = string.sub(v, 20, 20)
+  if not string.find(variante, '^[89ab]$') then
+    return 'variante do UUID deve ser a da RFC 9562 (1o digito do 4o grupo em 8, 9, a ou b; veio ' ..
+      variante .. ' em ' .. amostra(v) .. ')'
+  end
   return nil
 end
 

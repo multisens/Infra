@@ -62,6 +62,12 @@ const P2 = '5a9d2f4e-1c3b-4d6a-8e7f-9b0c1d2e3f4a';
 const FANTASMA = 'f0f0f0f0-0000-4000-8000-000000000001';
 const ORFAO = 'f0f0f0f0-0000-4000-8000-000000000002';
 const SEM_HASH = 'f0f0f0f0-0000-4000-8000-000000000003';
+// UUID estrito (decisao do Luis em 12/10, esquema versao 3): a versao e o 1o
+// digito do 3o grupo (indice 14) e tem de ser de 1 a 8; a variante e o 1o
+// digito do 4o grupo (indice 19) e tem de ser 8, 9, a ou b (RFC 9562)
+const UUID_VERSAO = 14;
+const UUID_VARIANTE = 19;
+const comDigito = (u, i, d) => u.slice(0, i) + d + u.slice(i + 1);
 const PERFIL = {
     id: P1, nickname: 'Viewer 1', avatar: '<svg viewBox="0 0 1 1"/>',
     parentalControl: 'true', maxContentRating: '12',
@@ -176,6 +182,20 @@ function violacoes(regra, emJson = false) {
             ]) out.push([v, 'RFC 9562', d]);
             out.push([ok.toUpperCase(), 'minusculas', 'maiusculas']);
             out.push(['C' + ok.slice(1), 'minusculas', 'uma maiuscula']);
+            // UUID estrito (Luis, 12/10): versao 1 a 8 e variante da RFC 9562.
+            // A mensagem diz qual parte falhou e o digito que veio.
+            for (const d of '09f') {
+                out.push([comDigito(ok, UUID_VERSAO, d), ['versao do UUID deve ser de 1 a 8', `veio ${d} em`], `versao ${d}`]);
+            }
+            for (const d of '01234567cdef') {
+                out.push([comDigito(ok, UUID_VARIANTE, d), ['variante do UUID deve ser a da RFC 9562', `veio ${d} em`], `variante ${d}`]);
+            }
+            // as duas erradas juntas: a versao e conferida antes
+            out.push([comDigito(comDigito(ok, UUID_VERSAO, '0'), UUID_VARIANTE, 'c'), ['versao do UUID', 'veio 0 em'], 'versao 0 e variante c']);
+            out.push(['00000000-0000-0000-0000-000000000000', ['UUID nulo', 'nao serve de id de perfil'], 'nulo (Nil UUID)']);
+            out.push(['ffffffff-ffff-ffff-ffff-ffffffffffff', ['UUID maximo', 'nao serve de id de perfil'], 'maximo (Max UUID)']);
+            // a caixa e conferida antes: variante valida em maiuscula (B)
+            out.push([comDigito(ok, UUID_VARIANTE, 'B'), 'minusculas', 'variante B maiuscula']);
             break;
         }
         case 'origem':
@@ -231,11 +251,17 @@ function aceitacoes(regra) {
         }
         case 'enum': return regra.valores.slice();
         case 'idioma': return ['pt-BR', 'en', 'pt', 'zh-Hant-TW', 'x-tv30', 'i-default', 'es-419'];
-        // a carga inicial, um crypto.randomUUID() (o que o AoP gera), exemplos
-        // de outras versoes (1 e 7) e os UUID nulo e maximo: versao e variante
-        // nao sao conferidas
-        case 'uuid': return ['c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10', require('crypto').randomUUID(), 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6',
-            '017f22e2-79b0-7cc3-98c4-dc0c0c07398f', '00000000-0000-0000-0000-000000000000', 'ffffffff-ffff-ffff-ffff-ffffffffffff'];
+        // a carga inicial (v4, variante 9), um crypto.randomUUID() (v4, o que
+        // o AoP gera), exemplos de outras versoes (1 e 7) e, nas fronteiras do
+        // UUID estrito (Luis, 12/10), cada versao de 1 a 8 com cada variante
+        // 8, 9, a e b. Ate 12/10 os UUID nulo e maximo tambem eram aceitos
+        // (versao e variante nao eram conferidas); agora estao nas violacoes.
+        case 'uuid': {
+            const out = ['c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10', require('crypto').randomUUID(), 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6',
+                '017f22e2-79b0-7cc3-98c4-dc0c0c07398f'];
+            for (const v of '12345678') for (const va of '89ab') out.push(comDigito(comDigito(P1, UUID_VERSAO, v), UUID_VARIANTE, va));
+            return out;
+        }
         case 'origem': return ['http://users-test.apps.localhost:8080', 'http://a.apps.localhost', 'https://x.example', 'https://x.example:8443', 'http://[::1]:8099', 'http://127.0.0.1:65535'];
         case 'json': return ['HS256', 'HS512', 'RS256', 'RS512'].map(alg => JSON.stringify({ ...jsonValido(regra), alg }));
         default: throw new Error(`tipo de regra sem gerador de aceitacoes neste teste: ${regra.tipo}`);
@@ -497,6 +523,24 @@ test('id antigo (volume de antes da F-3): auditoria aponta, gravacao recusada, d
     assert.deepEqual(await auditoria(), []);
 });
 
+// UUID estrito (decisao do Luis em 12/10, esquema versao 3): o id da carga
+// inicial (v4, variante 9) e os do AoP (crypto.randomUUID(): v4, variante da
+// RFC 9562) continuam validos; o nulo e o maximo deixam de ser.
+test('UUID estrito: id da carga e crypto.randomUUID() do AoP aceitos; nulo e maximo recusados', async () => {
+    const ids = ['c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10', ...Array.from({ length: 20 }, () => require('crypto').randomUUID())];
+    for (const id of ids) {
+        await limpo();
+        await fcall('tv30_perfil_grava', ...perfilArgs(id, ['urn:s'], { ...PERFIL_MIN, id }));
+        assert.deepEqual(await r('SMEMBERS', 'users:index'), [id], id);
+        assert.deepEqual(await auditoria(), [], id);
+    }
+    for (const [id, m] of [['00000000-0000-0000-0000-000000000000', 'UUID nulo'], ['ffffffff-ffff-ffff-ffff-ffffffffffff', 'UUID maximo']]) {
+        await limpo();
+        const msg = await recusa(m, 'tv30_perfil_grava', perfilArgs(id, [], { ...PERFIL_MIN, id }), [`{id} da chave: ${m}`, 'nao serve de id de perfil']);
+        assert.ok(!msg.includes('\n'), 'mensagem numa linha so');
+    }
+});
+
 test('atributos de emissora: perfil precisa estar indexado; vazio remove', async () => {
     await recusa('perfil inexistente', 'tv30_atributos_emissora', [P1, 'urn:s:1', 'cor', 'azul'], ['fora de users:index (invariante perfil-dependentes)']);
     await indexaP1();
@@ -638,6 +682,10 @@ test('auditoria: cada tipo de problema gravado a mao aparece com chave, familia 
         [['SADD', 'users:index', 'user_1760000000000'], ['users:index', 'users:index', 'membro "user_1760000000000": deve ser UUID no formato da RFC 9562']],
         [['HSET', 'user:c3167a18-5dc5', 'id', 'c3167a18-5dc5'], ['user:c3167a18-5dc5', 'user:{id}', '{id} da chave: deve ser UUID']],
         [['SADD', `user:${P1.toUpperCase()}:consent`, 'urn:s'], [`user:${P1.toUpperCase()}:consent`, 'user:{id}:consent', '{id} da chave: UUID deve estar em minusculas']],
+        // UUID estrito (Luis, 12/10, esquema versao 3): nulo, versao e variante
+        [['SADD', 'users:index', '00000000-0000-0000-0000-000000000000'], ['users:index', 'users:index', 'membro "00000000-0000-0000-0000-000000000000": UUID nulo']],
+        [['SADD', `user:${comDigito(P1, UUID_VERSAO, '9')}:consent`, 'urn:s'], [`user:${comDigito(P1, UUID_VERSAO, '9')}:consent`, 'user:{id}:consent', '{id} da chave: versao do UUID deve ser de 1 a 8 (1o digito do 3o grupo; veio 9']],
+        [['HSET', `user:${comDigito(P1, UUID_VARIANTE, 'c')}`, 'id', comDigito(P1, UUID_VARIANTE, 'c')], [`user:${comDigito(P1, UUID_VARIANTE, 'c')}`, 'user:{id}', '{id} da chave: variante do UUID deve ser a da RFC 9562 (1o digito do 4o grupo em 8, 9, a ou b; veio c']],
         // invariantes
         [['HSET', `user:${FANTASMA}`, 'id', FANTASMA, 'nickname', 'F', 'parentalControl', 'false', 'closedCaptioning', 'false', 'closedSigning', 'false', 'audioDescription', 'false', 'dialogEnhancement', 'false', 'voiceGuidance', 'false'],
             [`user:${FANTASMA}`, 'user:{id}', 'id fora de users:index (invariante perfil-indexado)']],
