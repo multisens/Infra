@@ -9,6 +9,8 @@
 #include <mqtt_protocol.h>
 #include "schema_validator.h"
 #include "response_time_tester.h"
+#include "error_json.h"
+#include "json_payload.h"
 
 mosquitto_plugin_id_t *mosq_pid = NULL;
 static json_object *schemas = NULL;
@@ -51,28 +53,37 @@ static void load_schemas_from_file(const char* filename) {
 }
 
 // Publish error to errors/<client_id> topic
-static void publish_error(const char* topic, const char* error_type, const char* details, const char* payload, const char* client_id) {
-    char *error_buffer = malloc(2048);
+// Correcao de 12/10 (defeito achado pela auditoria da documentacao): os
+// campos entravam no JSON por snprintf, sem escape, e um payload ou mensagem
+// com aspas, barra invertida ou caractere de controle gerava JSON invalido;
+// mensagem de 2048 bytes ou mais nao saia. Agora a mensagem e montada por
+// error_json_build (error_json.c): escape da RFC 8259, UTF-8 valido, payload
+// pelo comprimento (NUL no meio vira \u0000) e corte em fronteira segura, com
+// "truncated":true, para caber em ERROR_JSON_CAP - 1 = 2047 bytes.
+static void publish_error(const char* topic, const char* error_type, const char* details, const char* payload, size_t payload_len, const char* client_id) {
+    char *error_buffer = malloc(ERROR_JSON_CAP);
     if (!error_buffer) return;
-    
+
     time_t now = time(NULL);
     char timestamp[64];
     strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%S", gmtime(&now));
-    
-    int len = snprintf(error_buffer, 2048,
-        "{\"timestamp\":\"%s\",\"topic\":\"%s\",\"error_type\":\"%s\",\"details\":\"%s\",\"client_id\":\"%s\"%s%s%s}",
-        timestamp, topic, error_type, details, 
-        client_id ? client_id : "unknown",
-        payload ? ",\"payload\":\"" : "",
-        payload ? payload : "",
-        payload ? "\"" : ""
-    );
-    
-    if (len > 0 && len < 2048) {
-        char error_topic[256];
-        snprintf(error_topic, sizeof(error_topic), "errors/%s", client_id ? client_id : "unknown");
-        mosquitto_broker_publish(NULL, error_topic, len, error_buffer, 0, 0, NULL);
+
+    int len = error_json_build(error_buffer, ERROR_JSON_CAP, timestamp, topic, error_type, details,
+                               client_id ? client_id : "unknown", payload, payload_len);
+
+    // mosquitto_broker_publish so fica com o buffer (e o libera) quando
+    // devolve sucesso; nos outros casos ele e liberado aqui (antes vazava).
+    // Topico (correcao de 12/10, revisao do plugin): error_json_topic corta so
+    // entre caracteres UTF-8 inteiros e troca +, #, / e controles do client_id
+    // por _ (regra em error_json.h); antes era snprintf("errors/%s").
+    if (len > 0) {
+        char error_topic[ERROR_JSON_TOPIC_CAP];
+        if (error_json_topic(error_topic, sizeof(error_topic), client_id) > 0 &&
+            mosquitto_broker_publish(NULL, error_topic, len, error_buffer, 0, 0, NULL) == MOSQ_ERR_SUCCESS) {
+            return;
+        }
     }
+    free(error_buffer);
 }
 
 // Casamento de topico MQTT (+ e #) — o lookup por igualdade exata deixava
@@ -126,21 +137,35 @@ static int schema_expects_plain_string(json_object* schema) {
 }
 
 // Validate message against schema
-static int validate_message(const char* topic, const char* payload, const char* client_id) {
+// payload_len (12/10): o comprimento real, para a mensagem de errors/ levar o
+// payload inteiro mesmo com NUL no meio.
+// Leitura do payload (correcao de 12/10, revisao do plugin): antes era
+// json_tokener_parse(payload), que le ate o primeiro NUL e ignora o que vem
+// depois do primeiro valor ({"value":1}lixo e {"value":1}\0lixo passavam e
+// eram entregues). Agora json_payload_parse le o payload inteiro, pelo
+// comprimento, e so aceita exatamente um texto JSON (RFC 8259; regra em
+// json_payload.h); o resto vira INVALID_JSON. O literal null continua como
+// antes (o json-c o representa por NULL): INVALID_JSON, ou string pura nos
+// topicos de esquema type=string.
+static int validate_message(const char* topic, const char* payload, size_t payload_len, const char* client_id) {
     json_object *schema = get_schema_for_topic(topic);
     if (!schema) {
         return MOSQ_ERR_SUCCESS;
     }
     
-    json_object *message = json_tokener_parse(payload);
-    if (!message && schema_expects_plain_string(schema)) {
+    json_object *message = NULL;
+    json_payload_parse(payload, payload_len, &message);
+    if (!message && schema_expects_plain_string(schema) && !memchr(payload, '\0', payload_len)) {
         // payload string pura (uuid/caminho/nome de tela): embrulha como
-        // string JSON pra validar minLength/maxLength/pattern do schema
-        message = json_object_new_string(payload);
+        // string JSON pra validar minLength/maxLength/pattern do schema.
+        // 12/10: o payload inteiro, pelo comprimento; com NUL nao embrulha
+        // (minLength/maxLength/pattern leem C string e parariam no NUL) e
+        // vira INVALID_JSON.
+        message = json_object_new_string_len(payload, (int)payload_len);
     }
     if (!message) {
         mosquitto_log_printf(MOSQ_LOG_INFO, "Invalid JSON for topic: %s", topic);
-        publish_error(topic, "INVALID_JSON", "Payload is not valid JSON", payload, client_id);
+        publish_error(topic, "INVALID_JSON", "Payload is not valid JSON", payload, payload_len, client_id);
         return MOSQ_ERR_ACL_DENIED;
     }
     
@@ -149,7 +174,7 @@ static int validate_message(const char* topic, const char* payload, const char* 
     
     if (!result.is_valid) {
         mosquitto_log_printf(MOSQ_LOG_INFO, "Validation failed for topic %s: %s", topic, result.error_message);
-        publish_error(topic, "SCHEMA_VALIDATION_FAILED", result.error_message, payload, client_id);
+        publish_error(topic, "SCHEMA_VALIDATION_FAILED", result.error_message, payload, payload_len, client_id);
         return MOSQ_ERR_ACL_DENIED;
     }
     
@@ -202,7 +227,7 @@ static int callback_acl_check(int event, void *event_data, void *userdata) {
         payload_str[ed->payloadlen] = '\0';
         
         const char *client_id = mosquitto_client_id(ed->client);
-        int result = validate_message(ed->topic, payload_str, client_id);
+        int result = validate_message(ed->topic, payload_str, ed->payloadlen, client_id);
         free(payload_str);
         
         if (result != MOSQ_ERR_SUCCESS) {

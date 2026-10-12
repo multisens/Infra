@@ -18,7 +18,7 @@ graph LR
     subgraph NET["Rede Docker ginga_net (bridge)"]
         subgraph EDGE["edgegateway"]
             KI["KrakenD interna :44642<br/>26 rotas"]
-            KE["KrakenD externa :44643<br/>23 rotas (só as que admitem o não local)"]
+            KE["KrakenD externa :44643<br/>21 rotas (só as que admitem o não local)"]
             PL["plugin tv30-auth<br/>(nas duas superfícies)"]
             DOC["httpd :8085<br/>Swagger UI + 2 OpenAPI"]
         end

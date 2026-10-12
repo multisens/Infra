@@ -1,6 +1,6 @@
 # Autenticação e validação de credenciais (TV 3.0)
 
-> **Estado do código em 2026-10-12:** tv3ws + plugin `tv30-auth` da borda, depois das decisões da reunião de 05/10 com o Joel (D-0510-1 a D-0510-4 nesta página), de duas decisões do Luís em 10/10, a P1.3 (um nome de host por app de emissora) e a P1.9 (superfícies com rotas distintas), e das decisões do Luís em 11/10 que tocam esta página: a E6 (a borda exige o cliente em `clients:authorized`), a A4 (`POST /tv3/{serviceContextId}/users` fora da tabela de rotas), a B2 (`SSDP_ADVERTISE_HOST` obrigatório com o anúncio ligado) e a manutenção da E1, da E3 e da F-2 (C.6.7.8 e C.6.7.9 como estavam), e das decisões do Luís em 12/10 que tocam esta página: a 44643 fixa no host também na bridge e a C.6.15.5 só para o cliente local.
+> **Estado do código em 2026-10-12:** tv3ws + plugin `tv30-auth` da borda, depois das decisões da reunião de 05/10 com o Joel (D-0510-1 a D-0510-4 nesta página), de duas decisões do Luís em 10/10, a P1.3 (um nome de host por app de emissora) e a P1.9 (superfícies com rotas distintas), e das decisões do Luís em 11/10 que tocam esta página: a E6 (a borda exige o cliente em `clients:authorized`), a A4 (`POST /tv3/{serviceContextId}/users` fora da tabela de rotas), a B2 (`SSDP_ADVERTISE_HOST` obrigatório com o anúncio ligado) e a manutenção da E1, da E3 e da F-2 (C.6.7.8 e C.6.7.9 como estavam), e das decisões do Luís em 12/10 que tocam esta página: a 44643 fixa no host também na bridge, a C.6.15.5 só para o cliente local e, à tarde, as rotas 2.1 `GET` e `DELETE /tv3/remote-device/device/{handle}` também só para o cliente local. Inclui as correções de 12/10, à tarde, de defeitos achados pela auditoria: o pop-up do QR code e do PIN na tela até o fim do pareamento, parâmetro vazio contado como ausente em `/tv3/authorize` e `/tv3/token`, o desafio de uso único e as comparações de segredo em tempo constante.
 >
 > A versão anterior deste documento não correspondia ao código:
 > - classificava o cliente pelo IP;
@@ -39,30 +39,35 @@ O reconhecimento do local associado pelo `Origin` é a lacuna L1. **Decidido pel
 5. **Não local:**
    - **`qrcode`:** depois do sim, a TV mostra um QR code com uma chave de 32 bytes. O segredo é SHA-256(chave)[0:16]. A resposta é `{"challenge": ...}`.
    - **`kex`:** ECDH P-256. A TV mostra um PIN igual a hash mod 10000, e o segredo é SHA-256(segredo ECDH)[0:16]. A resposta é `{"challenge": ..., "key": ...}`, com `key` = chave parcial do servidor (ponto SEC 1 sem compressão, base64url; Tabela C.3, formato 3, e C.4.3.4). Até a integração de 04/10 o código devolvia só `{challenge}`, e o pareamento por PIN não se completava. A correção é de conformidade (Tabela C.3, formato 3; C.4.3.3, passo 1) e foi **confirmada na reunião de 05/10**.
-   - O `challenge` é uma string aleatória cifrada em AES-128-ECB com o segredo.
-   - O pop-up do QR code e o do PIN vão com timeout de 1000 ms (`tv3ws/src/api/client-identification/service.ts`, `showQRCodePopUp(..., 1000)` e `showPINPopUp(..., 1000)`), e a página da TV os fecha depois desse tempo (`aop/public/js/popup.js`): ficam cerca de 1 s na tela.
+   - O `challenge` é uma string aleatória cifrada em AES-128-ECB com o segredo. O tv3ws guarda o SHA-256 dela em bytes (`generateChallenge`, em `client-identification/service.ts`).
+   - **O pop-up do QR code e o do PIN ficam na tela até o fim do pareamento** (correção de 12/10, à tarde). O fim do pareamento é o `/tv3/token` que confere a solução do desafio com sucesso (abaixo): logo depois da resposta, o tv3ws publica `{"close":true}` no mesmo tópico do pop-up (`aop/display/layers/popup/qrcode` ou `.../pin`; `endPairing`, em `client-identification/service.ts`, e `closeQRCodePopUp`/`closePINPopUp`, em `tv3ws/src/core.ts`), e a camada gráfica fecha o pop-up daquele tipo (`handlePopupMessage`, em `aop/public/js/popup.js`). É o que pedem a C.4.3.2 ("When this stream ends, the pop-up with the QR code is removed from the receiver screen, which informs that the pairing has been successful", p. 210; p. 228 do PDF) e a C.4.3.3 ("the pop-ups for filling out the PIN are removed from both the non-local client's screen and the TV 3.0 receiver", p. 211; p. 229 do PDF). Trava de segurança: o pop-up vai com prazo de 120 s (`PAIRING_POPUP_TIMEOUT_MS`), e a página o fecha sozinha no fim dele, se o cliente desistir. O valor é decisão do projeto; a norma não fixa prazo. Até 12/10, o prazo era de 1000 ms, e o pop-up ficava cerca de 1 s na tela.
+   - O `/tv3/token` que falha não fecha o pop-up, e não há caminho em que o pareamento falhe de vez: o desafio errado dá 102 e a tentativa continua aberta (PENDENTE (Joel), abaixo). O fim do pareamento de um cliente só fecha o pop-up se ele ainda for o desse cliente (`popUpOwner`, em memória): se o pop-up de outro cliente o substituiu, ele fica. A camada gráfica tem **um** pop-up, e o novo substitui o que está na tela, inclusive o sim/não de outro cliente (que então fica sem resposta e expira no tv3ws, com 102).
 
 Erros possíveis no `/authorize`:
 
 | Código | Situação |
 |---|---|
-| 105 | Falta `clientid`, `display-name` ou `key` (no `kex`). |
-| 101 | `pm` não suportado, ou `clientid` já usado (autorizado ou bloqueado), para qualquer classe. |
+| 105 | Falta `clientid`, `display-name` ou `key` (no `kex`). Desde 12/10 (correção), parâmetro vazio ou só com espaços conta como ausente (`queryParam`, em `client-identification/controller.ts`; Tabela C.3, p. 215; p. 233 do PDF). Antes, `clientid=` vazio autorizava o `clientid` `""`, `display-name=` vazio passava, e `key=` vazio no `kex` dava 404 `{"error":200}`. |
+| 101 | `pm` não suportado, ou `clientid` já usado (autorizado ou bloqueado), para qualquer classe. Desde 12/10, `pm=` vazio vale como ausente, e o cliente se classifica local (antes, 101). |
 | 102 | O espectador recusou no pop-up (ou o pop-up expirou). |
 
 ### `GET /tv3/token?clientid=<uuid>&(challenge-response=<...>|refresh-token=<...>)` (Tabela C.4)
 
 - **Resposta:** `{"accessToken", "tokenType": "Bearer", "expiresIn", "refreshToken"}`. O refresh token é rotacionado a cada chamada.
 - **Primeiro acesso do não local** (por HTTP, com `challenge-response`): a resposta vem cifrada (`application/octet-stream`) e inclui `serverCert`.
+- **Com os dois parâmetros,** vale o `refresh-token`. Desde 12/10 (correção), parâmetro vazio ou só com espaços conta como ausente (Tabela C.4, 105, p. 217; p. 235 do PDF), e um dos dois ramos sempre roda. Antes, `refresh-token=` ou `challenge-response=` vazio não caía em nenhum ramo e a credencial saía sem conferência nenhuma: o cliente autorizado recebia accessToken e refresh token novos (o legítimo passava a dar 101), e o não local, por HTTP, pulava o pareamento e a exigência de HTTPS.
+- **O desafio vale uma vez** (correção de 12/10). No `challenge-response` conferido, o tv3ws tira do cliente o material do pareamento (challenge, chave simétrica e par ECDH) no mesmo trecho síncrono da conferência (`takePairingMaterial`, em `tv3ws/src/modules/auth-manager/client.ts`), e dois `/tv3/token` simultâneos com a mesma resposta não passam os dois. A Tabela C.4 permite descartar a chave depois do primeiro acesso ("In subsequent accesses, the use of the symmetric encryption key is no longer necessary and it can be discarded", p. 217-218; p. 235-236 do PDF). Se a emissão falhar depois da conferência, o material volta ao cliente e a tentativa segue aberta. Antes, a mesma resposta ao desafio emitia credencial de novo a cada chamada (e, por HTTPS, em claro), rotacionando o refresh token do cliente legítimo. O material do pareamento vive só na memória do tv3ws: um reinício o perde.
+- **Comparações em tempo constante** (correção de 12/10): o refresh token e a resposta ao desafio são comparados com `crypto.timingSafeEqual` sobre os bytes (`safeEqual`, em `tv3ws/src/util/encryption.ts`), e tamanhos diferentes são falha. A resposta decifrada é comparada em bytes com o SHA-256 guardado; antes, os dois lados passavam por `.toString()` UTF-8, e bytes que não formam UTF-8 válido viravam U+FFFD (duas respostas diferentes podiam passar como iguais). `refresh-token` repetido na URL (lista) não vale (101). O formato do que o cliente manda não mudou.
 
 Erros possíveis no `/token`:
 
 | Código | Situação |
 |---|---|
-| 105 | Falta `clientid`, ou faltam os dois: `challenge-response` e `refresh-token`. |
-| 102 | Cliente fora de `clients:authorized` (nunca autorizado, ou bloqueado depois), ou `challenge-response` errado. |
+| 105 | Falta `clientid`, ou faltam os dois: `challenge-response` e `refresh-token`. Vazio ou só com espaços conta como ausente (desde 12/10). |
+| 102 | Cliente fora de `clients:authorized` (nunca autorizado, ou bloqueado depois); `challenge-response` errado, inclusive o que decifra para um tamanho diferente do hash e, desde 12/10, o que não decifra (tamanho ou *padding* inválido no AES-128-ECB, ou o parâmetro repetido na URL), que antes dava 404 `{"error":200}` por exceção; e, desde 12/10, `challenge-response` sem desafio pendente: repetido depois do sucesso, de cliente local ou depois de um reinício do tv3ws (Tabela C.4: "If the challenge-response value is not validated by the TV 3.0 receiver as correct"). |
 | 106 | Cliente não local com `refresh-token` por HTTP. |
 | 101 | `refresh-token` que não pertence ao cliente. |
+| 200 | Falha da plataforma (Redis fora do ar, por exemplo) e exceção no tratamento: 404 `{"error":200}` pelo `errorHandler`. |
 
 ### O access token
 
@@ -91,6 +96,7 @@ sequenceDiagram
     C->>E: GET /tv3/token?clientid&challenge-response
     E->>T: (auth=none)
     T-->>C: 200 (cifrado) {accessToken, refreshToken, serverCert}
+    T->>TV: MQTT popup/qrcode {"close":true} (fim do pareamento)
     C->>E: GET /tv3/current-service/users/current-user<br/>Authorization: Bearer + bind-token
     E->>E: rota -> classe -> token -> bind-token
     E->>T: repassa (se valido, ou em warn)
@@ -139,16 +145,18 @@ A política está em `edgegateway/routes.json`, nos campos `auth` (`none`, `toke
 | `GET /tv3/bind-context` (respondida pela borda) | token | autônomo, não local |
 | `GET /tv3/api-info` e `GET /tv3/api-info/{apiId}` (respondidas pela borda) | token | todas |
 | APIs de usuários (C.6.14), `apps/{appid}/files` (C.6.4), `POST sensory-effect-renderers/{id}` (C.6.16.3) | token+bind | todas |
-| `GET /tv3/remote-device/devices/{classId}` (C.6.15.5, desde 12/10) | token | associado, autônomo |
+| `GET /tv3/remote-device/devices/{classId}` (C.6.15.5, desde 12/10); `GET` e `DELETE /tv3/remote-device/device/{handle}` (2.1, desde 12/10, à tarde) | token | associado, autônomo |
 | demais | token | todas |
 
 `POST /tv3/{serviceContextId}/users`, variante do testbed fora da norma (que só define `POST /tv3/current-service/users`, C.6.14.1), saiu da tabela em 11/10 (A4, decisão do Luís): a borda responde 100 a ela, com qualquer scid. Até ali, estava como `token+bind`.
 
 `GET /tv3/remote-device/devices/{classId}` (C.6.15.5) é só do cliente local desde 12/10 (decisão do Luís): a Tabela C.78 (p. 339; p. 357 do PDF) diz "This API allows a local client application". Até ali, admitia todas as classes.
 
+`GET` e `DELETE /tv3/remote-device/device/{handle}`, as rotas da versão 2.1 (C.6.15.6 e C.6.15.7 da proposta 2.1 do Luís ao Fórum, fora da Tabela C.2 e sem campo `api`), seguem a C.6.15.5 desde a segunda decisão do Luís em 12/10. O próprio tv3ws as descreve como de uso do cliente local (`tv3ws/src/api/multi-device/index.ts`: "This API allows a local client application to establish communication with a remote device"). Até ali, não tinham `classes`: pela política, um não local com access token e um *handle* conhecido abria o ponto de entrada local daquele aparelho, inclusive pela 44643 (lido no código, não medido).
+
 A tabela completa está em `edgegateway/plugin/README.md`.
 
-**Superfície de cada rota (P1.9, decisão do Luís em 10/10).** As `classes` também decidem em que superfície a rota existe (`edgegateway/generate.js`, `SURFACE_RULES`): a externa (44643) só tem as rotas que admitem `non-local`, e a interna (44642) tem todas. Pela tabela acima, ficam fora da externa `POST` e `DELETE /tv3/bind-context` e, desde 12/10, `GET /tv3/remote-device/devices/{classId}`; lá elas dão 100 na etapa de rota, antes da classe, como qualquer caminho não declarado. Na 44642, o não associado continua recebendo 106 nas duas da C.6.8, e o não local, 106 na C.6.15.5 (em `warn`, só o aviso). A Tabela C.78 lista 107 para o não local na C.6.15.5, e a C.4.1.8, 106 para o não local numa API de uso exclusivo do cliente local: o código exato fica com o Joel (PENDENTE, abaixo).
+**Superfície de cada rota (P1.9, decisão do Luís em 10/10).** As `classes` também decidem em que superfície a rota existe (`edgegateway/generate.js`, `SURFACE_RULES`): a externa (44643) só tem as rotas que admitem `non-local`, e a interna (44642) tem todas. Pela tabela acima, ficam fora da externa `POST` e `DELETE /tv3/bind-context`, desde 12/10 `GET /tv3/remote-device/devices/{classId}` e, desde a tarde de 12/10, `GET` e `DELETE /tv3/remote-device/device/{handle}`; lá elas dão 100 na etapa de rota, antes da classe, como qualquer caminho não declarado. A externa tem 21 rotas, e a interna, 26. Na 44642, o não associado continua recebendo 106 nas duas da C.6.8, e o não local, 106 na C.6.15.5 e nas duas rotas 2.1 (em `warn`, só o aviso). A Tabela C.78 lista 107 para o não local na C.6.15.5, e a C.4.1.8, 106 para o não local numa API de uso exclusivo do cliente local: o código exato fica com o Joel (PENDENTE, abaixo).
 
 ### Bind-token (C.4.1.3, C.4.1.4, C.6.8)
 
@@ -182,10 +190,14 @@ Os comportamentos provisórios estão marcados no código e listados em `edgegat
 - **L5:** relógio do host em vez do System Time Fragment;
 - **L7:** liberação de recursos ao revogar uma chave;
 - **C.6.7.8 e C.6.7.9** (rodada de 05/10): a versão de cada API é 2.0 em todas (a remote-device aceita 2.1, e não foi decidido se aparece assim; E2). Os outros dois pontos foram mantidos pelo Luís em 11/10: id da Tabela C.2 que o testbed não implementa dá 101 (E1), e, sem `subsystem`, a C.6.7.9 lista todas as APIs (E3). No código, estão marcados `DECIDIDO (Luis, 11/10; E1)` e `DECIDIDO (Luis, 11/10; E3)` (`edgegateway/plugin/apiinfo.go`);
-- **100 ou 106 na 44643 com TLS** (P1.9, ligado à L3): a C.4.1.8 (p. 206-207; p. 224-225 do PDF) manda responder 106 ao não local que chama por HTTPS uma API exclusiva do cliente local, e `POST`/`DELETE /tv3/bind-context` dão 100 na 44643. Enquanto ela for HTTP, a C.4.1.8 não se aplica ao pé da letra; a mesma seção diz que a C.6.1.2 (`/tv3/authorize`) só se acessa por HTTP, e a regra a mantém na 44643, porque ela admite o não local. Desde 12/10 (decisão do Luís), entra neste ponto (F-1: item 1 do P1.9 na seção F de `docs/decisoes-pendentes.md` da raiz) o código da C.6.15.5 para o não local: a borda dá 100 na 44643 e 106 na 44642, e a Tabela C.78 (p. 339; p. 357 do PDF) lista 107 ("If invoked from a non-local client");
-- **Lista de APIs por superfície** (P1.9): a externa lista 17 APIs, sem as duas da C.6.8 restritas ao associado e, desde 12/10, sem a C.6.15.5, só do cliente local (as três dão 101 lá). A Tabela C.46 (p. 301 do PDF) fala em "all APIs of a given category", sem superfície. **Decidido pelo Luís em 11/10 (F-2): cada superfície lista só as APIs que oferece**, como já estava; no código, `DECIDIDO (Luis, 11/10; F-2)` (`edgegateway/generate.js`, `pluginConfig`).
+- **100 ou 106 na 44643 com TLS** (P1.9, ligado à L3): a C.4.1.8 (p. 206-207; p. 224-225 do PDF) manda responder 106 ao não local que chama por HTTPS uma API exclusiva do cliente local, e `POST`/`DELETE /tv3/bind-context` dão 100 na 44643. Enquanto ela for HTTP, a C.4.1.8 não se aplica ao pé da letra; a mesma seção diz que a C.6.1.2 (`/tv3/authorize`) só se acessa por HTTP, e a regra a mantém na 44643, porque ela admite o não local. Desde 12/10 (decisão do Luís), entra neste ponto (F-1: item 1 do P1.9 na seção F de `docs/decisoes-pendentes.md` da raiz) o código da C.6.15.5 para o não local: a borda dá 100 na 44643 e 106 na 44642, e a Tabela C.78 (p. 339; p. 357 do PDF) lista 107 ("If invoked from a non-local client"). As rotas 2.1 de `/device/{handle}` recebem o mesmo desde a tarde de 12/10; se o código delas entra na F-1 também está com o Joel (o texto da proposta 2.1 não está no repositório);
+- **Lista de APIs por superfície** (P1.9): a externa lista 17 APIs, sem as duas da C.6.8 restritas ao associado e, desde 12/10, sem a C.6.15.5, só do cliente local (as três dão 101 lá). As rotas 2.1 não têm campo `api` e não mudam a lista. A Tabela C.46 (p. 301 do PDF) fala em "all APIs of a given category", sem superfície. **Decidido pelo Luís em 11/10 (F-2): cada superfície lista só as APIs que oferece**, como já estava; no código, `DECIDIDO (Luis, 11/10; F-2)` (`edgegateway/generate.js`, `pluginConfig`).
 
 Também aberto pela rodada de 05/10, sem marcador no código da borda: o que a futura tela da C.4.2.2 faz no desbloqueio (E5 de `docs/decisoes-pendentes.md` da raiz). A E6, exigir `clients:authorized` na borda, foi decidida pelo Luís em 11/10: exigir (seção *Emissão do access token*, acima).
+
+Abertos pelas correções de 12/10 no pareamento (tv3ws; seção *Achados de 12/10* de `docs/decisoes-pendentes.md` da raiz):
+- **o desafio errado deve encerrar a tentativa de pareamento?** Hoje o 102 do desafio errado deixa a tentativa aberta: o material do pareamento fica no cliente, o mesmo challenge pode ser respondido de novo e o pop-up só sai no sucesso ou pela trava de 120 s. A Tabela C.4 só diz que o 102 significa "the pairing was not successfully concluded". Marcado `PENDENTE (Joel)` em `tv3ws/src/api/client-identification/service.ts`;
+- **a camada gráfica tem um pop-up só, e o challenge não expira.** O sim/não de outro cliente tira da tela o QR code ou o PIN de um pareamento em andamento, e o challenge pendente vale até o sucesso ou até o tv3ws reiniciar, sem prazo.
 
 **Redis sem senha e publicado no host (6379): decidido pelo Luís em 03/10.** A conexão com o banco fica como está, sem senha; só a interface administrativa (redis-commander) passou a exigir login. O risco continua: quem alcança a porta grava chaves de bind ou origens associadas e contorna a borda em `enforce` (ver `KNOWN-ISSUES.md` da raiz).
 
