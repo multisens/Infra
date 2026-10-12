@@ -1,6 +1,6 @@
 # Autenticação e validação de credenciais (TV 3.0)
 
-> **Estado do código em 2026-10-11:** tv3ws + plugin `tv30-auth` da borda, depois das decisões da reunião de 05/10 com o Joel (D-0510-1 a D-0510-4 nesta página), de duas decisões do Luís em 10/10, a P1.3 (um nome de host por app de emissora) e a P1.9 (superfícies com rotas distintas), e das decisões do Luís em 11/10 que tocam esta página: a E6 (a borda exige o cliente em `clients:authorized`), a A4 (`POST /tv3/{serviceContextId}/users` fora da tabela de rotas), a B2 (`SSDP_ADVERTISE_HOST` obrigatório com o anúncio ligado) e a manutenção da E1, da E3 e da F-2 (C.6.7.8 e C.6.7.9 como estavam).
+> **Estado do código em 2026-10-12:** tv3ws + plugin `tv30-auth` da borda, depois das decisões da reunião de 05/10 com o Joel (D-0510-1 a D-0510-4 nesta página), de duas decisões do Luís em 10/10, a P1.3 (um nome de host por app de emissora) e a P1.9 (superfícies com rotas distintas), e das decisões do Luís em 11/10 que tocam esta página: a E6 (a borda exige o cliente em `clients:authorized`), a A4 (`POST /tv3/{serviceContextId}/users` fora da tabela de rotas), a B2 (`SSDP_ADVERTISE_HOST` obrigatório com o anúncio ligado) e a manutenção da E1, da E3 e da F-2 (C.6.7.8 e C.6.7.9 como estavam), e das decisões do Luís em 12/10 que tocam esta página: a 44643 fixa no host também na bridge e a C.6.15.5 só para o cliente local.
 >
 > A versão anterior deste documento não correspondia ao código:
 > - classificava o cliente pelo IP;
@@ -28,7 +28,7 @@ O reconhecimento do local associado pelo `Origin` é a lacuna L1. **Decidido pel
 
 ### `GET /tv3/authorize?clientid=<uuid>&display-name=<nome>[&pm=qrcode|kex[&key=<pub ECDH>]]` (Tabela C.3)
 
-1. O tv3ws publica um pop-up sim/não na TV pelo tópico `aop/display/layers/popup/yesno`, com timeout de 10 s.
+1. O tv3ws publica um pop-up sim/não na TV pelo tópico `aop/display/layers/popup/yesno/message`, com timeout de 10 s (`client-identification/service.ts`).
 2. Só a resposta `"true"` no tópico `.../yesno/response` autoriza: o cliente entra em `clients:authorized` (D-0510-4, ver abaixo) e ganha o registro `client:{id}`. A AoP publica `"false"` quando o espectador recusa e também quando o pop-up expira. Nesse caso, ou sem resposta em 10 s, o cliente vai para `clients:blocked` e a resposta é **102**. Até 02/10/2026, qualquer resposta não vazia autorizava, porque `Boolean("false") === true`.
 3. **Local** (associado ou autônomo): a resposta é `{"refreshToken": ...}`.
 4. **`clientid` já usado:** 101, para qualquer classe e sem pop-up, tanto para o cliente já autorizado quanto para o recusado (`clients:blocked`). As duas metades têm origens diferentes:
@@ -37,9 +37,10 @@ O reconhecimento do local associado pelo `Origin` é a lacuna L1. **Decidido pel
 
    Até 03/10, o cliente local já autorizado recebia de novo o refresh token corrente, sem pop-up, e o bloqueado recebia 102.
 5. **Não local:**
-   - **`qrcode`:** a TV mostra um QR code com uma chave de 32 bytes. O segredo é SHA-256(chave)[0:16]. A resposta é `{"challenge": ...}`.
+   - **`qrcode`:** depois do sim, a TV mostra um QR code com uma chave de 32 bytes. O segredo é SHA-256(chave)[0:16]. A resposta é `{"challenge": ...}`.
    - **`kex`:** ECDH P-256. A TV mostra um PIN igual a hash mod 10000, e o segredo é SHA-256(segredo ECDH)[0:16]. A resposta é `{"challenge": ..., "key": ...}`, com `key` = chave parcial do servidor (ponto SEC 1 sem compressão, base64url; Tabela C.3, formato 3, e C.4.3.4). Até a integração de 04/10 o código devolvia só `{challenge}`, e o pareamento por PIN não se completava. A correção é de conformidade (Tabela C.3, formato 3; C.4.3.3, passo 1) e foi **confirmada na reunião de 05/10**.
    - O `challenge` é uma string aleatória cifrada em AES-128-ECB com o segredo.
+   - O pop-up do QR code e o do PIN vão com timeout de 1000 ms (`tv3ws/src/api/client-identification/service.ts`, `showQRCodePopUp(..., 1000)` e `showPINPopUp(..., 1000)`), e a página da TV os fecha depois desse tempo (`aop/public/js/popup.js`): ficam cerca de 1 s na tela.
 
 Erros possíveis no `/authorize`:
 
@@ -82,9 +83,10 @@ sequenceDiagram
     participant TV as TV (AoP)
 
     C->>E: GET /tv3/authorize?clientid&display-name&pm=qrcode
-    E->>T: (auth=none; classe != associado)
-    T->>TV: MQTT popup/yesno + popup/qrcode
-    TV-->>T: espectador autoriza
+    E->>T: (auth=none, classe != associado)
+    T->>TV: MQTT popup/yesno/message
+    TV-->>T: popup/yesno/response "true"
+    T->>TV: MQTT popup/qrcode
     T-->>C: 200 {challenge}
     C->>E: GET /tv3/token?clientid&challenge-response
     E->>T: (auth=none)
@@ -137,13 +139,16 @@ A política está em `edgegateway/routes.json`, nos campos `auth` (`none`, `toke
 | `GET /tv3/bind-context` (respondida pela borda) | token | autônomo, não local |
 | `GET /tv3/api-info` e `GET /tv3/api-info/{apiId}` (respondidas pela borda) | token | todas |
 | APIs de usuários (C.6.14), `apps/{appid}/files` (C.6.4), `POST sensory-effect-renderers/{id}` (C.6.16.3) | token+bind | todas |
+| `GET /tv3/remote-device/devices/{classId}` (C.6.15.5, desde 12/10) | token | associado, autônomo |
+| demais | token | todas |
 
 `POST /tv3/{serviceContextId}/users`, variante do testbed fora da norma (que só define `POST /tv3/current-service/users`, C.6.14.1), saiu da tabela em 11/10 (A4, decisão do Luís): a borda responde 100 a ela, com qualquer scid. Até ali, estava como `token+bind`.
-| demais | token | todas |
+
+`GET /tv3/remote-device/devices/{classId}` (C.6.15.5) é só do cliente local desde 12/10 (decisão do Luís): a Tabela C.78 (p. 339; p. 357 do PDF) diz "This API allows a local client application". Até ali, admitia todas as classes.
 
 A tabela completa está em `edgegateway/plugin/README.md`.
 
-**Superfície de cada rota (P1.9, decisão do Luís em 10/10).** As `classes` também decidem em que superfície a rota existe (`edgegateway/generate.js`, `SURFACE_RULES`): a externa (44643) só tem as rotas que admitem `non-local`, e a interna (44642) tem todas. Pela tabela acima, só `POST` e `DELETE /tv3/bind-context` ficam fora da externa; lá elas dão 100 na etapa de rota, antes da classe, como qualquer caminho não declarado. Na 44642, o não associado continua recebendo 106 nelas (em `warn`, só o aviso).
+**Superfície de cada rota (P1.9, decisão do Luís em 10/10).** As `classes` também decidem em que superfície a rota existe (`edgegateway/generate.js`, `SURFACE_RULES`): a externa (44643) só tem as rotas que admitem `non-local`, e a interna (44642) tem todas. Pela tabela acima, ficam fora da externa `POST` e `DELETE /tv3/bind-context` e, desde 12/10, `GET /tv3/remote-device/devices/{classId}`; lá elas dão 100 na etapa de rota, antes da classe, como qualquer caminho não declarado. Na 44642, o não associado continua recebendo 106 nas duas da C.6.8, e o não local, 106 na C.6.15.5 (em `warn`, só o aviso). A Tabela C.78 lista 107 para o não local na C.6.15.5, e a C.4.1.8, 106 para o não local numa API de uso exclusivo do cliente local: o código exato fica com o Joel (PENDENTE, abaixo).
 
 ### Bind-token (C.4.1.3, C.4.1.4, C.6.8)
 
@@ -176,9 +181,9 @@ Os comportamentos provisórios estão marcados no código e listados em `edgegat
 - **L4:** 106 ao associado em `/authorize` e `/token` só em `enforce`;
 - **L5:** relógio do host em vez do System Time Fragment;
 - **L7:** liberação de recursos ao revogar uma chave;
-- **C.6.7.8 e C.6.7.9** (rodada de 05/10): a versão de cada API é 2.0 em todas (a remote-device aceita 2.1, e não foi decidido se aparece assim; E2). Os outros dois pontos foram mantidos pelo Luís em 11/10: id da Tabela C.2 que o testbed não implementa dá 101 (E1), e, sem `subsystem`, a C.6.7.9 lista todas as APIs (E3). O código ainda os marca `PENDENTE (Joel)` (`edgegateway/plugin/apiinfo.go`);
-- **100 ou 106 na 44643 com TLS** (P1.9, ligado à L3): a C.4.1.8 (p. 206-207; p. 224-225 do PDF) manda responder 106 ao não local que chama por HTTPS uma API exclusiva do cliente local, e `POST`/`DELETE /tv3/bind-context` dão 100 na 44643. Enquanto ela for HTTP, a C.4.1.8 não se aplica ao pé da letra; a mesma seção diz que a C.6.1.2 (`/tv3/authorize`) só se acessa por HTTP, e a regra a mantém na 44643, porque ela admite o não local;
-- **Lista de APIs por superfície** (P1.9): a externa lista 18 APIs, sem as duas da C.6.8 restritas ao associado (que dão 101 lá). A Tabela C.46 (p. 301 do PDF) fala em "all APIs of a given category", sem superfície. **Decidido pelo Luís em 11/10 (F-2): cada superfície lista só as APIs que oferece**, como já estava; o código ainda o marca `PENDENTE (Joel)` (`edgegateway/generate.js`, `pluginConfig`).
+- **C.6.7.8 e C.6.7.9** (rodada de 05/10): a versão de cada API é 2.0 em todas (a remote-device aceita 2.1, e não foi decidido se aparece assim; E2). Os outros dois pontos foram mantidos pelo Luís em 11/10: id da Tabela C.2 que o testbed não implementa dá 101 (E1), e, sem `subsystem`, a C.6.7.9 lista todas as APIs (E3). No código, estão marcados `DECIDIDO (Luis, 11/10; E1)` e `DECIDIDO (Luis, 11/10; E3)` (`edgegateway/plugin/apiinfo.go`);
+- **100 ou 106 na 44643 com TLS** (P1.9, ligado à L3): a C.4.1.8 (p. 206-207; p. 224-225 do PDF) manda responder 106 ao não local que chama por HTTPS uma API exclusiva do cliente local, e `POST`/`DELETE /tv3/bind-context` dão 100 na 44643. Enquanto ela for HTTP, a C.4.1.8 não se aplica ao pé da letra; a mesma seção diz que a C.6.1.2 (`/tv3/authorize`) só se acessa por HTTP, e a regra a mantém na 44643, porque ela admite o não local. Desde 12/10 (decisão do Luís), entra neste ponto (F-1: item 1 do P1.9 na seção F de `docs/decisoes-pendentes.md` da raiz) o código da C.6.15.5 para o não local: a borda dá 100 na 44643 e 106 na 44642, e a Tabela C.78 (p. 339; p. 357 do PDF) lista 107 ("If invoked from a non-local client");
+- **Lista de APIs por superfície** (P1.9): a externa lista 17 APIs, sem as duas da C.6.8 restritas ao associado e, desde 12/10, sem a C.6.15.5, só do cliente local (as três dão 101 lá). A Tabela C.46 (p. 301 do PDF) fala em "all APIs of a given category", sem superfície. **Decidido pelo Luís em 11/10 (F-2): cada superfície lista só as APIs que oferece**, como já estava; no código, `DECIDIDO (Luis, 11/10; F-2)` (`edgegateway/generate.js`, `pluginConfig`).
 
 Também aberto pela rodada de 05/10, sem marcador no código da borda: o que a futura tela da C.4.2.2 faz no desbloqueio (E5 de `docs/decisoes-pendentes.md` da raiz). A E6, exigir `clients:authorized` na borda, foi decidida pelo Luís em 11/10: exigir (seção *Emissão do access token*, acima).
 
@@ -193,7 +198,7 @@ Também aberto pela rodada de 05/10, sem marcador no código da borda: o que a f
 - **Anúncio:** em UDP 1900, a cada 10 s, o serviço `urn:schemas-sbtvd-org:service:TV3.0WebServices:1` e o UDN, com o mesmo formato do anunciante anterior (`USN` `<UDN>::<URN>`). A resposta ao M-SEARCH sai com `CACHE-CONTROL: max-age=1800`, igual ao NOTIFY (até a opção B, `max-age=4`). Sai só pela interface IPv4 que tem o IP do host anunciado. Se o host não for um IP da máquina, sai pela interface da rota padrão, com aviso no log. `SSDP_INTERFACE` força a interface. Sem nenhuma interface possível, o anunciante espera a rede (ver *Falha do anúncio*, abaixo).
 - **`LOCATION`:** `http://<host>:44642/manifest`, a superfície interna da **borda** (D10). Não aponta para a porta interna do tv3ws.
 - **Como o `<host>` é escolhido:** na borda, desde 11/10 (B2, decisão do Luís), é o `SSDP_ADVERTISE_HOST`, obrigatório com o anúncio ligado; ausente, vazio ou sem host é erro de configuração (`edgegateway/ssdp/config.go`), e o `preflight` da raiz do TV30 já para a subida sem ele. O `SERVER_URL` e o IP local deixaram de ser fonte do host do anúncio. No tv3ws, a regra do `/manifest` não mudou: `SSDP_ADVERTISE_HOST`, senão `SERVER_URL`, senão o IP local (`tv3ws/src/ssdp-config.ts`). Até 11/10, a borda seguia a mesma cadeia do tv3ws, escrita em Go e em TypeScript, sem teste cruzado entre as duas. No compose da raiz, com o override, a borda e o tv3ws leem o `SSDP_ADVERTISE_HOST` dos mesmos arquivos de ambiente: `tv3ws/.env` e depois o `.env` da raiz, que prevalece. Como ele é obrigatório, o `LOCATION` e o `Server-BaseURL` do `/manifest` saem do mesmo host. Com a opção B, isso foi medido em 04/10 (`docs/ssdp-verificacao.md` da raiz, teste 16), e a ordem `tv3ws/.env` → `.env` da raiz foi conferida com `docker compose config`; com a opção A, foi medido em 09/10 (testes 34 e 41: o `/manifest` devolve o mesmo host do `LOCATION`). Com o tv3ws rodando no host, fora do compose, isso não é garantido (`docs/dev-local.md` da raiz).
-- **Portas:** as anunciadas são as da borda, 44642 e 44643. `EDGE_HTTP_PORT` e `EDGE_HTTPS_PORT` mudam só o que é anunciado (no `LOCATION` e no `/manifest`), e não as portas em que o KrakenD escuta, fixas em `edgegateway/routes.json` (`surfaces.*.port`). Com o override, a borda está em rede do host, e as duas são as do host. Na bridge, desde 11/10 (C1, decisão do Luís), a 44643 sai numa porta de host escolhida pelo Docker (`EDGE_EXT_PUBLISH`, em `docker-compose.yml` desta pasta), e o `Server-SecureBaseURL` do `/manifest` não é a porta publicada (pelo código; sem decisão; `KNOWN-ISSUES.md` da raiz).
+- **Portas:** as anunciadas são as da borda, 44642 e 44643. `EDGE_HTTP_PORT` e `EDGE_HTTPS_PORT` mudam só o que é anunciado (no `LOCATION` e no `/manifest`), e não as portas em que o KrakenD escuta, fixas em `edgegateway/routes.json` (`surfaces.*.port`). Com o override, a borda está em rede do host, e as duas são as do host. Na bridge, desde 12/10 (decisão do Luís), a 44643 sai fixa na mesma porta do host por padrão (`EDGE_EXT_PUBLISH=44643:44643`, em `docker-compose.yml` desta pasta), porque o `Server-SecureBaseURL` do `/manifest` anuncia `<host>:44643` e o tv3ws não sabe a porta que o Docker escolheria. De 11/10 (C1) a 12/10, ela saía numa porta de host escolhida pelo Docker, que o `/manifest` não anunciava; `EDGE_EXT_PUBLISH=44643` (só o número) ainda faz isso. Outra porta de host fixa pede o mesmo número no `EDGE_HTTPS_PORT`.
 
 `GET /manifest` (rota `auth=none` na borda) responde 200; o corpo não carrega informação (o Express manda o texto `OK`). A informação vai nos cabeçalhos:
 - `Server-BaseURL` (`<host>:44642`);
@@ -215,7 +220,7 @@ sequenceDiagram
     participant C as Dispositivo na rede local
     participant S as edgegateway / ssdp-announcer (rede do host, UDP 1900)
     participant E as edgegateway / KrakenD :44642 (rede do host)
-    participant T as tv3ws (API; 127.0.0.1:44652)
+    participant T as tv3ws (API em 127.0.0.1:44652)
 
     C->>S: M-SEARCH * HTTP/1.1<br/>ST: urn:schemas-sbtvd-org:service:TV3.0WebServices:1
     S-->>C: 200 OK<br/>LOCATION: http://<host>:44642/manifest

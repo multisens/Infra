@@ -1,230 +1,193 @@
-# Mapa de Tópicos MQTT — TV 3.0
+# Mapa de tópicos MQTT — TV 3.0
 
-Mapeamento completo de publicações e subscrições MQTT no ecossistema TV 3.0,
-gerado a partir da análise estática dos fontes em `aop`, `tv3ws` e `infra`.
+> **Estado do código em 12/10/2026**, conferido por busca de `publish`, `subscribe` e `addTopicHandler` em `aop/src`, `aop/public/js`, `tv3ws/src`, `bcast/src` e `infra/mqtt-broker`; as linhas são as desta data. Até 12/10 este mapa citava módulos do AoP com os nomes antigos (`disp-lyr`, hoje `graphic-overlays`), linhas que tinham mudado e tópicos de nó com formato que o código não usa, não listava o bcast nem o plugin do broker e dizia que só três tópicos eram retidos.
+>
+> O barramento MQTT e os nomes de tópico são decisões deste projeto; a ABNT NBR 25608 não define a comunicação interna do receptor. O mapa com a descrição de cada tópico também está em `docs/mqtt-topicos.md` da raiz do TV30.
 
-> Caminhos e linhas do tv3ws conferidos em 2026-10-02 (renome `ccws` → `tv3ws` e mudança de `src/modules/user-api/` para `src/api/user/`). Os do `aop` e do `infra` não foram reconferidos. Em 2026-10-10, depois das mudanças da reunião de 05/10 com o Joel, foram reconferidos os tópicos `aop/currentUser`, `aop/currentService`, `aop/users` e `aop/devices/{devclass}`, nos dois lados. Na mesma data, a assinatura que sobrava de `aop/users` saiu do AoP, e o esquema do tópico saiu do `schemas.json` do broker; as linhas do `aop/src/core.js` desses tópicos foram reconferidas depois disso.
+## Clientes MQTT
+
+| Client ID | Processo | Arquivo | Conexão |
+|---|---|---|---|
+| `aop-core` | AoP (servidor) | `aop/src/core.js`, linha 42 | `mqtt://${MQTT_HOST}` (no compose, `mosquitto:1883`) |
+| `rp-display` | página da TV, no navegador | `aop/src/modules/graphic-overlays/view.ejs`, linha 148 | `ws://<host da página>/mqtt`, que o AoP repassa à 9001 do mosquitto (`aop/src/mqtt-ws.js`) |
+| `tv3ws-client` | tv3ws | `tv3ws/src/mqtt-client.ts`, linha 7 | `mqtt://${MQTT_HOST}`, MQTT 5 |
+| `bcast_svc` | bcast | `bcast/src/index.ts`, linha 52 | `mqtt://${MQTT_HOST}`, MQTT 5 |
+| (sem cliente) | plugin C do broker | `infra/mqtt-broker/plugin/src/` | publica de dentro do broker (`mosquitto_broker_publish`) |
+
+Todas as assinaturas dos três primeiros usam *no local* (`noLocal` no AoP e na página, `nl: true` no tv3ws): ninguém recebe a própria publicação. O tv3ws registra os tratadores por tópico exato (`addTopicHandler`, `tv3ws/src/mqtt-client.ts`, linhas 57–67), com QoS 1.
+
+A coluna **Esquema** diz se o tópico tem esquema em `infra/mqtt-broker/plugin/config/schemas.json`, que o plugin confere na publicação ([09](09-schema-validation.md)).
 
 ---
 
-## Clientes MQTT ativos
+## Sessão e usuário
 
-| Client ID | Processo | Arquivo |
-|---|---|---|
-| `aop-core` | AoP — Application-oriented Platform | `aop/src/core.js` |
-| `tv3ws-client` | tv3ws — TV 3.0 WebServices | `tv3ws/src/mqtt-client.ts` |
-| `rp-display` | AoP — Display Layer (browser) | `aop/src/modules/disp-lyr/view.ejs` |
+### `aop/currentUser` — retido; esquema: string de até 64 caracteres
+
+| Direção | Arquivo | Linha | Detalhe |
+|---|---|---|---|
+| **PUB** | `aop/src/core.js` | 246 | `setCurrentUser()`: grava antes o `lastAccess` do perfil; payload: id do perfil |
+| **PUB** | `tv3ws/src/api/user/service.ts` | 111 | `setCurrentUser()` (C.6.14.4): grava antes `session:current-user` |
+| **SUB** | `aop/src/core.js` | 93 (tratador na 233) | `loadCurrentUser()`: grava o `lastAccess` do perfil (`touchLastAccess`, D-0510-5) |
+| **SUB** | `tv3ws/src/api/user/service.ts` | 70 | `updateCurrentUser()`: `session:current-user` (`tv30_sessao_usuario`) |
+
+### `aop/currentService` — retido; esquema: string de até 256 caracteres
+
+| Direção | Arquivo | Linha | Detalhe |
+|---|---|---|---|
+| **PUB** | `aop/src/core.js` | 273 | `setCurrentService()`: payload: id do serviço |
+| **PUB** | `aop/src/core.js` | 279 | `unsetCurrentService()`: payload `''` |
+| **SUB** | `aop/src/core.js` | 93 (tratador na 267) | `loadCurrentService()` |
+| **SUB** | `tv3ws/src/api/user/service.ts` | 71 | `updateCurrentService()`: `session:current-service-id` (`tv30_sessao_servico_id`) |
+| **SUB** | `tv3ws/src/core.ts` | 174 (tratador na 125) | `currentService()`: `session:current-service` (`tv30_sessao_servico`) e assinatura de `aop/{serviceId}/currentApp` |
+
+### `aop/services` — sem publicador neste repositório
+
+| Direção | Arquivo | Linha | Detalhe |
+|---|---|---|---|
+| **SUB** | `tv3ws/src/core.ts` | 182 (tratador na 176) | `loadServiceData()`: lista de serviços em JSON |
+
+### `aop/users` — fora de uso
+
+Desde 10/10 ninguém publica nem assina o tópico, e o esquema dele saiu do `schemas.json`. O tv3ws deixou de sincronizar perfis a partir do `userData.json` na reunião de 05/10 com o Joel (D-0510-5), e a plataforma (AoP) é a dona dos perfis.
 
 ---
 
-## Tópicos de sessão e usuário
+## Dispositivos remotos
 
-### `aop/currentUser`
-
-| Direção | Arquivo | Linha | Detalhe |
-|---|---|---|---|
-| **PUB** | `aop/src/core.js` | 236 | `setCurrentUser()` — grava antes o `lastAccess` do perfil; payload: UUID, retain: true |
-| **PUB** | `tv3ws/src/api/user/service.ts` | 106 | `setCurrentUser()` (C.6.14.4) — payload: UUID, retain: true |
-| **SUB** | `aop/src/core.js` | 85 | handler: `loadCurrentUser()` → grava o `lastAccess` do perfil (`touchLastAccess`, desde 05/10, D-0510-5) |
-| **SUB** | `tv3ws/src/api/user/service.ts` | 65 | handler: `updateCurrentUser()` → `session:current-user` no Redis (até 05/10, também o `lastAccess`) |
-
-### `aop/currentService`
+### `aop/devices/{devclass}` — retido; sem assinante neste repositório
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **PUB** | `aop/src/core.js` | 263 | `setCurrentService()` — payload: serviceId, retain: true |
-| **PUB** | `aop/src/core.js` | 269 | `unsetCurrentService()` — payload: `''`, retain: true |
-| **SUB** | `aop/src/core.js` | 86 | handler: `loadCurrentService()` |
-| **SUB** | `tv3ws/src/api/user/service.ts` | 66 | handler: `updateCurrentService()` → `session:current-service-id` no Redis |
-| **SUB** | `tv3ws/src/core.ts` | 168 | handler: `currentService()` → `session:current-service` Hash no Redis |
-
-### `aop/users`
-
-Fora de uso desde a rodada da reunião de 05/10 com o Joel (D-0510-5): o tv3ws não sincroniza mais perfis a partir do `userData.json`, e a plataforma (AoP) é a dona deles. A linha de publicação que esta tabela listava (`aop/src/modules/prf-mngr/service.js`, `createUser()`) não existia mais no código; a última função que publicava o tópico (`notifyUsersChanged`, em `aop/src/core.js`) não tinha chamador e saiu na mesma rodada. Desde 10/10, ninguém publica nem assina o tópico: a assinatura que sobrava no AoP saiu, e o esquema dele saiu de `mqtt-broker/plugin/config/schemas.json`.
-
-| Direção | Arquivo | Linha | Detalhe |
-|---|---|---|---|
-| ~~SUB~~ | `aop/src/core.js` | — | handler `loadUserData()`: assinatura removida em 10/10 (a carga da lista de perfis segue no `connect`) |
-| ~~SUB~~ | `tv3ws/src/api/user/service.ts` | — | `syncUsersFromFile()`: removido em 05/10 |
-
-### `aop/services`
-
-| Direção | Arquivo | Linha | Detalhe |
-|---|---|---|---|
-| **SUB** | `tv3ws/src/core.ts` | 176 | handler: `loadServiceData()` — parse JSON com lista de serviços |
+| **PUB** | `tv3ws/src/modules/remotedevice-manager/manager.ts` | 87 | `addRemoteDevice()`: array JSON de handles, publicado depois de gravar o espelho no Redis (D-0510-6) |
+| **PUB** | `tv3ws/src/modules/remotedevice-manager/manager.ts` | 110 | `removeRemoteDevice()`: array JSON de handles, ou `''` se não sobrou nenhum; também depois da remoção no Redis |
 
 ---
 
-## Tópicos de dispositivos remotos
-
-### `aop/devices/{devclass}`
-
-| Direção | Arquivo | Linha | Detalhe |
-|---|---|---|---|
-| **PUB** | `tv3ws/src/modules/remotedevice-manager/manager.ts` | 87 | `addRemoteDevice()` — payload: JSON array de handles, retain: true. Desde 05/10 (D-0510-6), só publica depois de gravar o espelho no Redis |
-| **PUB** | `tv3ws/src/modules/remotedevice-manager/manager.ts` | 110 | `removeRemoteDevice()` — payload: JSON array de handles (ou `''` se não sobrou nenhum), retain: true. Também depois da remoção no Redis |
-
----
-
-## Tópicos de aplicação (dinâmicos)
+## Aplicação e nós — o tv3ws assina; sem publicador neste repositório
 
 ### `aop/{serviceId}/currentApp`
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **SUB** | `tv3ws/src/core.ts` | 149 | handler: `setAppId()` — registra app atual |
+| **SUB** | `tv3ws/src/core.ts` | 150 | `setAppId()`: assinado na troca de serviço (`currentService()`) |
 
-### `aop/{serviceId}/{appId}/path`
-
-| Direção | Arquivo | Linha | Detalhe |
-|---|---|---|---|
-| **SUB** | `tv3ws/src/core.ts` | 96 | handler: `setAppBaseURL()` — URL base da app |
-
-### `aop/{serviceId}/{appId}/doc/nodes`
+### `aop/{serviceId}/{appId}/path` e `aop/{serviceId}/{appId}/doc/nodes`
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **SUB** | `tv3ws/src/core.ts` | 102 | handler: `setAppNodes()` — array de nós NCL/HTML5 |
+| **SUB** | `tv3ws/src/core.ts` | 97 | `.../path`: `setAppBaseURL()`, URL base da app (de onde a C.6.4.7 lê os arquivos) |
+| **SUB** | `tv3ws/src/core.ts` | 103 | `.../doc/nodes`: `setAppNodes()`, array de nós; associa os nós aos dispositivos remotos |
 
-### `aop/{serviceId}/{appId}/doc/{nodeId}/{iface}/actionNotification`
+### Tópicos de nó: `aop/{serviceId}/{appId}/doc/{nó}/...`
+
+`{nó}` é o id do nó com `.` trocado por `/` (`tv3ws/src/modules/remotedevice-manager/remote-device.ts`, `setNode`). Os tópicos só existem enquanto um nó está associado a um dispositivo remoto.
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **PUB** | `tv3ws/src/modules/remotedevice-manager/remote-device.ts` | 216–222 | `publishTransitionMetadata()` — transition, user, value |
-| **SUB** | `tv3ws/src/modules/remotedevice-manager/remote-device.ts` | 351 | handler: `setNodeInterfaces()` — `{prefix}/interfaces` |
-| **SUB** | `tv3ws/src/modules/remotedevice-manager/remote-device.ts` | 353–354 | handler: `onMqttMessage()` — `preparationEvent` e `presentationEvent` |
-| **SUB** | `tv3ws/src/modules/remotedevice-manager/remote-device.ts` | 384 | handler: `setPropertyValue()` — `{iface}/attributionEvent/value` |
+| **SUB** | `.../remote-device.ts` | 355 | `{nó}/interfaces`: `setNodeInterfaces()`; a assinatura sai depois da primeira mensagem |
+| **SUB** | `.../remote-device.ts` | 357–358 | `{nó}/preparationEvent/actionNotification` e `{nó}/presentationEvent/actionNotification`: `onMqttMessage()`, repassado ao dispositivo pelo WebSocket |
+| **SUB** | `.../remote-device.ts` | 388 | `{nó}/{interface}/attributionEvent/value`: `setPropertyValue()`, uma por interface de propriedade; sai depois do primeiro valor |
+| **PUB** | `.../remote-device.ts` | 220 | `{nó}[/{label}]/{eventType}Event[/OK]/eventNotification`: a transição vinda do dispositivo (`publishTransitionMetadata()`, linha 208); não retido |
+| **PUB** | `.../remote-device.ts` | 223 | o mesmo prefixo + `/user`: usuário, só em `selection`; retido |
+| **PUB** | `.../remote-device.ts` | 226 | o mesmo prefixo + `/value`: valor, só em `attribution`; retido |
+
+O `/user` e o `/value` saem retidos porque o `publish` do tv3ws tem `retain = true` por padrão (`tv3ws/src/mqtt-client.ts`, linha 95), e as duas chamadas não passam o terceiro argumento; o `eventNotification` passa `false`.
 
 ---
 
-## Tópicos de display (camadas visuais)
+## Camadas da tela
 
-### `aop/display/layers/rxgui`
+Publicadas pelo AoP sem retenção e assinadas pela página da TV (`aop/src/modules/graphic-overlays/view.ejs`).
 
-| Direção | Arquivo | Linha | Detalhe |
+| Tópico | Esquema | PUB (`aop/src/core.js`) | SUB (`view.ejs`) |
 |---|---|---|---|
-| **PUB** | `aop/src/core.js` | 92 | `setDisplayGui()` — payload: caminho da GUI |
-| **SUB** | `aop/src/modules/disp-lyr/view.ejs` | 152 | wildcard `aop/display/layers/+` |
-
-### `aop/display/layers/graphics`
-
-| Direção | Arquivo | Linha | Detalhe |
-|---|---|---|---|
-| **PUB** | `aop/src/core.js` | 99 | `setDisplayGraphics()` — payload: URL da app gráfica ou `''` |
-| **SUB** | `aop/src/modules/disp-lyr/view.ejs` | 152 | wildcard `aop/display/layers/+` |
-
-### `aop/display/layers/video/url`
-
-| Direção | Arquivo | Linha | Detalhe |
-|---|---|---|---|
-| **PUB** | `aop/src/core.js` | 106–109 | `setVideoURL()` — payload: URL HLS/DASH ou proxy |
-| **SUB** | `aop/src/modules/disp-lyr/view.ejs` | 153 | wildcard `aop/display/layers/video/+` |
-
-### `aop/display/layers/video/size`
-
-| Direção | Arquivo | Linha | Detalhe |
-|---|---|---|---|
-| **PUB** | `aop/src/core.js` | 114 | `setVideoSize()` — payload: JSON `{top, left, width, height}` |
-| **SUB** | `aop/src/modules/disp-lyr/view.ejs` | 153 | wildcard `aop/display/layers/video/+` |
+| `aop/display/layers/rxgui` | sim | 133, `setDisplayGui()`: caminho da tela do AoP | 159, `aop/display/layers/+` |
+| `aop/display/layers/graphics` | sim | 161, `setDisplayGraphics()`: URL da app no host próprio, `http://<rótulo>.<APPS_DOMAIN>:<porta>/graphicsAppProxy/...` (P1.3), ou `''` | 159, `aop/display/layers/+` |
+| `aop/display/layers/video/url` | sim | 169 e 172, `setVideoURL()`: `/videoStreamProxy/<arquivo>` para `.m3u8` e `.mpd`; senão a URL recebida | 160, `aop/display/layers/video/+` |
+| `aop/display/layers/video/size` | sim | 177, `setVideoSize()`: JSON `{top, left, width, height}` | 160, `aop/display/layers/video/+` |
 
 ---
 
-## Tópicos de popups (UI)
+## Pop-ups
 
-### `aop/display/layers/popup/yesno/message`
-
-| Direção | Arquivo | Linha | Detalhe |
+| Tópico | Esquema | PUB | SUB |
 |---|---|---|---|
-| **PUB** | `tv3ws/src/core.ts` | 266 | `showYesNoPopUpAsync()` — payload: JSON `{value, timeout}` |
-| **SUB** | `aop/src/modules/disp-lyr/view.ejs` | 154 | wildcard `aop/display/layers/popup/+/message` |
-
-### `aop/display/layers/popup/yesno/response`
-
-| Direção | Arquivo | Linha | Detalhe |
-|---|---|---|---|
-| **PUB** | `aop/public/js/popup.js` | 21, 27, 33 | payload `"true"` (Sim) ou `"false"` (Não, ou timeout do pop-up) |
-| **SUB** | `tv3ws/src/core.ts` | 264 | handler temporal em `showYesNoPopUpAsync()` — resolve a Promise; só `"true"` autoriza |
-
-### `aop/display/layers/popup/qrcode`
-
-| Direção | Arquivo | Linha | Detalhe |
-|---|---|---|---|
-| **PUB** | `tv3ws/src/core.ts` | 273 | `showQRCodePopUp()` — payload: JSON `{value, timeout}` |
-| **SUB** | `aop/src/modules/disp-lyr/view.ejs` | 154 | wildcard `aop/display/layers/popup/+/message` |
-
-### `aop/display/layers/popup/pin`
-
-| Direção | Arquivo | Linha | Detalhe |
-|---|---|---|---|
-| **PUB** | `tv3ws/src/core.ts` | 279 | `showPINPopUp()` — payload: JSON `{value, timeout}` |
-| **SUB** | `aop/src/modules/disp-lyr/view.ejs` | 154 | wildcard `aop/display/layers/popup/+/message` |
+| `aop/display/layers/popup/yesno/message` | não | `tv3ws/src/core.ts`, 272, `showYesNoPopUpAsync()`: JSON `{value, timeout}`; não retido | `view.ejs`, 161, `aop/display/layers/popup/+/message` |
+| `aop/display/layers/popup/yesno/response` | não | `aop/public/js/popup.js`, 21, 27 e 33: `"true"` (Sim) ou `"false"` (Não, ou fim do tempo do pop-up) | `tv3ws/src/core.ts`, 270: assinado em `showYesNoPopUpAsync()` e tirado na resposta ou no fim do tempo (253); só `"true"` autoriza |
+| `aop/display/layers/popup/qrcode` | não | `tv3ws/src/core.ts`, 279, `showQRCodePopUp()`: JSON `{value, timeout}`; não retido | `view.ejs`, 166, `aop/display/layers/popup/+` |
+| `aop/display/layers/popup/pin` | não | `tv3ws/src/core.ts`, 285, `showPINPopUp()`: JSON `{value, timeout}`; não retido | `view.ejs`, 166, `aop/display/layers/popup/+` |
 
 ---
 
-## Tópicos de telemetria (LLS/SLS)
+## Sinalização (LLS e SLS) e evento de vídeo — publicados pelo bcast
 
-### `tlm/lls/#`
-
-| Direção | Arquivo | Linha | Detalhe |
-|---|---|---|---|
-| **SUB** | `aop/src/core.js` | 46 | handler: `loadLLSMetadata()` — Bootstrap Application Manifest |
-
-### `tlm/sls/{serviceId}/#`
+### `tlm/lls/{bsid}/bamt` — retido; esquema `tlm/lls/+/bamt`
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **SUB** | `aop/src/core.js` | 169 | subscrito dinamicamente em `setCurrentService()` — handler: `loadSLSMetadata()` |
+| **PUB** | `bcast/src/index.ts` | 105 | BAMT em JSON; `''` na limpeza (linha 137) |
+| **SUB** | `aop/src/core.js` | 93 (tratador na 288) | `tlm/lls/#`: `loadLLSMetadata()`, que só trata o último nível `bamt`; com payload vazio, limpa a lista de serviços e assina de novo |
+
+`{bsid}` é o `BSID` do bcast (no compose da raiz, `tv30-default`).
+
+### `tlm/sls/{serviceId}/esg` e `tlm/sls/{serviceId}/bald` — retidos; esquemas `tlm/sls/+/esg` e `tlm/sls/+/bald`
+
+| Direção | Arquivo | Linha | Detalhe |
+|---|---|---|---|
+| **PUB** | `bcast/src/modules/eduplay/index.ts` | 37–38 (`''` em 43–44) | ESG e BALD do serviço; vazio ao descartar |
+| **PUB** | `bcast/src/modules/uff/index.ts` | 33–34 (`''` em 38–39) | idem |
+| **PUB** | `bcast/src/modules/users-test/index.ts` | 33–34 (`''` em 38–39) | idem |
+| **PUB** | `bcast/src/modules/webmedia/index.ts` | 44 e 47 (`''` em 53–54) | idem |
+| **SUB** | `aop/src/core.js` | 274 (tratador na 314) | `tlm/sls/{serviceId}/#`: `loadSLSMetadata()`; assinado em `setCurrentService()` e tirado em `unsetCurrentService()` (278) |
+
+### `video/event` — não retido; esquema: sim
+
+| Direção | Arquivo | Linha | Detalhe |
+|---|---|---|---|
+| **PUB** | `bcast/src/modules/live_stream/index.ts` | 114 | ação do segmento HLS em JSON |
+| **SUB** | `aop/src/modules/graphic-overlays/view.ejs` | 167 | dispara `stream_event` na app da camada gráfica (por `postMessage` à origem dela, desde o P1.3) |
 
 ---
 
-## Tópico de evento de vídeo
+## Tópicos do plugin do broker e do teste de latência
 
-### `video/event`
-
-| Direção | Arquivo | Linha | Detalhe |
-|---|---|---|---|
-| **SUB** | `aop/src/modules/disp-lyr/view.ejs` | 155 | dispara `CustomEvent stream_event` para iframe de gráficos |
+| Tópico | Quem publica | Detalhe |
+|---|---|---|
+| `errors/{client_id}` | plugin C (`mosquitto_plugin.c`, linha 74, `publish_error()`) | JSON da recusa de esquema; QoS 0, não retido. Nenhum serviço assina |
+| `PublisherResponseTime{id}/iteration{n}` | `infra/mqtt-broker/brokertimetest/` (`server.js`, `headless-run.js`) | pedido do teste de latência; o plugin o intercepta e o deixa passar |
+| `PluginResponseTime{id}/iteration{n}` | plugin C (`response_time_tester.c`, linha 86) | resposta ao teste; QoS 0, não retido; o testador assina `PluginResponseTime{id}/#` |
 
 ---
 
-## Visão geral — fluxo de dados
+## Visão geral
 
 ```mermaid
 graph TD
-    subgraph AoP["AoP (aop-core)"]
-        AOP_PUB["Publica\naop/currentUser\naop/currentService\naop/display/layers/*"]
-        AOP_SUB["Subscreve\naop/currentUser\naop/currentService\ntlm/lls/#\ntlm/sls/{svcId}/#"]
-    end
+    BC["bcast (bcast_svc)<br/>PUB tlm/lls/{bsid}/bamt, tlm/sls/{sid}/esg|bald,<br/>video/event"]
+    AOP["AoP (aop-core)<br/>PUB aop/currentUser, aop/currentService, aop/display/layers/*<br/>SUB aop/currentUser, aop/currentService, tlm/lls/#, tlm/sls/{sid}/#"]
+    TV3["tv3ws (tv3ws-client)<br/>PUB aop/currentUser, aop/devices/{class}, popup/yesno|qrcode|pin, tópicos de nó<br/>SUB aop/currentUser, aop/currentService, aop/services,<br/>aop/{sid}/currentApp, .../path, .../doc/*, popup/yesno/response"]
+    PG["página da TV (rp-display)<br/>PUB popup/yesno/response<br/>SUB aop/display/layers/+, video/+, popup/+/message, popup/+, video/event"]
+    RE[("Redis")]
 
-    subgraph TV3WS["tv3ws (tv3ws-client)"]
-        TV3WS_PUB["Publica\naop/currentUser\naop/devices/{class}\npopup/yesno|qrcode|pin"]
-        TV3WS_SUB["Subscreve\naop/currentUser\naop/currentService\naop/services\naop/{svcId}/currentApp\naop/{svcId}/{appId}/path\naop/{svcId}/{appId}/doc/nodes"]
-    end
-
-    subgraph REDIS["Redis"]
-        R_USER["session:current-user"]
-        R_SVC["session:current-service"]
-        R_USERS["users:index\nuser:{id} (lastAccess)\nuser:{id}:consent"]
-    end
-
-    subgraph DISPLAY["Display Layer (rp-display)"]
-        D_SUB["Subscreve\naop/display/layers/+\naop/display/layers/video/+\naop/display/layers/popup/+/message\nvideo/event"]
-    end
-
-    AOP_PUB -->|"MQTT"| TV3WS_SUB
-    AOP_PUB -->|"MQTT"| D_SUB
-    TV3WS_PUB -->|"MQTT"| AOP_SUB
-    TV3WS_SUB -->|"Redis write (session:*)"| REDIS
-    AOP_SUB -->|"Redis write (lastAccess, desde 05/10)"| R_USERS
+    BC -->|"sinalização"| AOP
+    BC -->|"video/event"| PG
+    AOP -->|"usuário e serviço correntes"| TV3
+    TV3 -->|"usuário corrente (C.6.14.4)"| AOP
+    AOP -->|"camadas da tela"| PG
+    TV3 -->|"pop-ups"| PG
+    PG -->|"resposta do pop-up"| TV3
+    TV3 -.->|"session:* (espelho)"| RE
+    AOP -.->|"lastAccess do perfil"| RE
 ```
 
----
+## Retenção
 
-## Retenção de mensagens (retain)
-
-| Tópico | retain | Motivo |
+| Tópico | retain | Quem publica |
 |---|---|---|
-| `aop/currentUser` | `true` | Dispositivos que conectam depois recebem o usuário atual |
-| `aop/currentService` | `true` | Dispositivos que conectam depois recebem o serviço sintonizado |
-| `aop/devices/{class}` | `true` | Lista de dispositivos remotos deve ser reproduzida ao reconectar |
-| Demais tópicos | `false` (padrão) | Estado efêmero — não faz sentido reproduzir |
+| `aop/currentUser` | `true` | AoP e tv3ws |
+| `aop/currentService` | `true` | AoP |
+| `aop/devices/{devclass}` | `true` | tv3ws |
+| `tlm/lls/{bsid}/bamt`, `tlm/sls/{serviceId}/esg`, `tlm/sls/{serviceId}/bald` | `true` | bcast |
+| tópicos de nó `.../user` e `.../value` | `true` (padrão do `publish` do tv3ws) | tv3ws |
+| camadas da tela, pop-ups e resposta, `eventNotification`, `video/event`, `errors/*`, `PluginResponseTime*` | `false` | AoP, tv3ws, página, bcast e plugin |

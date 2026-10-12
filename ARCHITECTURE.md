@@ -10,6 +10,7 @@
 >
 > O estado corrente está documentado em:
 > - [`README.md`](README.md);
+> - [`docs/00-diagrama-unificado.md`](docs/00-diagrama-unificado.md) e [`docs/02-rede-docker.md`](docs/02-rede-docker.md) (containers, portas e quem fala com quem);
 > - [`docs/04-pipeline-http.md`](docs/04-pipeline-http.md);
 > - [`docs/05-autenticacao.md`](docs/05-autenticacao.md);
 > - [`edgegateway/plugin/README.md`](edgegateway/plugin/README.md).

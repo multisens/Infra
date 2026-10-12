@@ -1,7 +1,7 @@
 {
   "$comentario": [
     "Esquema das chaves do Redis do testbed TV30 (P4: decisao do Luis em 10/10, 'Funcoes + auditoria').",
-    "FONTE UNICA DE VERDADE dos esquemas: a biblioteca de funcoes do Redis (funcoes.lua) recebe este",
+    "Os esquemas sao declarados AQUI: a biblioteca de funcoes do Redis (funcoes.lua) recebe este",
     "arquivo embutido (biblioteca.sh monta a biblioteca; o entrypoint.sh a carrega com FUNCTION LOAD",
     "REPLACE a cada partida) e os testes (infra/redis/test) o leem. Mude a regra AQUI; a funcao e a",
     "auditoria passam a aplicar a regra nova na proxima partida do container redis.",

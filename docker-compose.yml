@@ -1,8 +1,11 @@
 # docker-compose.yml — infra do TV30
 #
-# Uso:
-#   docker compose up -d                   # stack base
-#   docker compose --profile mqtt up -d    # stack base + Mosquitto
+# NAO se sobe sozinho: este arquivo e incluido pelo docker-compose.yml da RAIZ
+# do TV30, e o edgegateway depende do servico preflight, que so existe la
+# (sozinho, o compose responde 'depends on undefined service "preflight"').
+# Uso, na raiz do TV30:
+#   docker compose up -d                                         # stack inteira (COMPOSE_PROFILES do .env)
+#   docker compose --profile mqtt build edgegateway redis mosquitto  # so as imagens da infra
 
 include:
   - path: ./redis/docker-compose.yml

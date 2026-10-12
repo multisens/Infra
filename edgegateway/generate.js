@@ -3,7 +3,7 @@
 /*
  * M4 — Tabela única de rotas do edgegateway.
  *
- * A FONTE DE VERDADE é routes.json (uma entrada por rota, com metadados). Este
+ * As rotas são declaradas só em routes.json (uma entrada por rota, com metadados). Este
  * script:
  *
  *   node generate.js build     — gera generated/krakend-{external,internal}.
