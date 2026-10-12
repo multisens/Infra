@@ -49,7 +49,8 @@ infra/
                              #   + ssdp/ (Go, anunciante SSDP, so com SSDP_ENABLED=true)
                              #   -> gera os configs KrakenD e os OpenAPI no build
   dockerfiles/               # Dockerfiles dos containers que vivem na raiz (aop, tv3ws, bcast, ...)
-  user-files-template/       # Seed do armazenamento — userData.json com o perfil padrao ("Viewer 1")
+  user-files-template/       # Modelo de ./user-files: userData.json (seed do Redis, perfil "Viewer 1")
+                             #   + thumbs/ (avatar do perfil da carga, G8), copiados pelo userfiles-seed da raiz
   docs/                      # Documentacao tecnica (o codigo e o arbitro)
 ```
 

@@ -13,12 +13,40 @@
 'use strict';
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { connect } = require('./resp');
 
 const TV30 = path.join(__dirname, '..', '..', '..');
 const TV3WS = path.join(TV30, 'tv3ws');
 const AOP = path.join(TV30, 'aop');
+
+// G8 (decisao do Luis em 12/10, esquema versao 4): o AoP grava o avatar do
+// perfil criado em <USER_DATA_PATH>/thumbs/<id>.svg, guarda no campo avatar so
+// o nome do arquivo e apaga o arquivo no despejo (P3). O TV30 esta montado so
+// para leitura no container do teste: aqui o diretorio de dados do AoP e um
+// temporario, com o thumbs/ que o userfiles-seed cria na stack. Definido
+// ANTES de carregar o AoP (vale se ele le o ambiente na carga ou na chamada).
+const USER_DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'tv30-contrato-'));
+const THUMBS = path.join(USER_DATA, 'thumbs');
+fs.mkdirSync(THUMBS);
+process.env.USER_DATA_PATH = USER_DATA;
+// formato do contrato da G8 (o mesmo do tipo nomeArquivo de esquema.json)
+const AVATAR_FORMATO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(svg|png|jpg|jpeg|webp)$/;
+// um SVG da paleta do formulario do AoP (aop/src/modules/profile-manager/
+// avatar.js, cor Azul), como a tela de criacao o manda
+const SVG_AZUL = '<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">' +
+    '<rect width="100" height="100" rx="30" fill="#4d5b7c"/>' +
+    '<circle cx="50" cy="40" r="14" fill="none" stroke="#ffffff" stroke-width="5"/>' +
+    '<path d="M 14 90 a 36 36 0 0 1 72 0" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/>' +
+    '</svg>';
+const arquivoAvatar = id => path.join(THUMBS, `${id}.svg`);
+// o despejo pode apagar o arquivo logo depois de responder: ate 1 s
+async function semArquivo(f) {
+    for (let i = 0; i < 20 && fs.existsSync(f); i++) await new Promise(res => setTimeout(res, 50));
+    return !fs.existsSync(f);
+}
 
 // tv3ws e TypeScript: ts-node do proprio tv3ws, so transpilando
 require(path.join(TV3WS, 'node_modules', 'ts-node')).register({
@@ -45,6 +73,7 @@ after(async () => {
     await tvRedis.quit();
     await aopRedis.quit();
     await r.close();
+    fs.rmSync(USER_DATA, { recursive: true, force: true });
 });
 
 test('tv3ws: espelhos da sessao e o hash do servico corrente', async () => {
@@ -89,7 +118,9 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
     await tv.sessaoServicoId('urn:tv30:service:users-test');
     const bodies = [
         { nickname: 'Viewer 1' },
-        { nickname: 'é'.repeat(20), parentalControl: true, maxContentRating: 'L', audioLanguage: 'en', userInterfaceLanguage: 'pt-BR' },
+        // com o avatar escolhido no formulario (G8): e o primeiro a ser
+        // despejado, abaixo
+        { nickname: 'é'.repeat(20), parentalControl: true, maxContentRating: 'L', audioLanguage: 'en', userInterfaceLanguage: 'pt-BR', avatar: SVG_AZUL },
         { nickname: 'Libras', closedSigning: true, closedSigningSide: 'left', closedSigningWidth: '14' },
         { nickname: 'Legenda', closedCaptioning: true, closedCaptioningLanguage: 'es-419', audioDescription: true, dialogEnhancement: 'on', voiceGuidance: 1 },
         { nickname: 'Visivel', accessConsent: ['urn:tv30:service:webmedia', 'urn:tv30:service:uff'] },
@@ -110,6 +141,19 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
     assert.equal(new Set(ids).size, 5);
     assert.equal(await r('SCARD', 'users:index'), 5);
     assert.deepEqual(await auditoria(), [], 'perfis montados pelo AoP cumprem o esquema');
+    // G8: avatar = <id>.svg, com o arquivo no diretorio de miniaturas; o SVG
+    // do formulario e o conteudo do arquivo. Sem avatar no formulario, o
+    // contrato admite o campo ausente (o avatar padrao de cada tela) ou o
+    // arquivo do padrao.
+    for (const [i, id] of ids.entries()) {
+        const av = await r('HGET', `user:${id}`, 'avatar');
+        if (av === null && !bodies[i].avatar) continue;
+        assert.equal(av, `${id}.svg`, `avatar do perfil ${i} (${bodies[i].nickname})`);
+        assert.match(av, AVATAR_FORMATO);
+        const svg = fs.readFileSync(arquivoAvatar(id), 'utf8');
+        assert.ok(svg.startsWith('<svg'), `arquivo do avatar do perfil ${i} e SVG: ${svg.slice(0, 40)}`);
+    }
+    assert.ok(fs.readFileSync(arquivoAvatar(ids[1]), 'utf8').includes('#4d5b7c'), 'o SVG escolhido no formulario vai para o arquivo');
     assert.equal(await profiles.touchLastAccess(ids[1], 5), true);
     assert.equal(await profiles.touchLastAccess('desconhecido', 5), false);
     // atributo de emissora no perfil que sera despejado (o tv3ws grava)
@@ -128,10 +172,19 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
     assert.equal(evicted.id, ids[1]);
     assert.equal(await r('EXISTS', `user:${ids[1]}`), 0);
     assert.equal(await r('SCARD', 'users:index'), 5);
+    assert.ok(await semArquivo(arquivoAvatar(ids[1])), 'o despejo (P3) apaga o arquivo do avatar (G8)');
     const { evicted: e2 } = await profiles.createProfile({ nickname: 'Setimo' });
     assert.equal(e2.id, ids[0]);
     assert.deepEqual(await r('KEYS', `user:${ids[0]}*`), [], 'o despejo leva os atributos de emissora juntos');
+    assert.ok(await semArquivo(arquivoAvatar(ids[0])), 'o despejo apaga o arquivo do avatar (G8)');
     assert.deepEqual(await auditoria(), []);
+    // no diretorio de miniaturas, so os avatares dos perfis que existem
+    const vivos = [];
+    for (const id of await r('SMEMBERS', 'users:index')) {
+        const av = await r('HGET', `user:${id}`, 'avatar');
+        if (av !== null) vivos.push(av);
+    }
+    assert.deepEqual(fs.readdirSync(THUMBS).sort(), vivos.sort(), 'arquivos de thumbs/ = avatares dos perfis existentes');
 });
 
 test('AoP: origens montadas por app-hosts cumprem o esquema; registro, remocao e limpeza', async () => {

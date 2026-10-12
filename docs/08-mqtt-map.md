@@ -1,6 +1,6 @@
 # Mapa de tópicos MQTT — TV 3.0
 
-> **Estado do código em 12/10/2026**, conferido por busca de `publish`, `subscribe` e `addTopicHandler` em `aop/src`, `aop/public/js`, `tv3ws/src`, `bcast/src` e `infra/mqtt-broker`; as linhas são as desta data, conferidas de novo depois das correções da tarde de 12/10 (fechamento do pop-up de pareamento, mensagem e tópico de `errors/<client_id>`, leitura do payload no plugin). Até 12/10 este mapa citava módulos do AoP com os nomes antigos (`disp-lyr`, hoje `graphic-overlays`), linhas que tinham mudado e tópicos de nó com formato que o código não usa, não listava o bcast nem o plugin do broker e dizia que só três tópicos eram retidos.
+> **Estado do código em 12/10/2026**, conferido por busca de `publish`, `subscribe` e `addTopicHandler` em `aop/src`, `aop/public/js`, `tv3ws/src`, `bcast/src` e `infra/mqtt-broker`; as linhas são as desta data, conferidas de novo depois das correções da tarde de 12/10 (fechamento do pop-up de pareamento, mensagem e tópico de `errors/<client_id>`, leitura do payload no plugin) e das decisões do Luís da noite de 12/10 (G8 e G9: o aviso `popup/info`, em `tv3ws/src/api/user/service.ts`, `aop/public/js/popup.js` e `view.ejs`). Até 12/10 este mapa citava módulos do AoP com os nomes antigos (`disp-lyr`, hoje `graphic-overlays`), linhas que tinham mudado e tópicos de nó com formato que o código não usa, não listava o bcast nem o plugin do broker e dizia que só três tópicos eram retidos.
 >
 > O barramento MQTT e os nomes de tópico são decisões deste projeto; a ABNT NBR 25608 não define a comunicação interna do receptor. O mapa com a descrição de cada tópico também está em `docs/mqtt-topicos.md` da raiz do TV30.
 
@@ -116,15 +116,17 @@ Publicadas pelo AoP sem retenção e assinadas pela página da TV (`aop/src/modu
 | Tópico | Esquema | PUB | SUB |
 |---|---|---|---|
 | `aop/display/layers/popup/yesno/message` | não | `tv3ws/src/core.ts`, 288, `showYesNoPopUpAsync()`: JSON `{value, timeout}`; não retido | `view.ejs`, 171, `aop/display/layers/popup/+/message` |
-| `aop/display/layers/popup/yesno/response` | não | `aop/public/js/popup.js`, 87, 93 e 98: `"false"` (fim do tempo do pop-up), `"true"` (Sim) ou `"false"` (Não) | `tv3ws/src/core.ts`, 286: assinado em `showYesNoPopUpAsync()` e tirado na resposta ou no fim do tempo (269); só `"true"` autoriza |
+| `aop/display/layers/popup/yesno/response` | não | `aop/public/js/popup.js`, 139, 145 e 150: `"false"` (fim do tempo do pop-up), `"true"` (Sim) ou `"false"` (Não) | `tv3ws/src/core.ts`, 286: assinado em `showYesNoPopUpAsync()` e tirado na resposta ou no fim do tempo (269); só `"true"` autoriza |
 | `aop/display/layers/popup/qrcode` | não | `tv3ws/src/core.ts`: 295, `showQRCodePopUp()`, abertura, JSON `{value, timeout}`, com prazo de 120 s desde 12/10; 316, `closeQRCodePopUp()`, fechamento, `{"close":true}`, no fim do pareamento (desde 12/10). Não retido | `view.ejs`, 176, `aop/display/layers/popup/+` |
 | `aop/display/layers/popup/pin` | não | `tv3ws/src/core.ts`: 301, `showPINPopUp()`, abertura, JSON `{value, timeout}`, com prazo de 120 s desde 12/10; 321, `closePINPopUp()`, fechamento, `{"close":true}`, no fim do pareamento (desde 12/10). Não retido | `view.ejs`, 176, `aop/display/layers/popup/+` |
+| `aop/display/layers/popup/info` | não | `tv3ws/src/api/user/service.ts`, 357, `notifyUserOfWrite()`, chamada por `writeBroadcasterAttrs()` (C.6.14.5) depois da gravação, só quando algum valor mudou: JSON `{value, timeout}`, com `timeout` de 5000 ms. Não retido. Desde a G9 (decisão do Luís em 12/10, à noite) | `view.ejs`, 176, `aop/display/layers/popup/+` |
 
-A página trata as mensagens de pop-up em `handlePopupMessage` (`aop/public/js/popup.js`, linha 28), chamada por `mqtt_message` (`view.ejs`, linha 261). Desde 12/10 (correção do pareamento, C.4.3.2 e C.4.3.3):
+A página trata as mensagens de pop-up em `handlePopupMessage` (`aop/public/js/popup.js`, linha 47), chamada por `mqtt_message` (`view.ejs`, linha 264). Desde 12/10 (correção do pareamento, C.4.3.2 e C.4.3.3):
 - **fechamento:** `{"close":true}` no tópico do QR code ou do PIN fecha o pop-up aberto daquele tipo; com pop-up de outro tipo na tela, ou sem pop-up, nada muda. No sim/não, o `{"close":true}` é ignorado. Quem publica é o tv3ws, no fim do pareamento (o `/tv3/token` com o desafio resolvido), e só se o pop-up daquele tipo ainda for do cliente que pareou (`endPairing`, em `tv3ws/src/api/client-identification/service.ts`). Abertura e fechamento saem do mesmo cliente MQTT, no mesmo tópico e com a mesma QoS, e chegam nessa ordem;
-- **um pop-up só:** o pop-up novo substitui o da tela, com o prazo e os botões dele (`presentPopup`), e o prazo do anterior deixa de valer. Um sim/não substituído não publica resposta (o tv3ws o dá por expirado no fim dos 10 s dele);
+- **um pop-up só:** o pop-up novo substitui o da tela, com o prazo e os botões dele (`presentPopup`), e o prazo do anterior deixa de valer. Um sim/não substituído não publica resposta (o tv3ws o dá por expirado no fim dos 10 s dele). A exceção é o aviso (`info`, abaixo);
+- **aviso (`info`, desde a G9):** não pede resposta, fecha no `timeout` (5 s se ausente ou inválido; o `{"close":true}` não o fecha) e nunca substitui o pop-up da tela: com qualquer pop-up aberto, espera numa fila (`enqueueInfo`) e aparece quando a camada fica livre (`showNextInfo`, chamada por `ClosePopup`). Com 3 avisos esperando (`INFO_QUEUE_MAX`), o novo é descartado e registrado no console. Um aviso na tela que um sim/não, QR code ou PIN substitui volta para o começo da fila;
 - **mensagem inválida** (JSON quebrado, não objeto, sem `value` de texto, tipo desconhecido) vai para o console e é ignorada. Desde 12/10 o `client.on('message')` da página também captura exceções (`view.ejs`, linhas 158–164): antes, um JSON inválido no tópico do QR code fazia a página parar de tratar todas as mensagens seguintes (medido no Chrome 154);
-- **escape:** o texto do sim/não (que leva o `display-name` do cliente) e o PIN entram no HTML escapados (`escapeHtml`); o QR code é desenhado pela biblioteca a partir do texto.
+- **escape:** o texto do sim/não (que leva o `display-name` do cliente), o PIN e, desde a G9, o aviso (que leva o apelido do perfil e o nome do serviço) entram no HTML escapados (`escapeHtml`); o QR code é desenhado pela biblioteca a partir do texto.
 
 ---
 
@@ -174,7 +176,7 @@ A página trata as mensagens de pop-up em `handlePopupMessage` (`aop/public/js/p
 graph TD
     BC["bcast (bcast_svc)<br/>PUB tlm/lls/{bsid}/bamt, tlm/sls/{sid}/esg|bald,<br/>video/event"]
     AOP["AoP (aop-core)<br/>PUB aop/currentUser, aop/currentService, aop/display/layers/*<br/>SUB aop/currentUser, aop/currentService, tlm/lls/#, tlm/sls/{sid}/#"]
-    TV3["tv3ws (tv3ws-client)<br/>PUB aop/currentUser, aop/devices/{class}, popup/yesno|qrcode|pin, tópicos de nó<br/>SUB aop/currentUser, aop/currentService, aop/services,<br/>aop/{sid}/currentApp, .../path, .../doc/*, popup/yesno/response"]
+    TV3["tv3ws (tv3ws-client)<br/>PUB aop/currentUser, aop/devices/{class}, popup/yesno|qrcode|pin|info, tópicos de nó<br/>SUB aop/currentUser, aop/currentService, aop/services,<br/>aop/{sid}/currentApp, .../path, .../doc/*, popup/yesno/response"]
     PG["página da TV (rp-display)<br/>PUB popup/yesno/response<br/>SUB aop/display/layers/+, video/+, popup/+/message, popup/+, video/event"]
     RE[("Redis")]
 
