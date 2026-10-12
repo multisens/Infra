@@ -360,6 +360,10 @@
       "path": "/tv3/remote-device/device/{handle}",
       "method": "GET",
       "auth": "token",
+      "classes": [
+        "local-associated",
+        "local-autonomous"
+      ],
       "headers": [
         "Authorization",
         "Accept-Version"
@@ -369,6 +373,10 @@
       "path": "/tv3/remote-device/device/{handle}",
       "method": "DELETE",
       "auth": "token",
+      "classes": [
+        "local-associated",
+        "local-autonomous"
+      ],
       "headers": [
         "Authorization",
         "Accept-Version"

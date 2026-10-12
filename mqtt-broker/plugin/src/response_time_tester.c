@@ -6,8 +6,12 @@
 #include <json-c/json.h>
 #include <mosquitto.h>
 #include <mosquitto_broker.h>
+#include "error_json.h"
 
 extern mosquitto_plugin_id_t *mosq_pid;
+
+// Tamanho do buffer da resposta, com o NUL (o mesmo 512 de antes)
+#define RESPONSE_CAP 512
 
 static char* format_timestamp() {
     struct timeval tv;
@@ -58,6 +62,10 @@ void handle_response_time_test(const char* topic, const char* payload) {
     
     const char *pub_time_str = json_object_get_string(publisher_time);
     const char *id = json_object_get_string(publisher_id);
+    // comprimento real do id (12/10): string JSON com \u0000 no meio sai
+    // inteira na resposta; id que nao e string vale o seu texto JSON
+    size_t id_len = json_object_is_type(publisher_id, json_type_string)
+        ? (size_t)json_object_get_string_len(publisher_id) : strlen(id);
     int iter = json_object_get_int(iteration);
     
     char *current_time_str = format_timestamp();
@@ -71,22 +79,36 @@ void handle_response_time_test(const char* topic, const char* payload) {
     char response_topic[256];
     snprintf(response_topic, sizeof(response_topic), "PluginResponseTime%s/iteration%d", id, iter);
     
-    char *response_buffer = malloc(512);
+    char *response_buffer = malloc(RESPONSE_CAP);
     if (!response_buffer) {
         free(current_time_str);
         json_object_put(message);
         return;
     }
     
-    int len = snprintf(response_buffer, 512,
-        "{\"localtime\":\"%s\",\"id\":\"%s\",\"iteration\":%d,\"diffTime\":%lld}",
-        current_time_str, id, iter, diff_time);
+    // Correcao de 12/10 (revisao do plugin), o mesmo defeito do publish_error:
+    // o id entrava no JSON por snprintf, sem escape (aspas, barra invertida ou
+    // controle no id davam JSON invalido), e o buffer vazava quando a
+    // resposta nao cabia em 512 bytes ou o publish falhava. Agora o id sai
+    // escapado por error_json_string (as regras do error_json.c) e o buffer e
+    // liberado aqui sempre que o broker nao fica com ele. Resposta que nao
+    // cabe em RESPONSE_CAP - 1 bytes continua nao saindo, como antes.
+    char id_json[RESPONSE_CAP];
+    int len = -1;
+    if (error_json_string(id_json, sizeof(id_json), id, id_len) >= 0) {
+        len = snprintf(response_buffer, RESPONSE_CAP,
+            "{\"localtime\":\"%s\",\"id\":%s,\"iteration\":%d,\"diffTime\":%lld}",
+            current_time_str, id_json, iter, diff_time);
+    }
     
-    if (len > 0 && len < 512) {
-        mosquitto_broker_publish(NULL, response_topic, len, response_buffer, 0, 0, NULL);
+    if (len > 0 && len < RESPONSE_CAP &&
+        mosquitto_broker_publish(NULL, response_topic, len, response_buffer, 0, 0, NULL) == MOSQ_ERR_SUCCESS) {
+        // o broker ficou com o buffer (e o libera)
+        response_buffer = NULL;
         mosquitto_log_printf(MOSQ_LOG_INFO, "Response time test: topic=%s, diffTime=%lld ms", response_topic, diff_time);
     }
     
+    free(response_buffer);
     free(current_time_str);
     json_object_put(message);
 }

@@ -68,7 +68,7 @@ Todas passam pela borda, que exige access token e bind-token (`token+bind`) do c
 | `GET /tv3/current-service/users/current-user` | C.6.14.3 | Devolve `{"id": <session:current-user>}` |
 | `POST /tv3/current-service/users/current-user` | C.6.14.4 | Grava `session:current-user` e publica `aop/currentUser` retido; 105 sem `id` no corpo |
 | `POST /tv3/{serviceContextId}/users/{userid}` | C.6.14.5 | Grava atributos de emissora; 101 sem atributos ou com `id`, `nickname`, `parentalControl` ou `maxContentRating` (básicos que não se redefinem no contexto da emissora) |
-| `GET /tv3/current-service/users/files?path=...` | C.6.14.6 | Devolve o arquivo de `USER_THUMBS` se ele é o `avatar` de algum perfil visível no serviço corrente; 305 se não |
+| `GET /tv3/current-service/users/files?path=...` | C.6.14.6 | Devolve o arquivo de `USER_THUMBS` se ele é o `avatar` de algum perfil visível no serviço corrente (basta um); 405 se ele só é o `avatar` de perfis não visíveis no serviço, e 305 se não é o `avatar` de perfil nenhum (desde 12/10; antes, 305 nos dois casos). Desde 12/10, o caminho também tem de ficar dentro de `USER_THUMBS` (305 fora dele ou inexistente; antes, `..` lia fora) |
 
 Na borda, `{serviceContextId}` só vale como `current-service` ou como a constante do tv3ws (L2, `PENDENTE (Joel)`): outro valor dá 108 na etapa do bind-token, que o associado não percorre (ele chega ao tv3ws com qualquer valor, e o tv3ws usa o valor recebido como contexto). `POST /tv3/{serviceContextId}/users`, fora da norma, saiu da tabela de rotas em 11/10 (A4) e dá 100 na borda.
 

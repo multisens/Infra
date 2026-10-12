@@ -101,12 +101,22 @@ const classesOf = r => r.classes || CLASS_VALUES;
 // local-autonomous no routes.json. Por esta regra, ela sai da 44643 (la da
 // 100, como as duas da C.6.8 acima), e na 44642 o nao local recebe o 106 da
 // regra de classe do plugin.
+// Rotas 2.1 do remote-device so para o cliente local (decisao do Luis em
+// 12/10, a tarde): GET e DELETE /tv3/remote-device/device/{handle} (C.6.15.6
+// e C.6.15.7 da proposta 2.1 do Luis ao Forum, fora da Tabela C.2; no tv3ws,
+// src/api/multi-device/index.ts: "This API allows a local client application
+// to establish communication with a remote device") ganharam as mesmas
+// "classes" da C.6.15.5. Pela mesma regra, saem da 44643 (100 la) e, na
+// 44642, o nao local recebe o 106 da regra de classe. Nao tem campo "api":
+// a lista da C.6.7.8/C.6.7.9 nao muda.
 // PENDENTE (Joel), na F-1 (este mesmo ponto; docs/decisoes-pendentes.md da
 // raiz, secao F, P1.9): o codigo exato que o nao local recebe nessa API. A
 // Tabela C.78 (p. 339; p. 357 do PDF) lista 107 ("If invoked from a
 // non-local client"); a C.4.1.8 fala em 106 para o nao local que chama uma
 // API de uso exclusivo do cliente local. Ate a decisao, ficam o 106 da borda
-// na 44642 e o 100 na 44643.
+// na 44642 e o 100 na 44643 — tambem nas duas rotas 2.1 acima, que seguem a
+// C.6.15.5. Para elas o codigo exato tambem nao foi decidido (o texto da
+// proposta 2.1 nao esta neste repositorio; falta confirmar se entra na F-1).
 const SURFACE_RULES = {
   external: {
     requires: 'non-local',
@@ -264,7 +274,9 @@ function pluginConfig(t, surface) {
     // P1.9, a externa deixa de listar as APIs das rotas que so existem na
     // interna (hoje tv3ws-bind-context-register, tv3ws-bind-context-remove e,
     // desde 12/10, tv3ws-remotedevice-communication, a C.6.15.5, que so tem
-    // essa rota), e GET /tv3/api-info/<id> delas da 101 na 44643.
+    // essa rota), e GET /tv3/api-info/<id> delas da 101 na 44643. As rotas
+    // 2.1 /tv3/remote-device/device/{handle}, que tambem sairam da externa em
+    // 12/10, nao tem "api" e nao mexem nesta lista.
     // DECIDIDO (Luis, 11/10; F-2): cada superficie lista so as APIs que
     // oferece. A lista por superficie ja era assim desde a D-0510-3 (05/10),
     // mas com as duas superficies iguais a diferenca nao aparecia. A C.6.7.9

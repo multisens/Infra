@@ -61,7 +61,10 @@ test('rotas sem restricao de classe ficam nas duas; /health e /manifest nas duas
 // APIs listadas na C.6.7.8/C.6.7.9 nao mudam (a rota nao tinha campo "api").
 // Desde a decisao do Luis em 12/10 (C.6.15.5 so para cliente local, teste
 // proprio abaixo), a externa tem 23 rotas e 17 APIs; a interna segue com 26
-// rotas e 20 APIs.
+// rotas e 20 APIs. Desde a segunda decisao do Luis em 12/10 (rotas 2.1
+// /tv3/remote-device/device/{handle} so para cliente local, teste proprio
+// abaixo), a externa tem 21 rotas; as APIs nao mudam (17 e 20), porque essas
+// duas rotas nao tem campo "api".
 test('A4: POST /tv3/{serviceContextId}/users fora da tabela; contagens por superficie', () => {
   const t = real();
   assert.ok(!t.routes.some(r => key(r) === 'POST /tv3/{serviceContextId}/users'), 'rota retirada (A4)');
@@ -69,7 +72,7 @@ test('A4: POST /tv3/{serviceContextId}/users fora da tabela; contagens por super
   for (const k of ['GET /tv3/{serviceContextId}/users/{userid}', 'POST /tv3/{serviceContextId}/users/{userid}']) {
     assert.ok(t.routes.some(r => key(r) === k), k);
   }
-  assert.equal(g.routesOf(t, 'external').length, 23);
+  assert.equal(g.routesOf(t, 'external').length, 21);
   assert.equal(g.routesOf(t, 'internal').length, 26);
   const files = g.generate(t);
   for (const [name, cfg] of Object.entries(files)) {
@@ -86,10 +89,16 @@ test('A4: POST /tv3/{serviceContextId}/users fora da tabela; contagens por super
   assert.equal(apis('external'), 17);
 });
 
-test('so na interna: POST e DELETE /tv3/bind-context (so local-associated) e GET /tv3/remote-device/devices/{classId} (so local, 12/10)', () => {
+test('so na interna: POST e DELETE /tv3/bind-context (so local-associated), GET /tv3/remote-device/devices/{classId} e GET e DELETE /tv3/remote-device/device/{handle} (so local, 12/10)', () => {
   const t = real();
   const fora = t.routes.filter(r => !g.surfacesOf(r).includes('external'));
-  assert.deepEqual(keys(fora), ['DELETE /tv3/bind-context', 'GET /tv3/remote-device/devices/{classId}', 'POST /tv3/bind-context']);
+  assert.deepEqual(keys(fora), [
+    'DELETE /tv3/bind-context',
+    'DELETE /tv3/remote-device/device/{handle}',
+    'GET /tv3/remote-device/device/{handle}',
+    'GET /tv3/remote-device/devices/{classId}',
+    'POST /tv3/bind-context',
+  ]);
   // o GET da mesma API (autonomo e nao local) continua nas duas
   const get = t.routes.find(r => key(r) === 'GET /tv3/bind-context');
   assert.deepEqual(g.surfacesOf(get), ['external', 'internal']);
@@ -99,8 +108,10 @@ test('so na interna: POST e DELETE /tv3/bind-context (so local-associated) e GET
 // application") so para o cliente local. Pela P1.9 a rota sai da 44643 (100
 // la) e, na 44642, o nao local recebe o 106 da regra de classe do plugin; o
 // codigo exato (a Tabela C.78 diz 107) fica com o Joel (F-1, generate.js).
-// As outras rotas de remote-device sao chamadas pelo proprio dispositivo
-// remoto, que e nao local: continuam nas duas.
+// O registro e o cancelamento (C.6.15.2 e C.6.15.3) sao chamados pelo
+// proprio dispositivo remoto, que e nao local: continuam nas duas. As rotas
+// 2.1 por handle tambem sairam da externa (segunda decisao de 12/10, teste
+// seguinte).
 test('C.6.15.5 so para cliente local (12/10): fora da externa, com a API dela', () => {
   const t = real();
   const k = 'GET /tv3/remote-device/devices/{classId}';
@@ -113,7 +124,7 @@ test('C.6.15.5 so para cliente local (12/10): fora da externa, com a API dela', 
   assert.deepEqual(g.surfacesOf(r), ['internal']);
   // a API da C.6.15.5 so tem essa rota: sai junto da lista da externa
   assert.deepEqual(t.routes.filter(x => x.api && x.api.id === 'tv3ws-remotedevice-communication').map(key), [k]);
-  for (const outra of ['POST /tv3/remote-device', 'DELETE /tv3/remote-device/{handle}', 'GET /tv3/remote-device/device/{handle}', 'DELETE /tv3/remote-device/device/{handle}']) {
+  for (const outra of ['POST /tv3/remote-device', 'DELETE /tv3/remote-device/{handle}']) {
     const o = t.routes.find(x => key(x) === outra);
     assert.ok(o, outra);
     assert.deepEqual(g.surfacesOf(o), ['external', 'internal'], outra);
@@ -132,6 +143,54 @@ test('C.6.15.5 so para cliente local (12/10): fora da externa, com a API dela', 
   assert.deepEqual(oi['x-tv30-surfaces'], ['internal']);
   assert.match(oi.description, /Classes: local-associated, local-autonomous\. So nesta superficie \(internal; P1\.9\)/);
   assert.ok(!files['openapi-external.json'].paths['/tv3/remote-device/devices/{classId}'], 'fora do OpenAPI da externa');
+});
+
+// Segunda decisao do Luis em 12/10: GET e DELETE
+// /tv3/remote-device/device/{handle} (C.6.15.6 e C.6.15.7 da proposta 2.1 do
+// Luis ao Forum; tv3ws/src/api/multi-device/index.ts: "This API allows a local
+// client application to establish communication with a remote device") so
+// para o cliente local, como a C.6.15.5. Pela P1.9 saem da 44643 (100 la); na
+// 44642, o nao local recebe o 106 da regra de classe do plugin. Sem campo
+// "api" (fora da Tabela C.2): as listas da C.6.7.8/C.6.7.9 nao mudam.
+test('rotas 2.1 /tv3/remote-device/device/{handle} so para cliente local (12/10): fora da externa, APIs intactas', () => {
+  const t = real();
+  const p = '/tv3/remote-device/device/{handle}';
+  const files = g.generate(t);
+  const plugin = s => files[`krakend-${s}.linux.json`].extra_config['plugin/http-server']['tv30-auth'];
+  for (const m of ['GET', 'DELETE']) {
+    const k = `${m} ${p}`;
+    const r = t.routes.find(x => key(x) === k);
+    assert.ok(r, k);
+    assert.deepEqual([...r.classes].sort(), ['local-associated', 'local-autonomous'], k);
+    assert.equal(r.auth, 'token', k);
+    assert.equal(r.api, undefined, `${k}: sem api (fora da Tabela C.2)`);
+    assert.equal(r.edge, undefined, `${k}: repassada ao tv3ws`);
+    assert.deepEqual(g.surfacesOf(r), ['internal'], k);
+    const pi = plugin('internal').routes.find(x => `${x.method} ${x.path}` === k);
+    assert.deepEqual(pi, { method: m, path: p, auth: 'token', classes: ['local-associated', 'local-autonomous'] }, `${k}: plugin da interna`);
+    assert.ok(!plugin('external').routes.some(x => `${x.method} ${x.path}` === k), `${k}: fora do plugin da externa`);
+    for (const v of Object.keys(t.backends.internal)) {
+      assert.ok(files[`krakend-internal.${v}.json`].endpoints.some(e => `${e.method} ${e.endpoint}` === k), `${k}: endpoint na interna (${v})`);
+    }
+    for (const v of Object.keys(t.backends.external)) {
+      assert.ok(!files[`krakend-external.${v}.json`].endpoints.some(e => `${e.method} ${e.endpoint}` === k), `${k}: endpoint fora da externa (${v})`);
+    }
+    const oi = files['openapi-internal.json'].paths[p][m.toLowerCase()];
+    assert.deepEqual(oi['x-tv30-surfaces'], ['internal'], k);
+    assert.deepEqual(oi['x-tv30-classes'], ['local-associated', 'local-autonomous'], k);
+    assert.match(oi.description, /Classes: local-associated, local-autonomous\. So nesta superficie \(internal; P1\.9\)/, k);
+  }
+  // o caminho inteiro sai da externa (os dois metodos), e fica so com eles na interna
+  assert.ok(!files['openapi-external.json'].paths[p], 'fora do OpenAPI da externa');
+  assert.deepEqual(Object.keys(files['openapi-internal.json'].paths[p]).sort(), ['delete', 'get']);
+  // APIs: as mesmas de antes (as rotas 2.1 nao tem api)
+  assert.equal(plugin('external').apis.length, 17);
+  assert.equal(plugin('internal').apis.length, 20);
+  // o registro e o cancelamento do proprio dispositivo remoto (nao local) ficam nas duas
+  for (const k of ['POST /tv3/remote-device', 'DELETE /tv3/remote-device/{handle}']) {
+    assert.deepEqual(g.surfacesOf(t.routes.find(x => key(x) === k)), ['external', 'internal'], k);
+    assert.ok(plugin('external').routes.some(x => `${x.method} ${x.path}` === k), `${k}: no plugin da externa`);
+  }
 });
 
 test('derivacao em tabela sintetica', () => {

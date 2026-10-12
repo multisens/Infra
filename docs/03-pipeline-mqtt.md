@@ -1,6 +1,6 @@
 # Pipeline MQTT: validação de esquema
 
-> **Revisto em 2026-10-10 contra o código e conferido de novo em 2026-10-12** (`infra/mqtt-broker/plugin/src/`, `plugin/config/schemas.json`, `infra/Dockerfile` e `infra/entrypoint.sh` do broker). Até a revisão de 10/10, este documento descrevia um pipeline de segurança com três camadas (ACL por `client_id` no formato `user_<userId>`, consentimento por `serviceId` e esquema), um módulo `authorize.c` e a carga de ACL e consentimento no Redis pelo `migrate_to_redis.py` na partida. Nada disso existe mais: o controle de acesso a tópicos foi removido por decisão de desenho (comentário em `infra/mqtt-broker/plugin/src/mosquitto_plugin.c`), o plugin não consulta o Redis e só valida esquema e mede latência.
+> **Revisto em 2026-10-10 contra o código e conferido de novo em 2026-10-12, também depois das correções da tarde** (leitura do payload inteiro e mensagem e tópico de `errors/<client_id>`; `infra/mqtt-broker/plugin/src/`, `plugin/config/schemas.json`, `infra/Dockerfile` e `infra/entrypoint.sh` do broker). Até a revisão de 10/10, este documento descrevia um pipeline de segurança com três camadas (ACL por `client_id` no formato `user_<userId>`, consentimento por `serviceId` e esquema), um módulo `authorize.c` e a carga de ACL e consentimento no Redis pelo `migrate_to_redis.py` na partida. Nada disso existe mais: o controle de acesso a tópicos foi removido por decisão de desenho (comentário em `infra/mqtt-broker/plugin/src/mosquitto_plugin.c`), o plugin não consulta o Redis e só valida esquema e mede latência.
 
 O plugin C intercepta toda mensagem publicada no broker antes de entregá-la aos assinantes. Ele usa o evento `MOSQ_EVT_ACL_CHECK` do Mosquitto só para isso: valida o PUBLISH (`MOSQ_ACL_WRITE`) e deixa passar todo o resto (assinatura e entrega), sem decidir acesso por cliente.
 
@@ -26,8 +26,8 @@ flowchart TD
     LOOKUP -->|"Sem esquema"| ALLOW
     LOOKUP -->|"Com esquema"| PARSE
 
-    PARSE{"Payload é JSON?\n(esquema type=string aceita texto puro)"}
-    PARSE -->|"Não"| DENY["MOSQ_ERR_ACL_DENIED\n+ publica em errors/<client_id>\n(INVALID_JSON)"]
+    PARSE{"Payload é exatamente um texto JSON?\n(lido inteiro, pelo comprimento; json-c estrito:\nsobra, NUL ou comentário = não)\n(esquema type=string: o payload inteiro\nvale como string, se não tiver NUL)"}
+    PARSE -->|"Não"| DENY["MOSQ_ERR_ACL_DENIED\n+ publica em errors/<client_id>\n(INVALID_JSON; JSON válido, até 2047 bytes)"]
     PARSE -->|"Sim"| SCHEMA
 
     SCHEMA["Valida o payload contra o esquema\n(JSON Schema Draft-07 em C)"]
@@ -47,14 +47,19 @@ Os esquemas declarados (`infra/mqtt-broker/plugin/config/schemas.json`) cobrem t
 graph TD
     subgraph mosquitto_plugin.so
         MAIN["mosquitto_plugin.c\nOrquestrador\ncallback_acl_check()\nvalidate_message()\npublish_error()"]
+        PAYLOAD["json_payload.c\nLeitura do payload inteiro\njson_payload_parse()"]
         SCHEMA["schema_validator.c\nValidação JSON Schema\nvalidate_json_schema()"]
+        ERRJSON["error_json.c\nMensagem e tópico de errors/\nerror_json_build()\nerror_json_topic()\nerror_json_string()"]
         LATENCY["response_time_tester.c\nTeste de latência\nhandle_response_time_test()"]
     end
 
     SCHEMAS_FILE["/mosquitto/config/schemas.json"]
 
+    MAIN --> PAYLOAD
     MAIN --> SCHEMA
+    MAIN --> ERRJSON
     MAIN --> LATENCY
+    LATENCY -->|"escape do id"| ERRJSON
     MAIN -->|"lê schemas na inicialização"| SCHEMAS_FILE
 ```
 

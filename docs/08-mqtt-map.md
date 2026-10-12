@@ -1,6 +1,6 @@
 # Mapa de tópicos MQTT — TV 3.0
 
-> **Estado do código em 12/10/2026**, conferido por busca de `publish`, `subscribe` e `addTopicHandler` em `aop/src`, `aop/public/js`, `tv3ws/src`, `bcast/src` e `infra/mqtt-broker`; as linhas são as desta data. Até 12/10 este mapa citava módulos do AoP com os nomes antigos (`disp-lyr`, hoje `graphic-overlays`), linhas que tinham mudado e tópicos de nó com formato que o código não usa, não listava o bcast nem o plugin do broker e dizia que só três tópicos eram retidos.
+> **Estado do código em 12/10/2026**, conferido por busca de `publish`, `subscribe` e `addTopicHandler` em `aop/src`, `aop/public/js`, `tv3ws/src`, `bcast/src` e `infra/mqtt-broker`; as linhas são as desta data, conferidas de novo depois das correções da tarde de 12/10 (fechamento do pop-up de pareamento, mensagem e tópico de `errors/<client_id>`, leitura do payload no plugin). Até 12/10 este mapa citava módulos do AoP com os nomes antigos (`disp-lyr`, hoje `graphic-overlays`), linhas que tinham mudado e tópicos de nó com formato que o código não usa, não listava o bcast nem o plugin do broker e dizia que só três tópicos eram retidos.
 >
 > O barramento MQTT e os nomes de tópico são decisões deste projeto; a ABNT NBR 25608 não define a comunicação interna do receptor. O mapa com a descrição de cada tópico também está em `docs/mqtt-topicos.md` da raiz do TV30.
 
@@ -27,9 +27,11 @@ A coluna **Esquema** diz se o tópico tem esquema em `infra/mqtt-broker/plugin/c
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
 | **PUB** | `aop/src/core.js` | 246 | `setCurrentUser()`: grava antes o `lastAccess` do perfil; payload: id do perfil |
-| **PUB** | `tv3ws/src/api/user/service.ts` | 111 | `setCurrentUser()` (C.6.14.4): grava antes `session:current-user` |
+| **PUB** | `tv3ws/src/api/user/service.ts` | 113 | `setCurrentUser()` (C.6.14.4): grava antes `session:current-user` |
 | **SUB** | `aop/src/core.js` | 93 (tratador na 233) | `loadCurrentUser()`: grava o `lastAccess` do perfil (`touchLastAccess`, D-0510-5) |
-| **SUB** | `tv3ws/src/api/user/service.ts` | 70 | `updateCurrentUser()`: `session:current-user` (`tv30_sessao_usuario`) |
+| **SUB** | `tv3ws/src/api/user/service.ts` | 72 | `updateCurrentUser()`: `session:current-user` (`tv30_sessao_usuario`) |
+
+O payload é o id do perfil em texto puro (UUID desde a F-3, 11/10). De 11/10 a 12/10, o plugin do broker recusava o UUID que começa com dígito: lia o começo dele como número (`json_tokener_parse`) e o esquema `type: string` falhava (`Expected type 'string', got 'int'`), e a publicação não chegava aos assinantes. Desde a correção de 12/10, o payload que não é um texto JSON inteiro vale como string ([09](09-schema-validation.md)).
 
 ### `aop/currentService` — retido; esquema: string de até 256 caracteres
 
@@ -38,14 +40,14 @@ A coluna **Esquema** diz se o tópico tem esquema em `infra/mqtt-broker/plugin/c
 | **PUB** | `aop/src/core.js` | 273 | `setCurrentService()`: payload: id do serviço |
 | **PUB** | `aop/src/core.js` | 279 | `unsetCurrentService()`: payload `''` |
 | **SUB** | `aop/src/core.js` | 93 (tratador na 267) | `loadCurrentService()` |
-| **SUB** | `tv3ws/src/api/user/service.ts` | 71 | `updateCurrentService()`: `session:current-service-id` (`tv30_sessao_servico_id`) |
-| **SUB** | `tv3ws/src/core.ts` | 174 (tratador na 125) | `currentService()`: `session:current-service` (`tv30_sessao_servico`) e assinatura de `aop/{serviceId}/currentApp` |
+| **SUB** | `tv3ws/src/api/user/service.ts` | 73 | `updateCurrentService()`: `session:current-service-id` (`tv30_sessao_servico_id`) |
+| **SUB** | `tv3ws/src/core.ts` | 190 (tratador na 141) | `currentService()`: `session:current-service` (`tv30_sessao_servico`) e assinatura de `aop/{serviceId}/currentApp` |
 
 ### `aop/services` — sem publicador neste repositório
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **SUB** | `tv3ws/src/core.ts` | 182 (tratador na 176) | `loadServiceData()`: lista de serviços em JSON |
+| **SUB** | `tv3ws/src/core.ts` | 198 (tratador na 192) | `loadServiceData()`: lista de serviços em JSON |
 
 ### `aop/users` — fora de uso
 
@@ -70,14 +72,14 @@ Desde 10/10 ninguém publica nem assina o tópico, e o esquema dele saiu do `sch
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **SUB** | `tv3ws/src/core.ts` | 150 | `setAppId()`: assinado na troca de serviço (`currentService()`) |
+| **SUB** | `tv3ws/src/core.ts` | 166 (tratador na 88) | `setAppId()`: assinado na troca de serviço (`currentService()`). Desde 12/10, trocar de aplicação zera o diretório da aplicação (`core.app.url`) até chegar o `.../path` da nova, e a mensagem vazia encerra a aplicação corrente (tira os tratadores de `.../path` e `.../doc/nodes` e zera o diretório); antes, a mensagem vazia era ignorada, e a nova aplicação servia o diretório da anterior na C.6.4.7. `PENDENTE (Joel)`: o tópico não tem publicador neste repositório, e o contrato dele (como se sinaliza o fim da aplicação) não está escrito |
 
 ### `aop/{serviceId}/{appId}/path` e `aop/{serviceId}/{appId}/doc/nodes`
 
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
-| **SUB** | `tv3ws/src/core.ts` | 97 | `.../path`: `setAppBaseURL()`, URL base da app (de onde a C.6.4.7 lê os arquivos) |
-| **SUB** | `tv3ws/src/core.ts` | 103 | `.../doc/nodes`: `setAppNodes()`, array de nós; associa os nós aos dispositivos remotos |
+| **SUB** | `tv3ws/src/core.ts` | 113 | `.../path`: `setAppBaseURL()`, URL base da app (de onde a C.6.4.7 lê os arquivos) |
+| **SUB** | `tv3ws/src/core.ts` | 119 | `.../doc/nodes`: `setAppNodes()`, array de nós; associa os nós aos dispositivos remotos |
 
 ### Tópicos de nó: `aop/{serviceId}/{appId}/doc/{nó}/...`
 
@@ -102,10 +104,10 @@ Publicadas pelo AoP sem retenção e assinadas pela página da TV (`aop/src/modu
 
 | Tópico | Esquema | PUB (`aop/src/core.js`) | SUB (`view.ejs`) |
 |---|---|---|---|
-| `aop/display/layers/rxgui` | sim | 133, `setDisplayGui()`: caminho da tela do AoP | 159, `aop/display/layers/+` |
-| `aop/display/layers/graphics` | sim | 161, `setDisplayGraphics()`: URL da app no host próprio, `http://<rótulo>.<APPS_DOMAIN>:<porta>/graphicsAppProxy/...` (P1.3), ou `''` | 159, `aop/display/layers/+` |
-| `aop/display/layers/video/url` | sim | 169 e 172, `setVideoURL()`: `/videoStreamProxy/<arquivo>` para `.m3u8` e `.mpd`; senão a URL recebida | 160, `aop/display/layers/video/+` |
-| `aop/display/layers/video/size` | sim | 177, `setVideoSize()`: JSON `{top, left, width, height}` | 160, `aop/display/layers/video/+` |
+| `aop/display/layers/rxgui` | sim | 133, `setDisplayGui()`: caminho da tela do AoP | 169, `aop/display/layers/+` |
+| `aop/display/layers/graphics` | sim | 161, `setDisplayGraphics()`: URL da app no host próprio, `http://<rótulo>.<APPS_DOMAIN>:<porta>/graphicsAppProxy/...` (P1.3), ou `''` | 169, `aop/display/layers/+` |
+| `aop/display/layers/video/url` | sim | 169 e 172, `setVideoURL()`: `/videoStreamProxy/<arquivo>` para `.m3u8` e `.mpd`; senão a URL recebida | 170, `aop/display/layers/video/+` |
+| `aop/display/layers/video/size` | sim | 177, `setVideoSize()`: JSON `{top, left, width, height}` | 170, `aop/display/layers/video/+` |
 
 ---
 
@@ -113,10 +115,16 @@ Publicadas pelo AoP sem retenção e assinadas pela página da TV (`aop/src/modu
 
 | Tópico | Esquema | PUB | SUB |
 |---|---|---|---|
-| `aop/display/layers/popup/yesno/message` | não | `tv3ws/src/core.ts`, 272, `showYesNoPopUpAsync()`: JSON `{value, timeout}`; não retido | `view.ejs`, 161, `aop/display/layers/popup/+/message` |
-| `aop/display/layers/popup/yesno/response` | não | `aop/public/js/popup.js`, 21, 27 e 33: `"true"` (Sim) ou `"false"` (Não, ou fim do tempo do pop-up) | `tv3ws/src/core.ts`, 270: assinado em `showYesNoPopUpAsync()` e tirado na resposta ou no fim do tempo (253); só `"true"` autoriza |
-| `aop/display/layers/popup/qrcode` | não | `tv3ws/src/core.ts`, 279, `showQRCodePopUp()`: JSON `{value, timeout}`; não retido | `view.ejs`, 166, `aop/display/layers/popup/+` |
-| `aop/display/layers/popup/pin` | não | `tv3ws/src/core.ts`, 285, `showPINPopUp()`: JSON `{value, timeout}`; não retido | `view.ejs`, 166, `aop/display/layers/popup/+` |
+| `aop/display/layers/popup/yesno/message` | não | `tv3ws/src/core.ts`, 288, `showYesNoPopUpAsync()`: JSON `{value, timeout}`; não retido | `view.ejs`, 171, `aop/display/layers/popup/+/message` |
+| `aop/display/layers/popup/yesno/response` | não | `aop/public/js/popup.js`, 87, 93 e 98: `"false"` (fim do tempo do pop-up), `"true"` (Sim) ou `"false"` (Não) | `tv3ws/src/core.ts`, 286: assinado em `showYesNoPopUpAsync()` e tirado na resposta ou no fim do tempo (269); só `"true"` autoriza |
+| `aop/display/layers/popup/qrcode` | não | `tv3ws/src/core.ts`: 295, `showQRCodePopUp()`, abertura, JSON `{value, timeout}`, com prazo de 120 s desde 12/10; 316, `closeQRCodePopUp()`, fechamento, `{"close":true}`, no fim do pareamento (desde 12/10). Não retido | `view.ejs`, 176, `aop/display/layers/popup/+` |
+| `aop/display/layers/popup/pin` | não | `tv3ws/src/core.ts`: 301, `showPINPopUp()`, abertura, JSON `{value, timeout}`, com prazo de 120 s desde 12/10; 321, `closePINPopUp()`, fechamento, `{"close":true}`, no fim do pareamento (desde 12/10). Não retido | `view.ejs`, 176, `aop/display/layers/popup/+` |
+
+A página trata as mensagens de pop-up em `handlePopupMessage` (`aop/public/js/popup.js`, linha 28), chamada por `mqtt_message` (`view.ejs`, linha 261). Desde 12/10 (correção do pareamento, C.4.3.2 e C.4.3.3):
+- **fechamento:** `{"close":true}` no tópico do QR code ou do PIN fecha o pop-up aberto daquele tipo; com pop-up de outro tipo na tela, ou sem pop-up, nada muda. No sim/não, o `{"close":true}` é ignorado. Quem publica é o tv3ws, no fim do pareamento (o `/tv3/token` com o desafio resolvido), e só se o pop-up daquele tipo ainda for do cliente que pareou (`endPairing`, em `tv3ws/src/api/client-identification/service.ts`). Abertura e fechamento saem do mesmo cliente MQTT, no mesmo tópico e com a mesma QoS, e chegam nessa ordem;
+- **um pop-up só:** o pop-up novo substitui o da tela, com o prazo e os botões dele (`presentPopup`), e o prazo do anterior deixa de valer. Um sim/não substituído não publica resposta (o tv3ws o dá por expirado no fim dos 10 s dele);
+- **mensagem inválida** (JSON quebrado, não objeto, sem `value` de texto, tipo desconhecido) vai para o console e é ignorada. Desde 12/10 o `client.on('message')` da página também captura exceções (`view.ejs`, linhas 158–164): antes, um JSON inválido no tópico do QR code fazia a página parar de tratar todas as mensagens seguintes (medido no Chrome 154);
+- **escape:** o texto do sim/não (que leva o `display-name` do cliente) e o PIN entram no HTML escapados (`escapeHtml`); o QR code é desenhado pela biblioteca a partir do texto.
 
 ---
 
@@ -146,7 +154,7 @@ Publicadas pelo AoP sem retenção e assinadas pela página da TV (`aop/src/modu
 | Direção | Arquivo | Linha | Detalhe |
 |---|---|---|---|
 | **PUB** | `bcast/src/modules/live_stream/index.ts` | 114 | ação do segmento HLS em JSON |
-| **SUB** | `aop/src/modules/graphic-overlays/view.ejs` | 167 | dispara `stream_event` na app da camada gráfica (por `postMessage` à origem dela, desde o P1.3) |
+| **SUB** | `aop/src/modules/graphic-overlays/view.ejs` | 177 | dispara `stream_event` na app da camada gráfica (por `postMessage` à origem dela, desde o P1.3) |
 
 ---
 
@@ -154,9 +162,9 @@ Publicadas pelo AoP sem retenção e assinadas pela página da TV (`aop/src/modu
 
 | Tópico | Quem publica | Detalhe |
 |---|---|---|
-| `errors/{client_id}` | plugin C (`mosquitto_plugin.c`, linha 74, `publish_error()`) | JSON da recusa de esquema; QoS 0, não retido. Nenhum serviço assina |
+| `errors/{client_id}` | plugin C (`mosquitto_plugin.c`, linha 82, em `publish_error()`, linha 63) | JSON da recusa de esquema (`INVALID_JSON` ou `SCHEMA_VALIDATION_FAILED`); QoS 0, não retido. Nenhum serviço assina. Desde 12/10, sempre JSON válido (RFC 8259) e UTF-8 válido, com até 2047 bytes e `"truncated":true` quando algum campo foi cortado (`error_json_build`, em `src/error_json.c`); no `{client_id}` do tópico, `+`, `#`, `/` e controles viram `_`, e o tópico tem até 255 bytes, cortado entre caracteres UTF-8 inteiros (`error_json_topic`). Formato em [09](09-schema-validation.md) |
 | `PublisherResponseTime{id}/iteration{n}` | `infra/mqtt-broker/brokertimetest/` (`server.js`, `headless-run.js`) | pedido do teste de latência; o plugin o intercepta e o deixa passar |
-| `PluginResponseTime{id}/iteration{n}` | plugin C (`response_time_tester.c`, linha 86) | resposta ao teste; QoS 0, não retido; o testador assina `PluginResponseTime{id}/#` |
+| `PluginResponseTime{id}/iteration{n}` | plugin C (`response_time_tester.c`, linha 105) | resposta ao teste, `{localtime, id, iteration, diffTime}`; QoS 0, não retido; o testador assina `PluginResponseTime{id}/#`. Desde 12/10, o `id` sai escapado (`error_json_string`), e o buffer da resposta não vaza quando ela não cabe em 511 bytes ou o publish falha |
 
 ---
 
