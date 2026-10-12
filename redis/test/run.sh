@@ -13,13 +13,16 @@
 #   contrato  os ADAPTADORES de verdade (tv3ws/src/redis-funcoes.ts,
 #             aop/src/redis-funcoes.js, o gestor de perfis do AoP, o
 #             auth-manager do tv3ws e o redisStore do plugin Go) contra as
-#             funcoes num Redis real; a auditoria tem de terminar vazia
+#             funcoes num Redis real; a auditoria tem de terminar vazia. O
+#             gestor de perfis grava o avatar em thumbs/ de um USER_DATA_PATH
+#             temporario do container do teste (G8, Luis 12/10)
 #   imagem    constroi a imagem do redis (infra/redis/Dockerfile) com tag de
 #             teste, sobe um container dela e confere: funcoes carregadas,
-#             carga inicial pelas funcoes (id do perfil em UUID, F-3),
-#             auditoria vazia, healthcheck, que uma nova partida recarrega a
-#             biblioteca e nao refaz a carga, e que a morte do commander
-#             derruba o container (morre-inteiro, C2)
+#             versao do esquema.json, carga inicial pelas funcoes (id do
+#             perfil em UUID, F-3; avatar = nome do arquivo que o template
+#             traz em thumbs/, G8), auditoria vazia, healthcheck, que uma
+#             nova partida recarrega a biblioteca e nao refaz a carga, e que
+#             a morte do commander derruba o container (morre-inteiro, C2)
 #   tudo      os quatro
 # Sai com codigo != 0 se algum falhar. No fim (trap) remove containers, rede
 # e a imagem de teste.
@@ -124,6 +127,16 @@ modo_imagem() {
     && echo "PASS  perfil da carga com id UUID estrito em minusculas ($P), em users:index (F-3; 12/10)" || { echo "FALHA id da carga '$P' (UUID estrito em users:index?)"; ok=0; }
   local b; b=$(docker exec "$C" redis-cli --raw HGET "user:$P" closedCaptioning)
   [ "$b" = false ] && echo "PASS  booleano da carga gravado como 'false' (antes: 'False')" || { echo "FALHA closedCaptioning da carga = '$b'"; ok=0; }
+  # G8 (decisao do Luis em 12/10, esquema versao 4): o avatar da carga e o nome
+  # de um arquivo do diretorio de miniaturas, e o template traz o arquivo (o
+  # userfiles-seed o copia para ./user-files/thumbs); ate 12/10, SVG em linha
+  local av f; av=$(docker exec "$C" redis-cli --raw HGET "user:$P" avatar)
+  f="$INFRA/user-files-template/thumbs/$av"
+  [ "$av" = "$P.svg" ] && [ -f "$f" ] && [ "$(head -c 4 "$f")" = '<svg' ] \
+    && echo "PASS  avatar da carga = nome do arquivo ($av), com o SVG em user-files-template/thumbs (G8)" || { echo "FALHA avatar da carga '$av' (esperado $P.svg, com o SVG em user-files-template/thumbs)"; ok=0; }
+  local v esq; v=$(docker exec "$C" redis-cli --raw FCALL_RO tv30_versao 0)
+  esq=$(sed -n 's/^ *"versao": "\([^"]*\)".*/\1/p' "$INFRA/redis/esquema.json")
+  [ -n "$esq" ] && [ "$v" = "$esq" ] && echo "PASS  imagem com o esquema versao $v (o do esquema.json)" || { echo "FALHA versao do esquema na imagem '$v', no esquema.json '$esq'"; ok=0; }
   local a; a=$(docker exec "$C" redis-cli FCALL_RO tv30_auditoria 0)
   [ -z "$a" ] && echo "PASS  auditoria vazia depois da carga" || { echo "FALHA auditoria: $a"; ok=0; }
   # nova partida: biblioteca recarregada (REPLACE), carga mantida

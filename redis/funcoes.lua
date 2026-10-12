@@ -241,6 +241,54 @@ local function motivoUuid(v)
   return nil
 end
 
+-- G8 (decisao do Luis em 12/10, versao 4 do esquema): avatar = NOME de um
+-- arquivo dentro do diretorio de miniaturas (<USER_DATA_PATH>/thumbs no AoP =
+-- USER_THUMBS no tv3ws), no formato do contrato
+--   ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(svg|png|jpg|jpeg|webp)$
+-- O padrao Lua nao tem alternativa nem repeticao contada, por isso a regra e
+-- conferida por partes, na ordem em que a mensagem ajuda mais: SVG em linha
+-- (o formato de ate 12/10, que um volume antigo ainda tem), diretorio, a
+-- extensao (o que vem depois do ULTIMO ponto: nenhuma extensao da lista tem
+-- ponto, entao o corte e o mesmo da expressao), o primeiro caractere, os
+-- demais e o tamanho do nome antes da extensao (regra.maxNome, 128 = 1 +
+-- {0,127}). Caracteres so ASCII: depois da conferencia deles, bytes =
+-- caracteres. Ate 12/10 (versao 3) o avatar era texto livre.
+local EXEMPLO_AVATAR = 'como c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10.svg'
+
+local function motivoNomeArquivo(regra, v)
+  if v == '' then
+    return 'vazio: o avatar e o nome de um arquivo do diretorio de miniaturas (' .. EXEMPLO_AVATAR ..
+      '); sem avatar, o campo fica ausente'
+  end
+  if string.sub(v, 1, 1) == '<' then
+    return 'SVG em linha nao serve: o avatar e o nome de um arquivo do diretorio de miniaturas (Tabela 7: file path; G8), ' ..
+      EXEMPLO_AVATAR .. ' (veio ' .. amostra(v) .. ')'
+  end
+  if string.find(v, '[/\\]') then
+    return 'so o nome do arquivo, sem diretorio: nao pode conter "/" nem "\\" (veio ' .. amostra(v) .. ')'
+  end
+  local exts = regra.extensoes or {}
+  local base, ext = string.match(v, '^(.*)%.([^.]*)$')
+  local extOk = false
+  if ext then
+    for _, e in ipairs(exts) do if ext == e then extOk = true end end
+  end
+  if not extOk then
+    return 'extensao deve ser uma de .' .. table.concat(exts, ', .') .. ', em minusculas (veio ' .. amostra(v) .. ')'
+  end
+  if not string.find(base, '^[A-Za-z0-9]') then
+    return 'nome do arquivo deve comecar por letra ou digito (sem ponto no comeco; veio ' .. amostra(v) .. ')'
+  end
+  if string.find(base, '[^A-Za-z0-9._%-]') then
+    return 'nome do arquivo so com letras sem acento, digitos, ".", "_" e "-" (veio ' .. amostra(v) .. ')'
+  end
+  if regra.maxNome and #base > regra.maxNome then
+    return 'nome do arquivo tem ' .. #base .. ' caracteres antes da extensao, maximo ' .. regra.maxNome ..
+      ' (veio ' .. amostra(v) .. ')'
+  end
+  return nil
+end
+
 local function motivoOrigem(v)
   local esq, resto = string.match(v, '^(https?)://(.+)$')
   if not esq then return 'deve comecar por http:// ou https://' end
@@ -307,6 +355,8 @@ motivo = function(regra, v, emJson)
     return 'deve ser um de ' .. table.concat(regra.valores, ', ') .. ' (veio ' .. amostra(v) .. ')'
   elseif t == 'uuid' then
     return motivoUuid(v)
+  elseif t == 'nomeArquivo' then
+    return motivoNomeArquivo(regra, v)
   elseif t == 'idioma' then
     if not idiomaOk(v) then return 'deve ser etiqueta de idioma IETF RFC 5646, como pt-BR (veio ' .. amostra(v) .. ')' end
   elseif t == 'origem' then

@@ -9,7 +9,7 @@
     "o campo 'fonte' de cada regra diz de onde ela veio (secao da norma, schemas.json do broker ou codigo).",
     "Documentacao para quem chega: docs/modelo-redis.md e infra/redis/README.md."
   ],
-  "versao": "3",
+  "versao": "4",
   "biblioteca": "tv30",
   "prefixoErro": "TV30ESQUEMA",
 
@@ -86,7 +86,7 @@
       "campos": {
         "id": { "ref": "idPerfil", "obrigatorio": true, "fonte": "Tabela 7: UUID string, required (F-3, decisao do Luis em 11/10)" },
         "nickname": { "tipo": "texto", "min": 1, "max": 20, "obrigatorio": true, "fonte": "Tabela 7: string (up to 20 characters), required" },
-        "avatar": { "tipo": "texto", "fonte": "Tabela 7: file path, optional (o testbed grava SVG em linha; ver divergencias)" },
+        "avatar": { "tipo": "nomeArquivo", "maxNome": 128, "extensoes": ["svg", "png", "jpg", "jpeg", "webp"], "fonte": "Tabela 7: 'Path indicating the file with the graphical representation of the viewer profile', file path, optional. G8 (decisao do Luis em 12/10, versao 4 deste esquema): o avatar e o NOME de um arquivo dentro do diretorio de miniaturas (<USER_DATA_PATH>/thumbs no AoP = USER_THUMBS no tv3ws, que o entrega pela C.6.14.6), no formato ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.(svg|png|jpg|jpeg|webp)$: sem '/' (sem diretorio), comecando por letra ou digito, extensao em minusculas; ausente = o avatar padrao de cada tela. O AoP grava <id do perfil>.svg. Restringir o caminho a um nome dentro de um diretorio e decisao do testbed; a norma so diz 'file path'. Ate 12/10 (versao 3): qualquer texto, e o AoP e a carga gravavam o SVG em linha (divergencia da Tabela 7, registrada aqui)" },
         "parentalControl": { "ref": "booleano", "obrigatorio": true, "fonte": "Tabela 7: (true | false), required" },
         "maxContentRating": { "tipo": "enum", "valores": ["L", "10", "12", "14", "16", "18"], "obrigatorioSe": { "campo": "parentalControl", "valor": "true" }, "fonte": "Tabela 7: valores predefinidos do pais (classificacao indicativa do Brasil, os mesmos do AoP); required only if parentalControl = true" },
         "audioLanguage": { "ref": "idioma", "fonte": "Tabela 7: IETF RFC 5646, optional" },
@@ -103,9 +103,6 @@
       },
       "outrosCampos": false,
       "campoIgualAParte": { "campo": "id", "parte": "id" },
-      "divergencias": [
-        "Tabela 7 pede 'file path' no avatar. O AoP e a carga gravam o SVG em linha; o esquema aceita qualquer texto."
-      ],
       "funcoes": ["tv30_perfil_grava", "tv30_perfil_ultimo_acesso", "tv30_perfil_remove"]
     },
     {

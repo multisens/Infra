@@ -68,8 +68,12 @@ const SEM_HASH = 'f0f0f0f0-0000-4000-8000-000000000003';
 const UUID_VERSAO = 14;
 const UUID_VARIANTE = 19;
 const comDigito = (u, i, d) => u.slice(0, i) + d + u.slice(i + 1);
+// G8 (decisao do Luis em 12/10, esquema versao 4): o avatar e o nome de um
+// arquivo do diretorio de miniaturas, <id do perfil>.svg como o AoP grava.
+// Ate 12/10 (versao 3) era SVG em linha.
+const SVG_EM_LINHA = '<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100" rx="30" fill="#4d7c5b"/></svg>';
 const PERFIL = {
-    id: P1, nickname: 'Viewer 1', avatar: '<svg viewBox="0 0 1 1"/>',
+    id: P1, nickname: 'Viewer 1', avatar: `${P1}.svg`,
     parentalControl: 'true', maxContentRating: '12',
     audioLanguage: 'pt-BR', closedCaptioningLanguage: 'pt-BR', userInterfaceLanguage: 'en',
     closedCaptioning: 'true', closedSigning: 'true', closedSigningSide: 'right', closedSigningWidth: '28',
@@ -198,6 +202,28 @@ function violacoes(regra, emJson = false) {
             out.push([comDigito(ok, UUID_VARIANTE, 'B'), 'minusculas', 'variante B maiuscula']);
             break;
         }
+        case 'nomeArquivo': {
+            // G8 (Luis, 12/10): nome de arquivo do diretorio de miniaturas, no
+            // formato ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(svg|png|jpg|jpeg|webp)$
+            const ext = regra.extensoes[0];
+            out.push(['', 'vazio', 'vazio']);
+            out.push([SVG_EM_LINHA, 'SVG em linha nao serve', 'SVG em linha (o formato ate 12/10)']);
+            out.push(['<svg onload="alert(1)"/>', 'SVG em linha nao serve', 'SVG com script']);
+            for (const v of ['thumbs/a.svg', '../a.svg', '/a.svg', '/user-files/thumbs/a.svg', 'a/../../etc/passwd.svg', 'a\\b.svg', '..\\a.svg', `a.${ext}/`]) {
+                out.push([v, ['sem diretorio', 'nao pode conter "/" nem "\\"'], `"${v}"`]);
+            }
+            for (const v of ['a', 'a.', '..', 'a.SVG', 'a.Png', 'a.gif', 'a.svgz', 'a.jpe', 'a.svg.txt', `a.${ext} `, `a.${ext}\n`, 'svg', 'a_svg']) {
+                out.push([v, ['extensao deve ser uma de', regra.extensoes.map(e => `.${e}`).join(', ')], `extensao: ${JSON.stringify(v)}`]);
+            }
+            for (const v of [`.${ext}`, `..${ext}`, `.oculto.${ext}`, `-a.${ext}`, `_a.${ext}`, `.a.${ext}`]) {
+                out.push([v, 'deve comecar por letra ou digito', `comeco: "${v}"`]);
+            }
+            for (const v of [`a b.${ext}`, `avataré.${ext}`, `a:b.${ext}`, `a%2f.${ext}`, `a?.${ext}`, `a*.${ext}`, `a\u0000b.${ext}`, `a\tb.${ext}`, `a~.${ext}`, `a+b.${ext}`]) {
+                out.push([v, 'so com letras sem acento, digitos', `caractere: ${JSON.stringify(v)}`]);
+            }
+            out.push(['a'.repeat(regra.maxNome + 1) + `.${ext}`, [`${regra.maxNome + 1} caracteres antes da extensao`, `maximo ${regra.maxNome}`], `${regra.maxNome + 1} caracteres antes da extensao`]);
+            break;
+        }
         case 'origem':
             for (const [v, m] of [
                 ['ftp://x.example', 'http:// ou https://'], ['x.example', 'http:// ou https://'],
@@ -262,6 +288,17 @@ function aceitacoes(regra) {
             for (const v of '12345678') for (const va of '89ab') out.push(comDigito(comDigito(P1, UUID_VERSAO, v), UUID_VARIANTE, va));
             return out;
         }
+        // G8 (Luis, 12/10): o avatar da carga, o que o AoP grava (<UUID>.svg),
+        // cada extensao da lista, um caractere so antes da extensao e o maximo
+        // (regra.maxNome), maiusculas no nome, e os pontos, "_" e "-" que a
+        // expressao do contrato aceita no meio do nome (inclusive "a..b.svg":
+        // sem "/" nao ha diretorio, entao ".." no meio do nome nao sobe de
+        // diretorio; e o que a expressao do contrato diz, conferido aqui)
+        case 'nomeArquivo': return [
+            'c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10.svg', `${require('crypto').randomUUID()}.svg`,
+            ...regra.extensoes.map(e => `a.${e}`), 'Z.png', '0.jpg',
+            'a'.repeat(regra.maxNome) + '.' + regra.extensoes[0], 'Avatar_1-x.webp', 'a.png.svg', 'a..b.svg', 'a-.jpeg', 'a_.svg', 'a.b.c.png',
+        ];
         case 'origem': return ['http://users-test.apps.localhost:8080', 'http://a.apps.localhost', 'https://x.example', 'https://x.example:8443', 'http://[::1]:8099', 'http://127.0.0.1:65535'];
         case 'json': return ['HS256', 'HS512', 'RS256', 'RS512'].map(alg => JSON.stringify({ ...jsonValido(regra), alg }));
         default: throw new Error(`tipo de regra sem gerador de aceitacoes neste teste: ${regra.tipo}`);
@@ -523,6 +560,73 @@ test('id antigo (volume de antes da F-3): auditoria aponta, gravacao recusada, d
     assert.deepEqual(await auditoria(), []);
 });
 
+// G8 (decisao do Luis em 12/10, esquema versao 4), sem migracao: perfil com o
+// avatar em SVG em linha, como fica num volume de antes (o AoP e a carga
+// gravavam assim ate 12/10). A auditoria o aponta; regravar o perfil com o SVG
+// e recusado; o ultimo acesso (so o campo escrito num registro que ja existe),
+// os atributos de emissora (outra chave) e o despejo continuam; trocar o
+// avatar pelo nome do arquivo (HSET a mao, o conserto de um volume antigo)
+// esvazia a auditoria; sem avatar (ausente = o padrao de cada tela) tambem
+// vale.
+test('avatar em SVG em linha (volume de antes da G8): auditoria aponta, regravacao recusada, o resto segue', async () => {
+    await r('SADD', 'users:index', P1);
+    await r('HSET', `user:${P1}`, ...plano({ ...PERFIL_MIN, avatar: SVG_EM_LINHA }));
+    const achados = await auditoria();
+    assert.deepEqual(achados.map(([k, f]) => [k, f]), [[`user:${P1}`, 'user:{id}']], JSON.stringify(achados));
+    assert.ok(achados[0][2].startsWith('campo avatar: SVG em linha nao serve'), achados[0][2]);
+    assert.ok(!achados[0][2].includes('\n'), 'motivo numa linha so');
+    await recusa('regravar com o SVG', 'tv30_perfil_grava', perfilArgs(P1, [], { ...PERFIL_MIN, avatar: SVG_EM_LINHA }), ['campo avatar: SVG em linha nao serve']);
+    assert.equal(await fcall('tv30_perfil_ultimo_acesso', P1, '7'), 1);
+    assert.equal(await fcall('tv30_atributos_emissora', P1, 'urn:s', 'cor', 'azul'), 1);
+    await r('HSET', `user:${P1}`, 'avatar', `${P1}.svg`);
+    assert.deepEqual(await auditoria(), []);
+    await fcall('tv30_perfil_grava', ...perfilArgs(P1, [], PERFIL_MIN));
+    assert.equal(await r('HEXISTS', `user:${P1}`, 'avatar'), 0);
+    assert.deepEqual(await auditoria(), []);
+    // 1 (SREM) + user:{P1} + 1 broadcaster-attrs (sem consent)
+    assert.equal(await fcall('tv30_perfil_remove', P1), 3);
+});
+
+// G8: a regra do esquema.json (tipo nomeArquivo, conferida por partes no
+// funcoes.lua) decide igual a expressao do contrato, nos valores de fronteira
+// e em valores gerados. Pega desvio entre o esquema e o contrato que os casos
+// gerados a partir do proprio esquema nao pegam (ex.: extensao tirada da
+// lista, maxNome trocado).
+const AVATAR_CONTRATO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(svg|png|jpg|jpeg|webp)$/;
+test('avatar (G8): a regra do esquema decide igual a expressao do contrato', async (t) => {
+    const regra = resolve(familia('user:{id}').campos.avatar);
+    const corpus = new Set([
+        ...violacoes(regra).map(([v]) => v), ...aceitacoes(regra),
+        ...['svg', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'SVG', 'tiff', 'svgz', 'jpe'].map(e => `x.${e}`),
+        'a'.repeat(127) + '.svg', 'a'.repeat(128) + '.webp', 'a'.repeat(129) + '.png', 'a'.repeat(128) + '..svg', 'a'.repeat(127) + '..svg',
+    ]);
+    // gerador deterministico (Park-Miller) sobre um alfabeto com as letras das
+    // extensoes e os caracteres que a regra recusa
+    let s = 12345;
+    const rnd = n => { s = (s * 16807) % 2147483647; return s % n; };
+    const alfabeto = ['a', 'Z', '0', '.', '_', '-', '/', ' ', 'é', 's', 'v', 'g', 'p', 'n', 'j', 'e', 'w', 'b', 'G', '\\', '<'];
+    const exts = ['svg', 'png', 'jpg', 'jpeg', 'webp', 'Svg', 'sv', 'gif'];
+    for (let i = 0; i < 400; i++) {
+        let v = '';
+        const n = 1 + rnd(9);
+        for (let j = 0; j < n; j++) v += alfabeto[rnd(alfabeto.length)];
+        corpus.add(v);
+        corpus.add(`${v}.${exts[rnd(exts.length)]}`);
+    }
+    let aceitos = 0;
+    for (const v of corpus) {
+        await limpo();
+        let erro = null;
+        try { await fcall('tv30_perfil_grava', ...perfilArgs(P1, [], { ...PERFIL_MIN, avatar: v })); } catch (e) { erro = e; }
+        const esperado = AVATAR_CONTRATO.test(v);
+        assert.equal(erro === null, esperado, `${JSON.stringify(v)}: o contrato ${esperado ? 'aceita' : 'recusa'}, a funcao ${erro ? 'recusou: ' + erro.message : 'aceitou'}`);
+        if (erro) assert.ok(erro.message.startsWith(`${PREFIXO} tv30_perfil_grava: user:${P1} campo avatar: `), erro.message);
+        if (esperado) aceitos++;
+    }
+    assert.ok(aceitos >= 50 && aceitos < corpus.size - 50, `${aceitos} aceitos de ${corpus.size}`);
+    t.diagnostic(`avatar: ${corpus.size} valores, ${aceitos} aceitos pela expressao do contrato e pela funcao`);
+});
+
 // UUID estrito (decisao do Luis em 12/10, esquema versao 3): o id da carga
 // inicial (v4, variante 9) e os do AoP (crypto.randomUUID(): v4, variante da
 // RFC 9562) continuam validos; o nulo e o maximo deixam de ser.
@@ -670,6 +774,10 @@ test('auditoria: cada tipo de problema gravado a mao aparece com chave, familia 
         [['HSET', `user:${P1}`, 'parentalControl', 'False'], [`user:${P1}`, 'user:{id}', 'campo parentalControl:']],
         [['HDEL', `user:${P1}`, 'nickname'], [`user:${P1}`, 'user:{id}', 'campo nickname: obrigatorio, ausente']],
         [['HSET', `user:${P1}`, 'extra', '1'], [`user:${P1}`, 'user:{id}', 'campo "extra": nao previsto']],
+        // G8 (Luis, 12/10, esquema versao 4): avatar em SVG em linha, como fica
+        // num volume de antes, e caminho com diretorio
+        [['HSET', `user:${P1}`, 'avatar', SVG_EM_LINHA], [`user:${P1}`, 'user:{id}', 'campo avatar: SVG em linha nao serve']],
+        [['HSET', `user:${P1}`, 'avatar', '../segredo.svg'], [`user:${P1}`, 'user:{id}', 'campo avatar: so o nome do arquivo, sem diretorio']],
         [['HSET', `user:${P1}:broadcaster-attrs:urn:s`, 'vazio', ''], [`user:${P1}:broadcaster-attrs:urn:s`, 'user:{id}:broadcaster-attrs:{scid}', 'campo "vazio": vazio']],
         [['HSET', `user:${P1}:broadcaster-attrs:urn:s`, 'nickname', 'x'], [`user:${P1}:broadcaster-attrs:urn:s`, 'user:{id}:broadcaster-attrs:{scid}', 'campo nickname: atributo basico']],
         [['SADD', `user:${P1}:consent`, ''], [`user:${P1}:consent`, 'user:{id}:consent', 'membro "": vazio']],

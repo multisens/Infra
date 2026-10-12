@@ -1,6 +1,6 @@
 # Usuários e perfis — TV 3.0
 
-> **Estado do código em 12/10/2026**, conferido em `aop/src/modules/profile-manager/service.js`, `aop/src/core.js`, `tv3ws/src/api/user/`, `infra/redis/esquema.json` (versão 3) e no texto da ABNT NBR 25608 (seção 8.7, Tabela 7, e C.6.14). Até 12/10 este documento trazia, abaixo de uma nota, o desenho anterior (perfis sincronizados pelo tv3ws a partir do `userData.json`, consentimento consultado pelo broker, `403` no tv3ws); esses trechos saíram, e o resumo está no fim, em [Até 02/10 (histórico)](#até-0210-histórico).
+> **Estado do código em 12/10/2026**, conferido em `aop/src/modules/profile-manager/service.js` e `avatar.js`, `aop/src/core.js`, `tv3ws/src/api/user/`, `infra/redis/esquema.json` (versão 4, desde a noite de 12/10) e no texto da ABNT NBR 25608 (seção 8.7, Tabela 7, e C.6.14). Até 12/10 este documento trazia, abaixo de uma nota, o desenho anterior (perfis sincronizados pelo tv3ws a partir do `userData.json`, consentimento consultado pelo broker, `403` no tv3ws); esses trechos saíram, e o resumo está no fim, em [Até 02/10 (histórico)](#até-0210-histórico).
 >
 > Onde o texto cita a norma, a seção e a página são da ABNT NBR 25608. Redis, MQTT e o gestor de perfis no AoP são decisões deste testbed.
 
@@ -22,7 +22,7 @@ A seção 8.7 (Profile Manager, p. 61-62; p. 79-80 do PDF) organiza os atributos
 | `nickname` | string até 20 caracteres, required (se o espectador não define, o AoP dá um valor único, por exemplo "Viewer 1") | texto de 1 a 20 caracteres, obrigatório; o formulário do AoP exige o campo |
 | `parentalControl` | `true` ou `false`, required (padrão `false`) | `"true"` ou `"false"`, obrigatório |
 | `maxContentRating` | valores predefinidos do país ou território; required só se `parentalControl = true` | `L`, `10`, `12`, `14`, `16` ou `18` (classificação indicativa do Brasil, escolha do testbed), obrigatório se `parentalControl` for `"true"` |
-| `avatar` | file path, optional | qualquer texto; o AoP e a carga gravam o SVG em linha (divergência registrada no `esquema.json`) |
+| `avatar` | file path, optional ("Path indicating the file with the graphical representation of the viewer profile") | desde a G8 (decisão do Luís em 12/10, à noite), o nome de um arquivo do diretório de miniaturas (`<USER_DATA_PATH>/thumbs` = `USER_THUMBS`), sem diretório, com extensão `.svg`, `.png`, `.jpg`, `.jpeg` ou `.webp` (tipo `nomeArquivo`); o AoP grava o SVG do formulário em `<id>.svg` e põe esse nome no campo, e a carga traz `c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10.svg`. Até a G8, qualquer texto, e o AoP e a carga gravavam o SVG em linha (divergência registrada no `esquema.json`) |
 | `audioLanguage` | string IETF RFC 5646, optional | formato RFC 5646; o AoP grava `pt-BR` se o campo vier vazio |
 | `closedCaptioningLanguage` | string IETF RFC 5646, optional; aplicável só se `closedCaptioning = true` | formato RFC 5646; o AoP só grava com `closedCaptioning` ligado (padrão `pt-BR`) |
 | `userInterfaceLanguage` | string IETF RFC 5646, optional | formato RFC 5646; o AoP grava `pt-BR` se o campo vier vazio |
@@ -40,11 +40,11 @@ A dona de `users:index`, `user:{id}` e `user:{id}:consent` é a plataforma, o Ao
 
 | Operação | Quem | Função do Redis |
 |---|---|---|
-| Criar perfil (formulário do AoP; com cinco perfis, despeja antes o de último acesso mais antigo) | AoP, `createProfile` | `tv30_perfil_grava` |
-| Carga inicial (perfil "Viewer 1" de `infra/user-files-template/userData.json`, só em banco vazio) | container `redis`, `emit_seed.py` | `tv30_perfil_grava` |
+| Criar perfil (formulário do AoP; com cinco perfis, despeja antes o de último acesso mais antigo; desde a G8, grava antes o arquivo do avatar, `<USER_DATA_PATH>/thumbs/<id>.svg`, e o apaga se o perfil for recusado) | AoP, `createProfile` | `tv30_perfil_grava` |
+| Carga inicial (perfil "Viewer 1" de `infra/user-files-template/userData.json`, só em banco vazio; o arquivo do avatar dele vem de `infra/user-files-template/thumbs/` pelo `userfiles-seed`) | container `redis`, `emit_seed.py` | `tv30_perfil_grava` |
 | Gravar `lastAccess` na troca de usuário corrente (só se o id está em `users:index`) | AoP, `touchLastAccess` | `tv30_perfil_ultimo_acesso` |
-| Despejar perfil (tira o perfil, o `:consent` e todos os `:broadcaster-attrs:*`) | AoP, `evictLeastRecentlyUsed` | `tv30_perfil_remove` |
-| Gravar atributos de emissora (C.6.14.5; valor vazio remove o atributo; teto de 20 MB por perfil e contexto) | tv3ws, `writeBroadcasterAttrs` | `tv30_atributos_emissora` |
+| Despejar perfil (tira o perfil, o `:consent` e todos os `:broadcaster-attrs:*`; desde a G8, depois apaga o arquivo `<id>.svg`) | AoP, `evictLeastRecentlyUsed` | `tv30_perfil_remove` |
+| Gravar atributos de emissora (C.6.14.5; valor vazio remove o atributo; teto de 20 MB por perfil e contexto; desde a G9, com aviso na tela quando algo mudou) | tv3ws, `writeBroadcasterAttrs` | `tv30_atributos_emissora` |
 | Gravar o usuário corrente em `session:current-user` | tv3ws (C.6.14.4 e espelho de `aop/currentUser`) | `tv30_sessao_usuario` |
 
 `user:{id}:broadcaster-attrs:{scid}` tem dois escritores (o tv3ws grava, o AoP apaga no despejo): exceção ao P5 ainda sem decisão (E4).
@@ -67,8 +67,8 @@ Todas passam pela borda, que exige access token e bind-token (`token+bind`) do c
 | `GET /tv3/current-service/users/{userid}` e `GET /tv3/{serviceContextId}/users/{userid}` | C.6.14.2 | Com atributo na query, devolve o valor em texto puro (atributo básico ou, se não houver, de emissora); sem atributo, o JSON com os básicos e os de emissora daquele contexto; 305 se o perfil ou o atributo não existe, 405 se o perfil não é visível no serviço |
 | `GET /tv3/current-service/users/current-user` | C.6.14.3 | Devolve `{"id": <session:current-user>}` |
 | `POST /tv3/current-service/users/current-user` | C.6.14.4 | Grava `session:current-user` e publica `aop/currentUser` retido; 105 sem `id` no corpo |
-| `POST /tv3/{serviceContextId}/users/{userid}` | C.6.14.5 | Grava atributos de emissora; 101 sem atributos ou com `id`, `nickname`, `parentalControl` ou `maxContentRating` (básicos que não se redefinem no contexto da emissora) |
-| `GET /tv3/current-service/users/files?path=...` | C.6.14.6 | Devolve o arquivo de `USER_THUMBS` se ele é o `avatar` de algum perfil visível no serviço corrente (basta um); 405 se ele só é o `avatar` de perfis não visíveis no serviço, e 305 se não é o `avatar` de perfil nenhum (desde 12/10; antes, 305 nos dois casos). Desde 12/10, o caminho também tem de ficar dentro de `USER_THUMBS` (305 fora dele ou inexistente; antes, `..` lia fora) |
+| `POST /tv3/{serviceContextId}/users/{userid}` | C.6.14.5 | Grava atributos de emissora; 101 sem atributos ou com `id`, `nickname`, `parentalControl` ou `maxContentRating` (básicos que não se redefinem no contexto da emissora). Desde a G9 (decisão do Luís em 12/10, à noite; Tabela C.72: "it is necessary to notify the user"), depois de gravar com alguma mudança, publica sem retenção em `aop/display/layers/popup/info` o aviso `A emissora <nome ou id do serviço> atualizou os dados do perfil <apelido>.`, que a camada gráfica mostra por 5 s ([08](08-mqtt-map.md)); gravação que falha ou que não muda nada não avisa |
+| `GET /tv3/current-service/users/files?path=...` | C.6.14.6 | Devolve o arquivo de `USER_THUMBS` se ele é o `avatar` de algum perfil visível no serviço corrente (basta um); 405 se ele só é o `avatar` de perfis não visíveis no serviço, e 305 se não é o `avatar` de perfil nenhum (desde 12/10; antes, 305 nos dois casos). Desde 12/10, o caminho também tem de ficar dentro de `USER_THUMBS` (305 fora dele ou inexistente; antes, `..` lia fora). Desde a G8, o `avatar` é o nome do arquivo, e o `Content-Type` sai pela extensão (`image/svg+xml`, `image/png`, `image/jpeg`, `image/webp`; outra, `application/octet-stream`; antes, o SVG saía como `application/octet-stream`) |
 
 Na borda, `{serviceContextId}` só vale como `current-service` ou como a constante do tv3ws (L2, `PENDENTE (Joel)`): outro valor dá 108 na etapa do bind-token, que o associado não percorre (ele chega ao tv3ws com qualquer valor, e o tv3ws usa o valor recebido como contexto). `POST /tv3/{serviceContextId}/users`, fora da norma, saiu da tabela de rotas em 11/10 (A4) e dá 100 na borda.
 
