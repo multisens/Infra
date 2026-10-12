@@ -96,6 +96,17 @@ const classesOf = r => r.classes || CLASS_VALUES;
 // da letra; com TLS, falta decidir se essas rotas dao 106 ali. A mesma secao
 // diz que a C.6.1.2 (/tv3/authorize) so se acessa por HTTP; esta regra a
 // mantem na 44643, porque ela admite o nao local.
+// C.6.15.5 so para o cliente local (decisao do Luis em 12/10): GET
+// /tv3/remote-device/devices/{classId} ganhou "classes" local-associated e
+// local-autonomous no routes.json. Por esta regra, ela sai da 44643 (la da
+// 100, como as duas da C.6.8 acima), e na 44642 o nao local recebe o 106 da
+// regra de classe do plugin.
+// PENDENTE (Joel), na F-1 (este mesmo ponto; docs/decisoes-pendentes.md da
+// raiz, secao F, P1.9): o codigo exato que o nao local recebe nessa API. A
+// Tabela C.78 (p. 339; p. 357 do PDF) lista 107 ("If invoked from a
+// non-local client"); a C.4.1.8 fala em 106 para o nao local que chama uma
+// API de uso exclusivo do cliente local. Ate a decisao, ficam o 106 da borda
+// na 44642 e o 100 na 44643.
 const SURFACE_RULES = {
   external: {
     requires: 'non-local',
@@ -251,8 +262,9 @@ function pluginConfig(t, surface) {
     }),
     // APIs implementadas nesta superficie, para a C.6.7.8/C.6.7.9. Com a
     // P1.9, a externa deixa de listar as APIs das rotas que so existem na
-    // interna (hoje tv3ws-bind-context-register e tv3ws-bind-context-remove),
-    // e GET /tv3/api-info/<id> delas da 101 na 44643.
+    // interna (hoje tv3ws-bind-context-register, tv3ws-bind-context-remove e,
+    // desde 12/10, tv3ws-remotedevice-communication, a C.6.15.5, que so tem
+    // essa rota), e GET /tv3/api-info/<id> delas da 101 na 44643.
     // DECIDIDO (Luis, 11/10; F-2): cada superficie lista so as APIs que
     // oferece. A lista por superficie ja era assim desde a D-0510-3 (05/10),
     // mas com as duas superficies iguais a diferenca nao aparecia. A C.6.7.9

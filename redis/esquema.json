@@ -9,7 +9,7 @@
     "o campo 'fonte' de cada regra diz de onde ela veio (secao da norma, schemas.json do broker ou codigo).",
     "Documentacao para quem chega: docs/modelo-redis.md e infra/redis/README.md."
   ],
-  "versao": "2",
+  "versao": "3",
   "biblioteca": "tv30",
   "prefixoErro": "TV30ESQUEMA",
 
@@ -18,7 +18,7 @@
   "definicoes": {
     "idPerfil": {
       "tipo": "uuid",
-      "fonte": "Tabela 7: id 'UUID string', required. F-3 (decisao do Luis em 11/10): UUID no formato textual da IETF RFC 9562 (8-4-4-4-12 digitos hexadecimais, como c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10), em minusculas, sem compatibilidade com os ids antigos (user_<epoch-ms> do AoP, c3167a18-5dc5 da carga). Versao e variante nao sao conferidas (o formato textual nao as fixa). Sem ':' por construcao: a chave user:{id}:consent nao se confunde com um perfil. Ate 11/10 (versao 1 deste esquema): texto de 1 a 64 caracteres, sem ':'"
+      "fonte": "Tabela 7: id 'UUID string', required. F-3 (decisao do Luis em 11/10): UUID no formato textual da IETF RFC 9562 (8-4-4-4-12 digitos hexadecimais, como c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10), em minusculas, sem compatibilidade com os ids antigos (user_<epoch-ms> do AoP, c3167a18-5dc5 da carga). UUID estrito (decisao do Luis em 12/10, versao 3 deste esquema): versao de 1 a 8 (1o digito do 3o grupo) e variante da RFC 9562 (1o digito do 4o grupo em 8, 9, a ou b); o UUID nulo (todo 0) e o maximo (todo f) nao servem de id de perfil. Ate 12/10 (versao 2) versao e variante nao eram conferidas. Sem ':' por construcao: a chave user:{id}:consent nao se confunde com um perfil. Ate 11/10 (versao 1 deste esquema): texto de 1 a 64 caracteres, sem ':'"
     },
     "idServico": {
       "tipo": "texto", "min": 1, "max": 256,

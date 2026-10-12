@@ -96,8 +96,11 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
     ];
     const ids = [];
     // F-3 (decisao do Luis em 11/10): o AoP gera o id do perfil com
-    // crypto.randomUUID(); o esquema exige UUID em minusculas (RFC 9562)
-    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+    // crypto.randomUUID(); o esquema exige UUID em minusculas (RFC 9562).
+    // UUID estrito (decisao do Luis em 12/10, esquema versao 3): versao de 1
+    // a 8 e variante 8, 9, a ou b; o randomUUID gera a versao 4 com a
+    // variante da RFC 9562, e e isso que se confere aqui.
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
     for (const b of bodies) {
         const { user } = await profiles.createProfile(b);
         assert.match(user.id, UUID, 'id do perfil criado pelo AoP');
@@ -116,6 +119,10 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
     // formato antigo (fora do esquema)
     await assert.rejects(tv.atributosEmissora('9d1e2f3a-4b5c-4d6e-8f70-81a2b3c4d5e6', 'urn:s', { cor: 'azul' }), { message: /perfil-dependentes/ });
     await assert.rejects(tv.atributosEmissora('user_1760000000000', 'urn:s', { cor: 'azul' }), { message: /^TV30ESQUEMA .*RFC 9562/ });
+    // UUID estrito (12/10): o nulo e a versao fora de 1 a 8 voltam ao
+    // servico como erro TV30ESQUEMA, com a parte que falhou
+    await assert.rejects(tv.atributosEmissora('00000000-0000-0000-0000-000000000000', 'urn:s', { cor: 'azul' }), { message: /^TV30ESQUEMA .*UUID nulo/ });
+    await assert.rejects(tv.atributosEmissora('9d1e2f3a-4b5c-9d6e-8f70-81a2b3c4d5e6', 'urn:s', { cor: 'azul' }), { message: /^TV30ESQUEMA .*versao do UUID deve ser de 1 a 8/ });
     // sexto perfil: despeja o de ultimo acesso mais antigo (ids[1] ficou com 5)
     const { evicted } = await profiles.createProfile({ nickname: 'Sexto' });
     assert.equal(evicted.id, ids[1]);

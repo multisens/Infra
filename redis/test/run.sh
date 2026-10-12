@@ -117,10 +117,11 @@ modo_imagem() {
   grep -q 'carga concluida' <<<"$logs" && echo "PASS  log: carga concluida" || { echo "FALHA log sem 'carga concluida'"; ok=0; }
   local n; n=$(docker exec "$C" redis-cli --raw SCARD users:index)
   [ "${n:-0}" -ge 1 ] && echo "PASS  carga inicial gravou $n perfil(is) pelas funcoes" || { echo "FALHA users:index vazio"; ok=0; }
-  # id do primeiro perfil da carga, lido do template (F-3, Luis 11/10: UUID)
+  # id do primeiro perfil da carga, lido do template (F-3, Luis 11/10: UUID;
+  # UUID estrito desde 12/10: versao 1 a 8 e variante 8, 9, a ou b)
   local P; P=$(sed -n 's/^[[:space:]]*"id": "\([^"]*\)".*/\1/p' "$INFRA/user-files-template/userData.json" | head -1)
-  [[ "$P" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] && [ "$(docker exec "$C" redis-cli --raw SISMEMBER users:index "$P")" = 1 ] \
-    && echo "PASS  perfil da carga com id UUID em minusculas ($P), em users:index (F-3)" || { echo "FALHA id da carga '$P' (UUID em users:index?)"; ok=0; }
+  [[ "$P" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] && [ "$(docker exec "$C" redis-cli --raw SISMEMBER users:index "$P")" = 1 ] \
+    && echo "PASS  perfil da carga com id UUID estrito em minusculas ($P), em users:index (F-3; 12/10)" || { echo "FALHA id da carga '$P' (UUID estrito em users:index?)"; ok=0; }
   local b; b=$(docker exec "$C" redis-cli --raw HGET "user:$P" closedCaptioning)
   [ "$b" = false ] && echo "PASS  booleano da carga gravado como 'false' (antes: 'False')" || { echo "FALHA closedCaptioning da carga = '$b'"; ok=0; }
   local a; a=$(docker exec "$C" redis-cli FCALL_RO tv30_auditoria 0)
