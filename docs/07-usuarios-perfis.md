@@ -1,260 +1,120 @@
-# Gestão de Usuários e Perfis — TV 3.0
+# Usuários e perfis — TV 3.0
 
-> **Nota (2026-10-03, revista em 2026-10-10):** documento anterior à consolidação; só o nome do componente e esta nota foram atualizados. Estes trechos não correspondem ao código atual:
-> - **Criação de perfil:** o gestor de perfis do AoP grava no Redis (`aop/src/modules/profile-manager/service.js`, `createProfile`; desde o P4, pela função `tv30_perfil_grava`) e não toca o `userData.json`, ao contrário do diagrama "UI->>FS: Salva userData.json".
-> - **Sync do tv3ws:** não existe mais. Na reunião de 05/10, o Joel apontou que os perfis tinham três escritores (carga inicial, tv3ws e plataforma), e a correção (D-0510-5) aplicou o P5, "um dono por família de chave": a plataforma (AoP) é a dona de `users:index`, `user:{id}` e `user:{id}:consent`, e o tv3ws só os lê. Saíram do tv3ws o `syncUsersFromFile`, a assinatura de `aop/users` e a semeadura no boot. O diagrama "Fluxo de escrita: criação de perfil" e as linhas "Sync do userData.json" do resumo descrevem esse caminho, que não existe. O `userData.json` é só a carga inicial do container `redis`, aplicada uma vez, no banco vazio.
-> - **`lastAccess`:** campo de `user:{id}` usado pelo despejo do perfil de último acesso mais antigo (P3), ausente da lista abaixo. Desde 05/10, só o AoP o grava, em toda troca de usuário corrente, inclusive a que chega por `aop/currentUser` vinda da C.6.14.4 no tv3ws (`touchLastAccess`, que só escreve se o id está em `users:index`).
-> - **Broker:** o plugin Mosquitto **não** consulta `user:{userId}:consent` nem faz controle de acesso; ele só valida esquema de payload (`infra/mqtt-broker/plugin/src/mosquitto_plugin.c`).
-> - **`user:{id}:broadcaster-attrs:{scid}`:** tem dois escritores (o tv3ws grava na C.6.14.5; a plataforma apaga no despejo), exceção ao P5 ainda sem decisão.
-> - **Esquema nas escritas (P4, decisão do Luís em 10/10):** desde então, toda escrita destas chaves passa por funções do Redis que conferem o esquema da Tabela 7 (`infra/redis/esquema.json`): `tv30_perfil_grava` (criação e carga inicial), `tv30_perfil_ultimo_acesso`, `tv30_perfil_remove` (despejo) e `tv30_atributos_emissora`. Ver a seção *Esquema nas escritas* de `docs/modelo-redis.md`.
+> **Estado do código em 12/10/2026**, conferido em `aop/src/modules/profile-manager/service.js`, `aop/src/core.js`, `tv3ws/src/api/user/`, `infra/redis/esquema.json` (versão 3) e no texto da ABNT NBR 25608 (seção 8.7, Tabela 7, e C.6.14). Até 12/10 este documento trazia, abaixo de uma nota, o desenho anterior (perfis sincronizados pelo tv3ws a partir do `userData.json`, consentimento consultado pelo broker, `403` no tv3ws); esses trechos saíram, e o resumo está no fim, em [Até 02/10 (histórico)](#até-0210-histórico).
 >
-> Ver `docs/modelo-redis.md` e `docs/mqtt-topicos.md` na raiz do TV30. Revisão geral: pendente (backlog).
-
-Descreve o modelo de dados de usuários e perfis conforme a **ABNT NBR 25608**,
-a estratégia de persistência no Redis e os fluxos de leitura e escrita no sistema.
-
----
+> Onde o texto cita a norma, a seção e a página são da ABNT NBR 25608. Redis, MQTT e o gestor de perfis no AoP são decisões deste testbed.
 
 ## Base normativa
 
-A norma ABNT NBR 25608 (seção 8.7 e Anexo C.6.14) define o perfil do telespectador
-como entidade central da plataforma, com três camadas de atributos:
+A seção 8.7 (Profile Manager, p. 61-62; p. 79-80 do PDF) organiza os atributos do perfil do telespectador em três níveis (Figura 5):
 
-| Camada | Escopo | Exemplos |
+| Nível | O que a norma diz | No testbed |
 |---|---|---|
-| **Atributos básicos** | Padronizados, acessíveis por fabricante e emissora | `nickname`, `parentalControl`, `audioLanguage` |
-| **Atributos do dispositivo** | Personalizáveis, específicos do receptor | `avatar`, `userInterfaceLanguage` |
-| **Atributos de emissora** | Armazenados por contexto de serviço | `att1_broadcaster`, `att2_broadcaster` |
+| **Atributos básicos** | Padronizados (Tabela 7); acessíveis pelo fabricante e pelo serviço de TV digital habilitado pelo espectador | `user:{id}` no Redis |
+| **Atributos do dispositivo** | Definidos pelo fabricante (ou pelo desenvolvedor do AoP), que gerencia o acesso a eles | não há |
+| **Atributos de emissora** | Definidos por cada serviço de TV digital, guardados no contexto daquele serviço e acessíveis só de dentro dele | `user:{id}:broadcaster-attrs:{scid}`, gravados pela C.6.14.5 |
 
----
+### Tabela 7 (p. 63-64; p. 81-82 do PDF) e o que o testbed grava
 
-## APIs REST definidas pela norma
-
-| Método | Endpoint | Descrição |
+| Atributo | Norma: tipo e uso | Testbed: regra do `esquema.json` e padrão do AoP na criação |
 |---|---|---|
-| `POST` | `/tv3/current-service/users` | Listar usuários com filtro por atributo |
-| `GET` | `/tv3/{serviceContextId}/users/{userId}` | Obter perfil completo ou atributo específico |
-| `GET` | `/tv3/current-service/users/current-user` | Obter usuário atual |
-| `POST` | `/tv3/current-service/users/current-user` | Alterar usuário atual |
+| `id` | UUID string, required; atribuído pelo AoP, não editável | UUID estrito (F-3, 11/10; versão 1 a 8 e variante RFC 9562 desde 12/10); o AoP usa `crypto.randomUUID()` |
+| `nickname` | string até 20 caracteres, required (se o espectador não define, o AoP dá um valor único, por exemplo "Viewer 1") | texto de 1 a 20 caracteres, obrigatório; o formulário do AoP exige o campo |
+| `parentalControl` | `true` ou `false`, required (padrão `false`) | `"true"` ou `"false"`, obrigatório |
+| `maxContentRating` | valores predefinidos do país ou território; required só se `parentalControl = true` | `L`, `10`, `12`, `14`, `16` ou `18` (classificação indicativa do Brasil, escolha do testbed), obrigatório se `parentalControl` for `"true"` |
+| `avatar` | file path, optional | qualquer texto; o AoP e a carga gravam o SVG em linha (divergência registrada no `esquema.json`) |
+| `audioLanguage` | string IETF RFC 5646, optional | formato RFC 5646; o AoP grava `pt-BR` se o campo vier vazio |
+| `closedCaptioningLanguage` | string IETF RFC 5646, optional; aplicável só se `closedCaptioning = true` | formato RFC 5646; o AoP só grava com `closedCaptioning` ligado (padrão `pt-BR`) |
+| `userInterfaceLanguage` | string IETF RFC 5646, optional | formato RFC 5646; o AoP grava `pt-BR` se o campo vier vazio |
+| `closedCaptioning` | `true` ou `false`, required (padrão `false`) | `"true"` ou `"false"`, obrigatório |
+| `closedSigning` | `true` ou `false`, required (padrão `false`) | `"true"` ou `"false"`, obrigatório |
+| `closedSigningSide` | `left` ou `right`, required (padrão `right`); aplicável só se `closedSigning = true` | obrigatório se `closedSigning` for `"true"`; o AoP grava `right` se o campo vier vazio |
+| `closedSigningWidth` | inteiro de 14 a 28, required (padrão 28); aplicável só se `closedSigning = true` | inteiro de 14 a 28, obrigatório se `closedSigning` for `"true"`; o AoP grava 28 se o campo vier vazio |
+| `audioDescription`, `dialogEnhancement`, `voiceGuidance` | `true` ou `false`, required (padrão `false`) | `"true"` ou `"false"`, obrigatórios |
 
-Os filtros do `POST /users` suportam operadores `eq`, `neq`, `lt`, `lte`, `gt`, `gte`
-com lógica `and`/`or` aninhável — ex: `parentalControl eq true AND maxContentRating gte 14`.
+Fora da Tabela 7, o testbed grava `lastAccess` (instante em ms), usado pelo despejo do perfil de último acesso mais antigo (P3: no máximo cinco perfis, `MAX_PROFILES` no gestor de perfis do AoP).
 
----
+## Quem cuida dos perfis
 
-## Modelo de dados no Redis
+A dona de `users:index`, `user:{id}` e `user:{id}:consent` é a plataforma, o AoP (P5, aplicado na reunião de 05/10 com o Joel, D-0510-5). O tv3ws só lê essas chaves. Toda escrita passa pelas funções do Redis (P4, decisão do Luís em 10/10), que conferem o esquema da Tabela 7:
 
-### Chaves de usuário
+| Operação | Quem | Função do Redis |
+|---|---|---|
+| Criar perfil (formulário do AoP; com cinco perfis, despeja antes o de último acesso mais antigo) | AoP, `createProfile` | `tv30_perfil_grava` |
+| Carga inicial (perfil "Viewer 1" de `infra/user-files-template/userData.json`, só em banco vazio) | container `redis`, `emit_seed.py` | `tv30_perfil_grava` |
+| Gravar `lastAccess` na troca de usuário corrente (só se o id está em `users:index`) | AoP, `touchLastAccess` | `tv30_perfil_ultimo_acesso` |
+| Despejar perfil (tira o perfil, o `:consent` e todos os `:broadcaster-attrs:*`) | AoP, `evictLeastRecentlyUsed` | `tv30_perfil_remove` |
+| Gravar atributos de emissora (C.6.14.5; valor vazio remove o atributo; teto de 20 MB por perfil e contexto) | tv3ws, `writeBroadcasterAttrs` | `tv30_atributos_emissora` |
+| Gravar o usuário corrente em `session:current-user` | tv3ws (C.6.14.4 e espelho de `aop/currentUser`) | `tv30_sessao_usuario` |
 
-```
-users:index                              Set
-  "550e8400-e29b-41d4-a716-446655440000"
-  "550e8400-e29b-41d4-a716-446655440001"
+`user:{id}:broadcaster-attrs:{scid}` tem dois escritores (o tv3ws grava, o AoP apaga no despejo): exceção ao P5 ainda sem decisão (E4).
 
-user:{userId}                            Hash
-  id                                     "550e8400-e29b-41d4-a716-446655440000"
-  nickname                               "Joao"             (máx 20 chars — norma)
-  avatar                                 "joao.png"
-  parentalControl                        "true"
-  maxContentRating                       "14"               (L | 10 | 12 | 14 | 16 | 18)
-  audioLanguage                          "pt-BR"            (RFC 5646)
-  closedCaptioningLanguage               "pt-BR"            (RFC 5646)
-  userInterfaceLanguage                  "pt-BR"            (RFC 5646)
-  closedCaptioning                       "false"
-  closedSigning                          "true"
-  closedSigningSide                      "right"            ("left" | "right")
-  closedSigningWidth                     "28"               (14–28, percentual)
-  audioDescription                       "true"
-  dialogEnhancement                      "true"
-  voiceGuidance                          "true"
+O `userData.json` é só a fonte da carga inicial. Ninguém o lê nem grava em tempo de execução para manter perfis: o AoP não toca nele ao criar perfil, e o tv3ws não o sincroniza mais.
 
-user:{userId}:consent                    Set
-  "urn:sbtvd:service:globoplay"
-  "urn:sbtvd:service:canaltech"
+### `user:{id}:consent` não é o consentimento da norma
 
-user:{userId}:broadcaster-attrs:{svcId}  Hash
-  att1_broadcaster                       "valor_customizado_1"
-  att2_broadcaster                       "valor_customizado_2"
-```
+O conjunto `user:{id}:consent` guarda os serviços para os quais o perfil é visível. É como o testbed aplica a restrição das APIs C.6.14 ("A user's identifier is only reported if the user has granted access to the broadcaster corresponding to the current DTV service", Tabela C.68, p. 328; p. 346 do PDF). Não é o Privacy Manager da seção 8.8 (registros de privacidade, PRRD), que não está implementado. Na criação pelo AoP, o conjunto recebe os serviços que vierem no formulário e o serviço corrente (`session:current-service-id`), se houver. O perfil da carga tem os quatro serviços do bcast (`urn:tv30:service:webmedia`, `uff`, `eduplay` e `users-test`).
 
-### Sessão de usuário
+O broker MQTT não consulta esse conjunto nem nenhuma outra chave do Redis ([03](03-pipeline-mqtt.md)).
 
-```
-session:current-user                     String
-  "550e8400-e29b-41d4-a716-446655440000"
-```
+## APIs da C.6.14 no testbed
 
----
+Todas passam pela borda, que exige access token e bind-token (`token+bind`) do cliente autônomo e do não local; o associado dispensa os dois (C.4.1.1). O tv3ws não confere credencial (D-0510-1) e responde os erros no formato C.3.2 (status 404 + `{error, description}`).
 
-## Atributos do perfil — referência normativa completa
+| Rota | Seção | O que o tv3ws faz |
+|---|---|---|
+| `POST /tv3/current-service/users` | C.6.14.1 | Lista os ids visíveis no serviço corrente e filtra pela expressão do corpo; 300 sem serviço corrente; 101 com expressão malformada |
+| `GET /tv3/current-service/users/{userid}` e `GET /tv3/{serviceContextId}/users/{userid}` | C.6.14.2 | Com atributo na query, devolve o valor em texto puro (atributo básico ou, se não houver, de emissora); sem atributo, o JSON com os básicos e os de emissora daquele contexto; 305 se o perfil ou o atributo não existe, 405 se o perfil não é visível no serviço |
+| `GET /tv3/current-service/users/current-user` | C.6.14.3 | Devolve `{"id": <session:current-user>}` |
+| `POST /tv3/current-service/users/current-user` | C.6.14.4 | Grava `session:current-user` e publica `aop/currentUser` retido; 105 sem `id` no corpo |
+| `POST /tv3/{serviceContextId}/users/{userid}` | C.6.14.5 | Grava atributos de emissora; 101 sem atributos ou com `id`, `nickname`, `parentalControl` ou `maxContentRating` (básicos que não se redefinem no contexto da emissora) |
+| `GET /tv3/current-service/users/files?path=...` | C.6.14.6 | Devolve o arquivo de `USER_THUMBS` se ele é o `avatar` de algum perfil visível no serviço corrente; 305 se não |
 
-Definidos na ABNT NBR 25608, seção 8.7, Tabela 7:
+Na borda, `{serviceContextId}` só vale como `current-service` ou como a constante do tv3ws (L2, `PENDENTE (Joel)`): outro valor dá 108 na etapa do bind-token, que o associado não percorre (ele chega ao tv3ws com qualquer valor, e o tv3ws usa o valor recebido como contexto). `POST /tv3/{serviceContextId}/users`, fora da norma, saiu da tabela de rotas em 11/10 (A4) e dá 100 na borda.
 
-| Atributo | Tipo | Obrigatório | Restrições (norma) | Justificativa |
-|---|---|---|---|---|
-| `id` | UUID string | Sim | — | Identificador único do telespectador |
-| `nickname` | string | Sim | Máx 20 chars | Nome exibido na interface |
-| `parentalControl` | boolean | Sim | — | Controle parental ativo/inativo |
-| `maxContentRating` | string | Se `parentalControl=true` | `L \| 10 \| 12 \| 14 \| 16 \| 18` | Faixa etária máxima permitida |
-| `audioLanguage` | string | Sim | RFC 5646 | Idioma do áudio preferido |
-| `closedCaptioningLanguage` | string | Sim | RFC 5646 | Idioma da legenda |
-| `userInterfaceLanguage` | string | Sim | RFC 5646 | Idioma da interface |
-| `closedCaptioning` | boolean | Sim | — | Legenda oculta ativa (obrigação ABNT NBR 25605) |
-| `closedSigning` | boolean | Sim | — | Janela de Libras ativa (obrigação legal) |
-| `closedSigningSide` | string | Se `closedSigning=true` | `"left" \| "right"` | Lado da janela de Libras |
-| `closedSigningWidth` | integer | Se `closedSigning=true` | 14–28 (percentual) | Largura da janela de Libras |
-| `audioDescription` | boolean | Sim | — | Audiodescrição ativa (ABNT NBR 25606) |
-| `dialogEnhancement` | boolean | Sim | — | Realce de diálogo |
-| `voiceGuidance` | boolean | Sim | — | Guia por voz |
-| `avatar` | file path | Não | — | Foto/ícone do perfil |
+### Filtro da C.6.14.1
 
-> **Nota:** Os atributos de acessibilidade (`closedCaptioning`, `closedSigning`,
-> `audioDescription`, `dialogEnhancement`, `voiceGuidance`) são obrigações legais
-> no padrão brasileiro de TV digital — a perda desses dados degrada a experiência
-> de usuários com deficiência e pode constituir infração normativa.
-
----
-
-## Fluxo de escrita: criação de perfil
-
-```mermaid
-sequenceDiagram
-    participant UI as AoP — Criador de Perfil
-    participant FS as Sistema de Arquivos
-    participant MQTT as Broker MQTT
-    participant TV3WS as tv3ws
-    participant REDIS as Redis
-
-    UI->>FS: Salva userData.json\n(novo usuário adicionado)
-    UI->>MQTT: PUBLISH aop/users\n"/path/to/userData.json"
-
-    MQTT->>TV3WS: aop/users (retain)
-    TV3WS->>FS: Lê userData.json
-    TV3WS->>REDIS: SADD users:index {userId}
-    TV3WS->>REDIS: HSET user:{userId} {atributos}
-    TV3WS->>REDIS: DEL user:{userId}:consent
-    TV3WS->>REDIS: SADD user:{userId}:consent {serviceIds}
-```
-
----
-
-## Fluxo de leitura: API REST → Redis
+O corpo segue a estrutura da Tabela C.68: expressão simples `{"attribute", "comparator", "value"}`, com `eq`, `neq`, `lt`, `lte`, `gt` e `gte`, ou combinações `{"and": [...]}` e `{"or": [...]}`, aninháveis. Corpo ausente ou `{}` devolve todos os visíveis. Os valores são comparados como número quando os dois lados são numéricos e como texto nos demais casos (`tv3ws/src/api/user/service.ts`, `compareValues`).
 
 ```mermaid
 flowchart TD
-    REQ["GET /tv3/{svcCtxId}/users/{userId}"]
-    AUTH{"Token JWT\nválido?"}
-    CONSENT{"SISMEMBER\nuser:id:consent\ncurrentService?"}
-    ATTR{"Atributo\nespecífico?"}
-    HGET["HGET user:id {atname}"]
-    HGETALL["HGETALL user:id"]
-    RESP["200 OK — atributos"]
-    DENY["403 — acesso negado"]
-
-    REQ --> AUTH
-    AUTH -->|"Sim"| CONSENT
-    AUTH -->|"Não"| DENY
-    CONSENT -->|"Sim"| ATTR
-    CONSENT -->|"Não"| DENY
-    ATTR -->|"Sim"| HGET
-    ATTR -->|"Não"| HGETALL
-    HGET --> RESP
-    HGETALL --> RESP
-```
-
----
-
-## Fluxo de leitura: lista de usuários com filtro
-
-```mermaid
-flowchart TD
-    REQ["POST /tv3/current-service/users\n{ expression }"]
+    REQ["POST /tv3/current-service/users<br/>{ expressão }"]
+    SVC{"serviço corrente?<br/>(session:current-service-id)"}
+    E300["300"]
     IDX["SMEMBERS users:index"]
-    FILTER_CONSENT["Para cada userId:\nSMEMBERS user:id:consent\n→ inclui currentService?"]
-    ELIGIBLE["IDs elegíveis"]
-    FILTER_EXPR["Para cada elegível:\nHGETALL user:id\n→ matchExpression(fields, expr)?"]
-    RESP["200 OK — { users: [{ id }] }"]
+    VIS["para cada id: SMEMBERS user:{id}:consent<br/>→ contém o serviço corrente?"]
+    EXP["para cada visível: HGETALL user:{id}<br/>→ casa a expressão?"]
+    RESP["200 { users: [{ id }] }"]
 
-    REQ --> IDX --> FILTER_CONSENT --> ELIGIBLE --> FILTER_EXPR --> RESP
+    REQ --> SVC
+    SVC -->|"não"| E300
+    SVC -->|"sim"| IDX --> VIS --> EXP --> RESP
 ```
 
-O filtro de expressão suporta:
-
-| Tipo | Estrutura JSON | Exemplo |
-|---|---|---|
-| Simples | `{ "attribute": "...", "comparator": "eq", "value": "..." }` | `parentalControl eq true` |
-| AND | `{ "and": [ expr, expr, ... ] }` | `parentalControl eq true AND maxContentRating gte 12` |
-| OR | `{ "or": [ expr, expr, ... ] }` | `audioDescription eq true OR voiceGuidance eq true` |
-
----
-
-## Fluxo de alteração do usuário atual
+### Troca do usuário corrente (C.6.14.4)
 
 ```mermaid
 sequenceDiagram
-    participant C as Dispositivo Remoto
-    participant TV3WS as tv3ws
-    participant REDIS as Redis
-    participant MQTT as Broker MQTT
-    participant AOP as AoP
+    participant C as Cliente
+    participant E as edgegateway
+    participant T as tv3ws
+    participant R as Redis
+    participant M as Broker MQTT
+    participant A as AoP
 
-    C->>TV3WS: POST /tv3/current-service/users/current-user\n{ "id": "uuid-do-usuario" }
-    TV3WS->>REDIS: SET session:current-user {uuid}
-    TV3WS->>MQTT: PUBLISH aop/currentUser {uuid} (retain)
-    MQTT->>AOP: aop/currentUser
-    AOP->>REDIS: FCALL tv30_perfil_ultimo_acesso {uuid}\n(lastAccess so se o id esta em users:index; funcao desde o P4)
-    AOP->>AOP: Atualiza interface\n(seletor de perfil)
-    TV3WS-->>C: 200 OK
+    C->>E: POST /tv3/current-service/users/current-user<br/>{ "id": "<uuid>" }
+    E->>T: repassa (token+bind conferidos, ou warn)
+    T->>R: FCALL tv30_sessao_usuario <uuid>
+    T->>M: PUBLISH aop/currentUser <uuid> (retido)
+    T-->>C: 200
+    M->>A: aop/currentUser
+    A->>R: FCALL tv30_perfil_ultimo_acesso <uuid> <ms><br/>(só se o id está em users:index)
 ```
+
+O tv3ws não confere se o id existe em `users:index` antes de trocar; a função só confere o formato (texto de até 64 caracteres, o mesmo teto do tópico no broker). O tv3ws e o AoP assinam `aop/currentUser` com `noLocal` (`nl` no tv3ws), então nenhum dos dois recebe a própria publicação. O AoP também troca o usuário corrente pela própria tela (seletor de perfil): grava o `lastAccess` antes e publica `aop/currentUser` retido; o tv3ws recebe e grava `session:current-user` pela mesma função.
 
 ---
 
-## Privacidade e consentimento (LGPD / norma seção 8.7.2)
+## Até 02/10 (histórico)
 
-O consentimento é gerenciado pelo **Privacy Manager** com base em
-Privacy Record Request Descriptions (PRRD) sinalizadas via SLS.
-
-```
-user:{userId}:consent    Set
-  "urn:sbtvd:service:globoplay"       ← serviço com consentimento
-  "urn:sbtvd:service:canaltech"
-```
-
-- O plugin Mosquitto consulta `SISMEMBER user:{userId}:consent {serviceId}` para
-  autorizar publicações MQTT vinculadas a serviços.
-- O tv3ws aplica o mesmo filtro nas APIs REST — usuários sem consentimento para o
-  `currentService` não aparecem em listagens nem têm atributos expostos.
-- Centralizar no Redis elimina inconsistência entre serviços e atende à LGPD.
-
----
-
-## Atributos de emissora por contexto (norma Anexo C.6.14.2)
-
-Cada emissora pode armazenar atributos personalizados por usuário, isolados pelo
-`serviceContextId`:
-
-```
-user:{userId}:broadcaster-attrs:{serviceContextId}   Hash
-  att1_broadcaster    "valor_customizado_1"
-  att2_broadcaster    "valor_customizado_2"
-```
-
-Isso permite personalização de experiência (ex: configurações de um aplicativo
-interativo de uma emissora específica) sem interferir nos atributos básicos do perfil.
-
----
-
-## Resumo das operações Redis
-
-| Operação | Comando | Chave | Quando |
-|---|---|---|---|
-| Registrar usuário | `SADD` | `users:index` | Sync do userData.json |
-| Salvar atributos | `HSET` | `user:{id}` | Sync do userData.json |
-| Salvar consentimento | `SADD` | `user:{id}:consent` | Sync do userData.json |
-| Listar todos os IDs | `SMEMBERS` | `users:index` | POST /users |
-| Verificar consentimento | `SISMEMBER` | `user:{id}:consent` | GET /users/{id}, POST /users |
-| Ler perfil completo | `HGETALL` | `user:{id}` | GET /users/{id} |
-| Ler atributo único | `HGET` | `user:{id}` | GET /users/{id}?attribute=X |
-| Salvar usuário atual | `SET` | `session:current-user` | POST /current-user / MQTT |
-| Ler usuário atual | `GET` | `session:current-user` | GET /current-user, boot |
-| Atributos de emissora | `HSET` / `HGETALL` | `user:{id}:broadcaster-attrs:{svcId}` | PUT/GET atributos de emissora |
+> **Registro, não estado atual.** Até a consolidação, este documento descrevia: a criação de perfil gravando o `userData.json` e publicando `aop/users` para o tv3ws sincronizar o arquivo no Redis (`syncUsersFromFile`); o plugin do broker consultando `user:{id}:consent` para autorizar publicações; o tv3ws validando o token JWT e respondendo `403`; e um resumo de comandos com "Sync do userData.json". Nada disso existe no código: a sincronização saiu do tv3ws na reunião de 05/10 (D-0510-5), o tópico `aop/users` não tem publicador nem assinante desde 10/10, o broker só valida esquema, e a credencial é conferida na borda. A seção de privacidade citava a "seção 8.7.2" da norma e o LGPD; a norma trata de privacidade na seção 8.8, que o testbed não implementa. O estado atual está nas seções acima.

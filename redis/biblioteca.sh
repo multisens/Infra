@@ -4,9 +4,9 @@
 #   sh biblioteca.sh | redis-cli -x FUNCTION LOAD REPLACE
 #
 # A biblioteca = cabecalho #!lua + o esquema.json embutido numa string Lua
-# longa (ESQUEMA_JSON) + o corpo funcoes.lua. Assim o esquema.json continua
-# a fonte unica de verdade: a funcao aplica exatamente o que esta nele, e os
-# testes (infra/redis/test) leem o mesmo arquivo.
+# longa (ESQUEMA_JSON) + o corpo funcoes.lua. Assim as regras ficam
+# declaradas num lugar so, o esquema.json: a funcao aplica exatamente o que
+# esta nele, e os testes (infra/redis/test) leem o mesmo arquivo.
 #
 # Uso: biblioteca.sh [esquema.json] [funcoes.lua]
 #      (padrao: os dois ao lado deste script)

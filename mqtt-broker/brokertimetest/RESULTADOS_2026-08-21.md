@@ -1,5 +1,7 @@
 # Resultados — tempo de resposta broker + plugin (2026-08-21)
 
+> **Registro da medição de 21/08/2026, não estado atual.** O conteúdo abaixo não foi alterado. Desde então: o plugin não abre conexão com o Redis nem decide acesso por cliente (o controle de acesso foi removido do código; a "autorização via Redis" citada abaixo não existe mais); a pasta `infra/mosquitto_plugin/` dos comandos de reprodução é hoje `infra/mqtt-broker/`; e as linhas citadas de `mosquitto_plugin.c` mudaram. O estado atual do plugin está em [`../README.md`](../README.md) e em [`../../docs/03-pipeline-mqtt.md`](../../docs/03-pipeline-mqtt.md).
+
 Medição do round-trip cliente → broker (Mosquitto 2.0.22 + plugin C com
 validação de schema e autorização via Redis) → resposta do plugin
 (`response_time_tester`), via `headless-run.js` (mesma lógica da tela

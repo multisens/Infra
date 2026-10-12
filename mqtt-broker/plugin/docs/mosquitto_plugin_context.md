@@ -1,5 +1,7 @@
 # Contexto: Sistema de Validação MQTT com Schemas Dinâmicos
 
+> **Registro do início do desenvolvimento do plugin (com trecho de 17/01/2026), não estado atual.** O conteúdo abaixo não foi alterado, e o "Status Atual" é o daquela época. Os arquivos, pastas e containers citados (`validation_plugin.c`, `/mnt/c/proj/...`, `schema-admin/`, `mosquitto-plugin`) não existem neste repositório. Hoje o plugin é `infra/mqtt-broker/plugin/src/` (`mosquitto_plugin.c`, `schema_validator.c` e `response_time_tester.c`), carregado como `/usr/local/lib/mosquitto_plugin.so`, no container `mqtt-broker`, e os esquemas usam o subconjunto do JSON Schema Draft-07 descrito em [`../../../docs/09-schema-validation.md`](../../../docs/09-schema-validation.md), e não `max_value`, `min_value` e `required_fields`. O estado atual está em [`../../README.md`](../../README.md) e em [`../../../docs/03-pipeline-mqtt.md`](../../../docs/03-pipeline-mqtt.md).
+
 ## Resumo do Projeto
 Implementamos um sistema completo de validação de mensagens MQTT usando plugin Mosquitto com schemas dinâmicos baseados em arquivo JSON.
 

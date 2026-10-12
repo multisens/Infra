@@ -1,6 +1,109 @@
-# Diagrama Unificado — GingaDistrib
+# Diagrama unificado — estado atual
 
-> **Nota (2026-10-02):** diagrama anterior à consolidação. Não existem mais no código: o KrakenD na porta 8090 com middleware Node `/validate` (hoje a borda é o `edgegateway` 44642/44643 com o plugin `tv30-auth`; ver [04](04-pipeline-http.md) e [05](05-autenticacao.md)); o controle de acesso (ACL) e de consentimento no plugin do broker, que hoje só valida esquema (item 3). As portas 44642/44643 são da borda; o tv3ws escuta em 44652/44653 sem publicá-las. Revisão geral do diagrama: pendente (backlog).
+> **Estado do código em 12/10/2026**, conferido nos composes (`docker-compose.yml` e `docker-compose.ssdp.yml` da raiz do TV30, `infra/docker-compose.yml` e `infra/redis/docker-compose.yml`) e no código de cada serviço. Até 12/10 este arquivo trazia só o diagrama de antes da consolidação, que ficou no fim, na seção [Até 02/10 (histórico)](#até-0210-histórico).
+>
+> Mensageria (MQTT), gateways (KrakenD) e Redis são decisões deste projeto e não aparecem na ABNT NBR 25608. Da norma vêm a porta 44642 do `Server-BaseURL` e a descoberta SSDP (C.3.4), as APIs de `/tv3` (Anexo C) e as classes de cliente (C.4.1).
+
+## Stack padrão (bridge `ginga_net`)
+
+```mermaid
+graph LR
+    subgraph FORA["Fora do Docker"]
+        TV["Navegador da TV<br/>(página do AoP)"]
+        APPE["App de emissora no iframe da TV<br/>origem própria http://{app}.apps.localhost:8080<br/>(P1.3)"]
+        CLI["Cliente local autônomo<br/>ou não local"]
+        RD["Dispositivo remoto<br/>(WebSocket do remote-device)"]
+    end
+
+    subgraph NET["Rede Docker ginga_net (bridge)"]
+        subgraph EDGE["edgegateway"]
+            KI["KrakenD interna :44642<br/>26 rotas"]
+            KE["KrakenD externa :44643<br/>23 rotas (só as que admitem o não local)"]
+            PL["plugin tv30-auth<br/>(nas duas superfícies)"]
+            DOC["httpd :8085<br/>Swagger UI + 2 OpenAPI"]
+        end
+        TV3["tv3ws<br/>HTTP :44652 e HTTPS :44653 (não publicadas)<br/>WebSocket :45000-45199"]
+        AOP["aop :8080<br/>páginas da TV, host de cada app,<br/>/videoStreamProxy, /mqtt"]
+        BC["bcast :8081<br/>pacotes das apps e mídia"]
+        MQ["mqtt-broker (serviço mosquitto)<br/>MQTT :1883, WebSocket :9001<br/>plugin C: esquema e teste de latência"]
+        RE["redis :6379 (sem senha)<br/>biblioteca de funções tv30 (P4)<br/>commander :18081 (com login)"]
+    end
+
+    CLI -->|"HTTP 44642"| KI
+    CLI -->|"HTTP 44643"| KE
+    APPE -->|"HTTP 44642<br/>(associado pelo Origin, L1)"| KI
+    APPE -->|"HTTP no host da app"| AOP
+    TV -->|"HTTP 8080"| AOP
+    TV -->|"WebSocket /mqtt"| AOP
+    RD -->|"WebSocket 45000-45199"| TV3
+
+    KI -->|"HTTP tv3ws:44652"| TV3
+    KE -->|"HTTPS tv3ws:44653"| TV3
+    PL -.->|"lê clients:*, origins:associated, session:*<br/>e bind-context:*; grava bind-context:* (FCALL)"| RE
+
+    AOP -->|"proxy HTTP bcast:8081<br/>(apps e vídeo)"| BC
+    AOP -->|"repassa o WebSocket<br/>a mosquitto:9001"| MQ
+    AOP <-->|"MQTT 1883"| MQ
+    TV3 <-->|"MQTT 1883"| MQ
+    BC -->|"MQTT 1883: tlm/lls, tlm/sls,<br/>video/event"| MQ
+
+    AOP -.->|"lê e grava perfis e<br/>origins:associated (FCALL)"| RE
+    TV3 -.->|"lê perfis, origens e clientes; grava session:*,<br/>client(s):*, atributos de emissora (FCALL);<br/>espelho remote-devices:* (direto)"| RE
+```
+
+Setas cheias: HTTP, WebSocket ou MQTT. Setas tracejadas: Redis. O plugin `tv30-auth` roda dentro dos dois processos KrakenD e responde ele mesmo a C.6.8 (`/tv3/bind-context`) e a C.6.7.8/C.6.7.9 (`/tv3/api-info`); as demais rotas vão ao tv3ws ([04](04-pipeline-http.md)). O `PL` está separado no desenho só para mostrar o acesso ao Redis.
+
+Pontos que o desenho não mostra:
+- **HTTPS do tv3ws.** O tv3ws só abre a 44653 com `HTTPS_KEY` e `HTTPS_CERT` no `tv3ws/.env` (`tv3ws/src/server.ts`). Sem elas, as rotas que a 44643 repassa ao tv3ws respondem 404 `{"error":200}` (o KrakenD não alcança o backend), e as que a própria borda responde continuam.
+- **Quem fala com o broker sem estar no desenho.** Os tópicos `aop/services`, `aop/{serviceId}/currentApp`, `aop/{serviceId}/{appId}/path` e `.../doc/*`, que o tv3ws assina, não têm publicador neste repositório ([08](08-mqtt-map.md)).
+- **One-shots da raiz.** `preflight` (rede e PID do host; confere portas e, no modo SSDP, o `SSDP_ADVERTISE_HOST`; a borda só sobe depois dele), `userfiles-seed` (semeia `./user-files`) e `sysctl-init` (profile `linux`). Ver [02](02-rede-docker.md).
+- **Ninguém fala HTTP com o tv3ws por dentro.** O AoP lê e grava o Redis direto e não usa a porta HTTP do tv3ws (comentário do serviço `aop` no compose da raiz); clientes só chegam ao tv3ws pela borda.
+
+### Portas no host
+
+| Container | Porta do container | Porta no host |
+|---|---|---|
+| `edgegateway` | 44642 (interna) | 44642, fixa (norma, C.3.4) |
+| `edgegateway` | 44643 (externa) | 44643, fixa por padrão (`EDGE_EXT_PUBLISH=44643:44643`, decisão do Luís em 12/10); só o número dá porta livre |
+| `edgegateway` | 8085 (documentação) | livre, escolhida pelo Docker (`docker port edgegateway 8085`) |
+| `tv3ws` | 44652, 44653 | não publicadas |
+| `tv3ws` | 45000–45199 | as mesmas, fixas |
+| `aop` | 8080 | `AOP_PUBLIC_PORT`, padrão 8080, fixa (C1) |
+| `bcast` | 8081 | livre por padrão (`BCAST_PUBLISH`, C1) |
+| `mqtt-broker` | 1883 | 1883, fixa |
+| `mqtt-broker` | 9001 (WebSocket) | livre por padrão (`MQTT_WS_PUBLISH`, C1) |
+| `redis` | 6379 | 6379, fixa, sem senha (D-L1) |
+| `redis` | 18081 (commander) | livre (`docker port redis 18081`) |
+
+## Modo SSDP (override `docker-compose.ssdp.yml`, só Linux nativo)
+
+```mermaid
+graph LR
+    LAN["Dispositivo na LAN"]
+    subgraph HOST["Rede do host"]
+        subgraph EDGE2["edgegateway (network_mode: host)"]
+            SS["ssdp-announcer<br/>UDP 1900"]
+            K2["KrakenD :44642 e :44643"]
+        end
+    end
+    subgraph NET2["ginga_net"]
+        T2["tv3ws<br/>44652/44653 publicadas só em 127.0.0.1"]
+        R2["redis :6379"]
+    end
+    LAN -->|"M-SEARCH"| SS
+    SS -->|"LOCATION http://{SSDP_ADVERTISE_HOST}:44642/manifest"| LAN
+    LAN -->|"GET /manifest e APIs"| K2
+    K2 -->|"127.0.0.1:44652 / :44653<br/>(variante host)"| T2
+    K2 -.->|"127.0.0.1:6379"| R2
+```
+
+O override põe só a borda em rede do host (`EDGE_VARIANT=host`, `REDIS_HOST=127.0.0.1`, `SSDP_ENABLED=true`); o resto da stack continua na `ginga_net`. Detalhes em [05](05-autenticacao.md#descoberta-ssdp).
+
+---
+
+## Até 02/10 (histórico)
+
+> **Registro, não estado atual.** Este é o diagrama de antes da consolidação dos containers, mantido sem alteração no desenho. Não existem mais no código: o KrakenD na porta 8090 com o middleware Node `/validate`; o controle de acesso (ACL) e de consentimento no plugin do broker, que hoje só valida esquema; o `migrate_to_redis.py` no boot do Mosquitto; as chaves `acl:*` e `user:{id}:profile`. As portas 44642/44643 são da borda, e o tv3ws escuta em 44652/44653 sem publicá-las. O estado atual está nas seções acima.
 
 Visão completa do sistema: dispositivos, serviços, segurança, mensageria e dados.
 

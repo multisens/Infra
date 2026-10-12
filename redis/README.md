@@ -8,7 +8,7 @@ Redis, funções e esquema são decisões de implementação deste testbed. A AB
 
 | Arquivo | Papel |
 |---|---|
-| `esquema.json` | **Fonte única de verdade** dos esquemas: famílias de chave, tipo, regra de cada campo, invariantes entre chaves, funções e o que fica fora do alcance. Lido pela biblioteca e pelos testes. |
+| `esquema.json` | **Arquivo único** dos esquemas: famílias de chave, tipo, regra de cada campo, invariantes entre chaves, funções e o que fica fora do alcance. A biblioteca o embute (`biblioteca.sh`) e os testes o leem. As invariantes são declaradas aqui e implementadas no `funcoes.lua`. |
 | `funcoes.lua` | Corpo da biblioteca de funções `tv30`: o interpretador das regras do `esquema.json`, uma função por operação de escrita e a auditoria. |
 | `biblioteca.sh` | Monta a biblioteca que o Redis carrega: cabeçalho `#!lua name=tv30` + o `esquema.json` embutido numa string Lua + o `funcoes.lua`. |
 | `entrypoint.sh` | Partida do container: sobe o `redis-server`, carrega a biblioteca, aplica a carga inicial (só em banco vazio) e sobe o commander. |
@@ -30,7 +30,7 @@ O healthcheck exige a marca e `seed:done`. A marca é apagada no começo de cada
 Logs esperados:
 
 ```
-[redis] biblioteca de funcoes tv30 carregada (esquema versao 2)
+[redis] biblioteca de funcoes tv30 carregada (esquema versao 3)
 [redis] aplicando carga inicial pelas funcoes (redis-cli --pipe)...
 [redis] carga concluida (1 perfil(is))
 [redis] commander (debug) na porta 18081, com login (usuario: admin)
@@ -80,14 +80,14 @@ Para os serviços, a recusa é **defeito do serviço**. O erro sobe como qualque
 Cada família tem `chave` (com partes como `{id}`), `tipo` (`string`, `hash`, `set`, `list`), `dono` e as regras:
 
 - `valor` (string), `campos` e `outrosCampos` (hash), `membros` (set), `itens` (list), `partes` (as partes da chave);
-- cada regra tem um `tipo`: `texto` (`min`/`max` em caracteres, `proibe`), `booleano` (`"true"`/`"false"`), `inteiro` (decimal sem zero à esquerda, `min`/`max`, `vazio`), `enum`, `idioma` (formato IETF RFC 5646), `uuid` (formato textual da IETF RFC 9562, em minúsculas; o id do perfil, F-3), `origem` (como o navegador manda no `Origin`) e `json` (objeto com `campos`);
+- cada regra tem um `tipo`: `texto` (`min`/`max` em caracteres, `proibe`), `booleano` (`"true"`/`"false"`), `inteiro` (decimal sem zero à esquerda, `min`/`max`, `vazio`), `enum`, `idioma` (formato IETF RFC 5646), `uuid` (formato textual da IETF RFC 9562, em minúsculas, com versão de 1 a 8 e variante da RFC 9562, `8`, `9`, `a` ou `b`, o que deixa de fora o UUID nulo e o máximo; o id do perfil, F-3, estrito desde 12/10), `origem` (como o navegador manda no `Origin`) e `json` (objeto com `campos`);
 - `obrigatorio`, `obrigatorioSe` (`{campo, valor}`), `campoIgualAParte`, `camposProibidos`, `maxBytes`;
 - `ref` reaproveita uma regra de `definicoes` (por exemplo, `idPerfil`);
-- `fonte` diz de onde a regra veio, e `divergencias` registra onde o código não segue a norma (por exemplo, o avatar gravado como SVG em linha, e não como caminho de arquivo). O id do perfil saiu das divergências em 11/10 (F-3, decisão do Luís): o esquema exige UUID, como a Tabela 7, e o `tv30_versao` passou a `2`.
+- `fonte` diz de onde a regra veio, e `divergencias` registra onde o código não segue a norma (por exemplo, o avatar gravado como SVG em linha, e não como caminho de arquivo). O id do perfil saiu das divergências em 11/10 (F-3, decisão do Luís): o esquema exige UUID, como a Tabela 7, e o `tv30_versao` passou a `2`. Em 12/10 (decisão do Luís), o UUID ficou estrito e o `tv30_versao` passou a `3`: além do formato, a versão (1º dígito do 3º grupo) tem de ser de 1 a 8 e a variante (1º dígito do 4º grupo), `8`, `9`, `a` ou `b`. O UUID nulo (`00000000-…`) e o máximo (`ffffffff-…`) não servem de id de perfil. A recusa diz qual parte falhou (por exemplo, `versao do UUID deve ser de 1 a 8 (1o digito do 3o grupo; veio 9 em ...)` ou `UUID nulo (...) nao serve de id de perfil`). O id da carga (`c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10`, versão 4, variante `9`) e os do AoP (`crypto.randomUUID()`, versão 4) continuam válidos.
 
 As invariantes entre chaves (`perfil-indexado`, `perfil-dependentes`, `clientes-disjuntos`, `autorizado-tem-registro`) são declaradas no `esquema.json` e implementadas no `funcoes.lua`. A biblioteca recusa rodar se as duas listas não baterem.
 
-**Para mudar uma regra:** edite o `esquema.json`. A regra nova passa a valer na próxima partida do container, e os testes de `test/` geram casos para ela. Rode `bash infra/redis/test/run.sh tudo` e reconstrua a imagem (`docker compose build redis`).
+**Para mudar uma regra:** edite o `esquema.json`; os testes de `test/` geram casos para ela. Rode `bash infra/redis/test/run.sh tudo` e reconstrua a imagem (`docker compose build redis`, na raiz do TV30): o arquivo é copiado para a imagem no build (`Dockerfile`), e a regra nova passa a valer quando o container é recriado com ela, porque o entrypoint recarrega a biblioteca a cada partida.
 
 **Para uma operação de escrita nova:** escreva a função no `funcoes.lua`, acrescente o nome em `ESCRITA` (fim do arquivo) e em `funcoes` do `esquema.json`, chame-a pelo adaptador do serviço e acrescente testes. O teste estático falha se o serviço gravar direto.
 
@@ -110,6 +110,8 @@ Chaves fora do alcance não são auditadas: `remote-devices:*` e `remote-device:
 **Volume de antes do P4:** dados gravados antes das funções podem estar fora do esquema. Os casos conhecidos são os booleanos `"False"`/`"True"` da carga antiga e hashes `user:{id}` só com `lastAccess`, de antes de 05/10. A auditoria os mostra. Para começar limpo, use `docker compose down -v`, que apaga o volume e com ele os perfis criados. A outra saída é corrigir as chaves apontadas.
 
 **Volume de antes da F-3 (11/10):** perfis gravados com o id antigo (`user_<epoch-ms>`, do AoP, e `c3167a18-5dc5`, da carga) ficam fora do esquema, sem compatibilidade (decisão do Luís). A auditoria aponta `users:index`, `user:{id}`, `user:{id}:consent` e `user:{id}:broadcaster-attrs:*` de cada um (`{id} da chave: deve ser UUID ...`). Com esse id, `tv30_perfil_grava` e `tv30_atributos_emissora` recusam a escrita; `tv30_perfil_ultimo_acesso` ainda grava o `lastAccess` (num registro que já existe, a função confere só o campo escrito) e `tv30_perfil_remove` ainda remove (não confere o id). Como a carga só roda em banco vazio (`seed:done`), um volume antigo também não recebe o perfil novo da carga (`c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10`). Para começar limpo, recrie o volume, como acima.
+
+**Volume de 11/10 a 12/10 (esquema versão 2):** os ids gravados pelo AoP (`crypto.randomUUID()`, versão 4) e pela carga (versão 4, variante `9`) continuam válidos com o UUID estrito. Só um id gravado por fora deles (à mão ou por `FCALL` direto) com versão fora de 1 a 8, variante fora de `8`, `9`, `a` e `b`, nulo ou máximo passa a aparecer na auditoria, com as mesmas consequências do parágrafo acima.
 
 ## Gravar à mão para depurar
 

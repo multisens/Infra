@@ -2,7 +2,7 @@
 
 Plugin modular para Mosquitto MQTT Broker com duas funcionalidades: validação de schema JSON na publicação e teste de tempo de resposta.
 
-> **Revisto em 2026-10-10 contra o código.** Este README descrevia também um controle de acesso em duas camadas (ACL por usuário e consentimento por `serviceId`, com `authorize.c`, `acl.json` e `userData.json` no plugin). Ele foi removido por decisão de desenho (comentário em `plugin/src/mosquitto_plugin.c`): o plugin não consulta o Redis e não decide acesso por cliente.
+> **Revisto em 2026-10-10 contra o código e conferido de novo em 2026-10-12.** Este README descrevia também um controle de acesso em duas camadas (ACL por usuário e consentimento por `serviceId`, com `authorize.c`, `acl.json` e `userData.json` no plugin). Ele foi removido por decisão de desenho (comentário em `plugin/src/mosquitto_plugin.c`): o plugin não consulta o Redis e não decide acesso por cliente.
 
 ## Estrutura do Projeto
 
@@ -28,10 +28,15 @@ mqtt-broker/
 │   ├── docker-compose.yml
 │   ├── entrypoint.sh                     # Só sobe o Mosquitto
 │   └── migrate_to_redis.py               # Fora da partida; fica na imagem para depuração manual
-├── brokertimetest/                       # App web de testes
-│   ├── server.js
+├── brokertimetest/                       # Teste de latência (interface web e execução sem interface)
+│   ├── server.js                         # interface web na porta 3000
 │   ├── public/
+│   ├── headless-run.js                   # rodadas de 10, 20, 50 e 100 clientes, sem interface
+│   ├── headless-compare.js               # comparação com e sem plugin
+│   ├── *.sh, *.jsonl, vanilla.conf       # baterias e dados da medição de 21/08
+│   ├── RESULTADOS_2026-08-21.md          # registro da medição de 21/08
 │   └── package.json
+├── SESSAO_07_02_2026.md                  # registro da sessão de 07/02 (controle de acesso, removido depois)
 └── README.md
 ```
 
@@ -54,6 +59,8 @@ O broker sobe com a stack da raiz do TV30 (serviço `mosquitto`, perfil `mqtt`, 
 ```bash
 docker compose -f infra/docker-compose.yml up --build -d
 ```
+
+Esse compose isolado (`infra/docker-compose.yml` desta pasta) é outro: publica a 1883 e a 9001 em portas de host fixas (`1883:1883` e `9001:9001`, enquanto a stack da raiz deixa a 9001 em porta livre), usa o mesmo nome de container da stack (`mqtt-broker`, então os dois não sobem juntos) e define `REDIS_HOST`/`REDIS_PORT`, que o broker não usa.
 
 ## Uso
 
@@ -100,5 +107,5 @@ mosquitto_plugin.c (orquestrador)
 
 ## Documentação
 
-- **Contexto do Plugin**: `plugin/docs/mosquitto_plugin_context.md`
+- **Contexto do Plugin** (registro do início do desenvolvimento do plugin, com trecho de 17/01/2026; não é estado atual): `plugin/docs/mosquitto_plugin_context.md`
 - **Pipeline e validação de schema**: `../docs/03-pipeline-mqtt.md` e `../docs/09-schema-validation.md`

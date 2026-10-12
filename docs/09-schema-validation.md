@@ -123,12 +123,12 @@ wsl -- bash -c "cd /mnt/d/Proj_CEFET/TV30 && \
     docker compose --profile mqtt up -d mosquitto"
 ```
 
-> Alternativa pra dev rápido (não persiste em commits subsequentes): copiar o arquivo para o container ao vivo e mandar SIGHUP. Mas o plugin não recarrega sem restart, então vai precisar reiniciar de qualquer jeito. Use o build.
+> O plugin só lê o arquivo na própria inicialização (`mosquitto_plugin_init`, em `mosquitto_plugin.c`), ou seja, na partida do broker. Copiar o arquivo para dentro do container (`docker cp`) e reiniciá-lo funciona só até o container ser recriado, porque a imagem continua com a cópia antiga. Use o build.
 
 ### 3 · Verificar nos logs
 
 ```bash
-wsl -- docker logs mqtt-broker 2>&1 | grep "Schema loaded"
+wsl -- docker logs mqtt-broker 2>&1 | grep -E "Schemas? loaded"
 ```
 
 Saída esperada (uma linha por tópico do arquivo; abreviada aqui):
@@ -161,17 +161,15 @@ mosquitto_pub -h localhost -p 1883 -i my-test-client -t sensor/garage/co2 \
     -m '{"ppm":99999,"timestamp":"now","sensor_id":"abc"}'
 ```
 
-Saída esperada na subscrição em `errors/`:
-```json
-errors/my-test-client {
-  "timestamp":"2026-05-05T10:00:00",
-  "topic":"sensor/garage/co2",
-  "error_type":"SCHEMA_VALIDATION_FAILED",
-  "details":"Value 99999 exceeds maximum 5000",
-  "client_id":"my-test-client",
-  "payload":"..."
-}
+Saída esperada na subscrição em `errors/` (uma linha só; quebrada aqui para leitura):
 ```
+errors/my-test-client {"timestamp":"2026-05-05T10:00:00","topic":"sensor/garage/co2",
+  "error_type":"SCHEMA_VALIDATION_FAILED",
+  "details":"Property 'ppm': Value 99999.00 is greater than maximum 5000.00",
+  "client_id":"my-test-client","payload":"{"ppm":99999,"timestamp":"now","sensor_id":"abc"}"}
+```
+
+O `details` vem de `schema_validator.c` (`validate_properties` prefixa `Property '<nome>': `; `validate_maximum` formata os números com `%.2f`). O `payload` entra sem escape: com aspas no payload, como aqui, a mensagem em `errors/` não é JSON válido (ver *Comportamento de erro*).
 
 ---
 
@@ -193,6 +191,8 @@ Quando a validação falha, o plugin:
   "payload": "payload bruto recusado"
 }
 ```
+
+O `timestamp` sai em UTC no formato `AAAA-MM-DDTHH:MM:SS`, sem fuso. A mensagem é montada com `snprintf` num buffer de 2048 bytes (`publish_error`, `mosquitto_plugin.c`, linhas 54–76): o `topic`, o `details`, o `client_id` e o `payload` entram sem escape, então um payload com aspas ou barra invertida produz JSON inválido, e uma mensagem de 2048 bytes ou mais não é publicada.
 
 > Tópicos `errors/*` e `PluginResponseTime*` são **ignorados pelo callback** (early-return em `mosquitto_plugin.c:163-171`) pra evitar loop infinito.
 
