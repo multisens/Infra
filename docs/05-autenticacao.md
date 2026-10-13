@@ -111,11 +111,11 @@ sequenceDiagram
 
 Os comportamentos provisórios das lacunas (L2, L4, L5) e o reconhecimento do associado pelo `Origin` (L1, decidido em 03/10 com o risco aceito) valem nos **dois** modos: em `warn` só registram e marcam `X-TV30-Auth-Warn`; em `enforce` bloqueiam ou liberam. Em `enforce`, um `Origin` forjado fora do navegador, presente em `origins:associated`, dispensa as credenciais (L1). É o risco aceito.
 
-Toda resposta da borda leva `Access-Control-Allow-Origin: *` (C.4.1.9.2), também sem `Origin` na requisição. O `OPTIONS` que não é preflight, num caminho declarado, recebe 200 com `Access-Control-Allow-Origin`, `Access-Control-Allow-Methods` e `Access-Control-Allow-Headers` (C.4.1.9.3).
+Toda resposta da borda leva `Access-Control-Allow-Origin: *` (C.4.1.9.2), também sem `Origin` na requisição. O `OPTIONS` que não é preflight, num caminho declarado, recebe 200 com `Access-Control-Allow-Origin`, `Access-Control-Allow-Methods` e `Access-Control-Allow-Headers` (C.4.1.9.3). O preflight (`OPTIONS` com `Access-Control-Request-Method`) recebe o mesmo, mais `Access-Control-Max-Age`, em qualquer caminho e com a lista pedida em qualquer ordem: desde 12/10 (decisão do Luís, opção b) quem o responde é o plugin, e não mais o módulo CORS do KrakenD, que recusava a lista fora de ordem.
 
 ```mermaid
 flowchart TD
-    R["Requisição (exceto OPTIONS: o preflight vai ao<br/>módulo CORS; o OPTIONS sem preflight num<br/>caminho declarado recebe 200 + cabeçalhos CORS)"] --> M{"método+caminho declarado<br/>para esta superfície?<br/>(routes.json; P1.9)"}
+    R["Requisição (exceto OPTIONS: o preflight recebe<br/>200 + cabeçalhos CORS do plugin em qualquer caminho;<br/>o OPTIONS sem preflight, num caminho declarado)"] --> M{"método+caminho declarado<br/>para esta superfície?<br/>(routes.json; P1.9)"}
     M -->|não| E100["404 {error:100}<br/>(nos dois modos)"]
     M -->|sim| CL["classe: claim class do token válido<br/>ou Origin ∈ origins:associated"]
     CL --> K{"classe permitida<br/>na rota?"}
@@ -220,7 +220,7 @@ Abertos pelas correções de 12/10 no pareamento (tv3ws; seção *Achados de 12/
 - `Server-PairingMethods` (`qrcode,kex`);
 - `Device-BrandName`, `Device-Model` e `Device-FriendlyName`.
 
-Desde 11/10 (B3, decisão do Luís), o `/manifest` também manda `Access-Control-Expose-Headers` com os seis nomes (`tv3ws/src/manifest.ts`), para o navegador entregá-los a um script de outra origem. Pela borda, o módulo CORS do KrakenD acrescenta outra linha do mesmo cabeçalho (`Content-Length`, `X-TV30-Auth-Warn`, do `cors.expose_headers` do `routes.json`), sem apagar a do tv3ws.
+Desde 11/10 (B3, decisão do Luís), o `/manifest` também manda `Access-Control-Expose-Headers` com os seis nomes (`tv3ws/src/manifest.ts`), para o navegador entregá-los a um script de outra origem. Pela borda, o plugin acrescenta outra linha do mesmo cabeçalho (`Content-Length`, `X-TV30-Auth-Warn`, do `cors.expose_headers` do `routes.json`; até 12/10, era o módulo CORS do KrakenD), sem apagar a do tv3ws.
 
 **Falha do anúncio.** O morre-inteiro foi decidido pelo Luís em 09/10 e revisto por ele em 10/10: "derrubar a borda só em erro de configuração e tolerar a falta de rede com novas tentativas". O `entrypoint.sh` vigia o anunciante junto com os dois KrakenD e o httpd da documentação: se ele sai, a **borda inteira cai, com todas as APIs**, e o `restart: unless-stopped` a traz de volta. Na opção B, só o `tv3ws-ssdp` caía. O que a decisão de 10/10 mudou é quando o anunciante sai (`edgegateway/ssdp/main.go`):
 - **Erro de configuração: sai com 1** e o log `[ssdp] FALHA em ...` (D9). São o `SSDP_ADVERTISE_HOST` ausente, vazio ou sem host (desde 11/10, B2), a porta inválida em `EDGE_HTTP_PORT`/`EDGE_HTTPS_PORT`, `SSDP_INTERFACE` com um nome que não existe na máquina (ou a de loopback), conferida na partida, o bind da 1900 recusado por um socket sem `SO_REUSEADDR` (`EADDRINUSE`) e qualquer erro que não seja de rede.

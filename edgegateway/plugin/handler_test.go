@@ -409,13 +409,52 @@ func TestAPIVersionDasRespostasDaBorda(t *testing.T) {
 	}
 }
 
-func TestOptionsPassaSempre(t *testing.T) {
-	called := false
-	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true; w.WriteHeader(204) })
-	h := newTestHandler(t, modeEnforce, baseStore(), next)
-	rec := serve(h, "OPTIONS", "/tv3/qualquer-coisa", map[string]string{"Access-Control-Request-Method": "GET"})
-	if !called || rec.Code != 204 {
-		t.Fatalf("OPTIONS nao passou (status %d)", rec.Code)
+// Preflight CORS (opcao b, decisao do Luis em 12/10): a borda responde
+// sozinha, em qualquer caminho e nos dois modos, sem chegar ao roteador (o
+// modulo CORS do KrakenD recusava a lista fora de ordem). Lista de
+// cabecalhos pedidos em qualquer ordem, ou ausente: a resposta e a mesma,
+// com o Max-Age so quando configurado.
+func TestPreflightRespondidoPelaBorda(t *testing.T) {
+	for _, mode := range []string{modeWarn, modeEnforce} {
+		called := false
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true; w.WriteHeader(204) })
+		h := newTestHandler(t, mode, baseStore(), next)
+		h.cfg.CORSMaxAge = "43200"
+		for _, p := range []string{"/tv3/current-service", "/tv3/bind-context", "/tv3/qualquer-coisa"} {
+			for _, acrh := range []string{"", "bind-token,content-type", "content-type,bind-token", "Authorization, Accept-Version"} {
+				hd := map[string]string{"Origin": "http://x", "Access-Control-Request-Method": "POST"}
+				if acrh != "" {
+					hd["Access-Control-Request-Headers"] = acrh
+				}
+				rec := serve(h, "OPTIONS", p, hd)
+				if rec.Code != http.StatusOK {
+					t.Errorf("%s %s [%s]: status %d, esperado 200", mode, p, acrh, rec.Code)
+				}
+				for k, want := range map[string]string{
+					"Access-Control-Allow-Origin":  "*",
+					"Access-Control-Allow-Methods": "*",
+					"Access-Control-Allow-Headers": defaultCORSAllowHeaders,
+					"Access-Control-Max-Age":       "43200",
+				} {
+					if got := rec.Header().Values(k); len(got) != 1 || got[0] != want {
+						t.Errorf("%s %s [%s]: %s=%q, esperado um unico %q", mode, p, acrh, k, got, want)
+					}
+				}
+			}
+		}
+		if called {
+			t.Errorf("%s: preflight chegou ao roteador (modulo CORS do KrakenD)", mode)
+		}
+		// sem cors_max_age, o preflight sai sem Access-Control-Max-Age, e o
+		// OPTIONS que nao eh preflight nunca o leva
+		h.cfg.CORSMaxAge = ""
+		if v := serve(h, "OPTIONS", "/tv3/current-service", map[string]string{"Access-Control-Request-Method": "GET"}).Header().Get("Access-Control-Max-Age"); v != "" {
+			t.Errorf("%s: Max-Age %q sem cors_max_age", mode, v)
+		}
+		h.cfg.CORSMaxAge = "43200"
+		if v := serve(h, "OPTIONS", "/tv3/current-service", nil).Header().Get("Access-Control-Max-Age"); v != "" {
+			t.Errorf("%s: Max-Age %q no OPTIONS que nao eh preflight", mode, v)
+		}
 	}
 }
 
@@ -450,8 +489,47 @@ func TestOptionsSemPreflight(t *testing.T) {
 	}
 }
 
+// Access-Control-Expose-Headers (cors.expose_headers) em toda resposta,
+// uma linha so, desde que o modulo CORS do KrakenD saiu (opcao b, Luis
+// 12/10): repassada ao backend, erro C.3.2 da borda, OPTIONS e preflight. O
+// do backend (o /manifest do tv3ws, B3) vem numa segunda linha, somado.
+func TestExposeHeadersEmTodaResposta(t *testing.T) {
+	for _, mode := range []string{modeWarn, modeEnforce} {
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/manifest" {
+				w.Header().Add("Access-Control-Expose-Headers", "Server-BaseURL")
+			}
+			w.WriteHeader(200)
+		})
+		h := newTestHandler(t, mode, baseStore(), next)
+		h.cfg.CORSExposeHeaders = "Content-Length, X-TV30-Auth-Warn"
+		for _, c := range []struct {
+			method, path string
+			hd           map[string]string
+		}{
+			{"GET", "/health", nil},
+			{"GET", "/tv3/naoexiste", map[string]string{"Origin": "http://x"}},
+			{"OPTIONS", "/tv3/current-service", nil},
+			{"OPTIONS", "/tv3/current-service", map[string]string{"Access-Control-Request-Method": "GET"}},
+		} {
+			rec := serve(h, c.method, c.path, c.hd)
+			if got := rec.Header().Values("Access-Control-Expose-Headers"); len(got) != 1 || got[0] != "Content-Length, X-TV30-Auth-Warn" {
+				t.Errorf("%s %s %s: Access-Control-Expose-Headers=%q", mode, c.method, c.path, got)
+			}
+		}
+		if got := serve(h, "GET", "/manifest", nil).Header().Values("Access-Control-Expose-Headers"); len(got) != 2 || got[1] != "Server-BaseURL" {
+			t.Errorf("%s /manifest: Access-Control-Expose-Headers=%q, esperado o da borda e o do backend", mode, got)
+		}
+		// sem cors_expose_headers, nenhum cabecalho da borda
+		h.cfg.CORSExposeHeaders = ""
+		if got := serve(h, "GET", "/health", nil).Header().Values("Access-Control-Expose-Headers"); len(got) != 0 {
+			t.Errorf("%s: Expose-Headers %q sem cors_expose_headers", mode, got)
+		}
+	}
+}
+
 // C.4.1.9.2: ACAO * em toda resposta, inclusive a repassada ao backend e a
-// requisicao sem Origin (o modulo CORS do KrakenD so age com Origin).
+// requisicao sem Origin.
 func TestACAOEmTodaResposta(t *testing.T) {
 	h := newTestHandler(t, modeWarn, baseStore(), nil)
 	for _, hd := range []map[string]string{nil, {"Origin": "http://x"}} {
@@ -537,6 +615,15 @@ func TestConfigInvalida(t *testing.T) {
 		"classe ruim": map[string]interface{}{"surface": "x", "routes": oneRoute(map[string]interface{}{"method": "GET", "path": "/a", "classes": []interface{}{"local-standalone"}})},
 		"cors ruim":   with("cors_allow_headers", []interface{}{"Content-Type", ""}),
 		"cors vazio":  with("cors_allow_headers", []interface{}{}),
+		// Access-Control-Max-Age do preflight (cors_max_age)
+		"max_age ruim":     with("cors_max_age", "doze horas"),
+		"max_age zero":     with("cors_max_age", "0s"),
+		"max_age negativo": with("cors_max_age", "-1h"),
+		"max_age fracao":   with("cors_max_age", "1500ms"),
+		"max_age numero":   with("cors_max_age", 43200),
+		// Access-Control-Expose-Headers (cors_expose_headers)
+		"expose nao lista": with("cors_expose_headers", "X-A"),
+		"expose ruim":      with("cors_expose_headers", []interface{}{"X-A", " "}),
 		// APIs respondidas pela borda
 		"edge desconhecido": map[string]interface{}{"surface": "x", "routes": oneRoute(map[string]interface{}{"method": "GET", "path": "/a", "edge": "proxy"})},
 		"edge nao texto":    map[string]interface{}{"surface": "x", "routes": oneRoute(map[string]interface{}{"method": "GET", "path": "/a", "edge": true})},
@@ -565,6 +652,22 @@ func TestConfigInvalida(t *testing.T) {
 	c, err := loadConfig(with("cors_allow_headers", []interface{}{"Content-Type", " bind-token "}), env(ok))
 	if err != nil || c.CORSAllowHeaders != "Content-Type, bind-token" {
 		t.Fatalf("cors_allow_headers: %v %+v", err, c)
+	}
+	// cors_max_age (do routes.json) vira o Access-Control-Max-Age do
+	// preflight, em segundos; ausente, sem o cabecalho
+	if c, err := loadConfig(with("cors_max_age", " 12h "), env(ok)); err != nil || c.CORSMaxAge != "43200" {
+		t.Fatalf("cors_max_age: %v %+v", err, c)
+	}
+	if c, err := loadConfig(with("cors_max_age", nil), env(ok)); err != nil || c.CORSMaxAge != "" {
+		t.Fatalf("sem cors_max_age: %v %+v", err, c)
+	}
+	// cors_expose_headers vira o Access-Control-Expose-Headers; lista vazia ou
+	// ausente, sem o cabecalho
+	if c, err := loadConfig(with("cors_expose_headers", []interface{}{"Content-Length", " X-TV30-Auth-Warn "}), env(ok)); err != nil || c.CORSExposeHeaders != "Content-Length, X-TV30-Auth-Warn" {
+		t.Fatalf("cors_expose_headers: %v %+v", err, c)
+	}
+	if c, err := loadConfig(with("cors_expose_headers", []interface{}{}), env(ok)); err != nil || c.CORSExposeHeaders != "" {
+		t.Fatalf("cors_expose_headers vazio: %v %+v", err, c)
 	}
 	// sem rota respondida pela borda, nem scid nem apis sao exigidos
 	c, err = loadConfig(map[string]interface{}{"surface": "x", "routes": oneRoute(map[string]interface{}{"method": "GET", "path": "/a"})}, env(ok))

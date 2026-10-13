@@ -35,7 +35,10 @@
  * non-local). O build falha em valor invalido.
  *
  * Campo opcional "timeout" (ex.: "15s"): espera maxima pelo backend nessa
- * rota; ausente => padrao do KrakenD (2s).
+ * rota; ausente => padrao do KrakenD (2s), mantido de proposito (decisao do
+ * Luis em 12/10): um tv3ws travado ou fora do ar recebe da borda o erro 200
+ * em 2 s, em vez de prender o cliente. So o /tv3/authorize espera mais (15s:
+ * o pop-up de autorizacao espera ate 10 s pela resposta do espectador).
  *
  * Campo opcional "api" = {id, section, version}: a linha da Tabela C.2 da
  * norma que a rota implementa (rotas do testbed fora da norma nao tem). A
@@ -49,8 +52,7 @@
  * C.6.7.8/C.6.7.9, D-0510-3). Escolha documentada: o endpoint dessas rotas
  * CONTINUA gerado no KrakenD (mesmo backend das demais), mas o plugin
  * responde antes e ele nunca eh alcancado. Assim o caminho fica registrado
- * no roteador como o de qualquer rota — o preflight CORS (que passa ao
- * modulo CORS) segue o mesmo caminho ja testado, e a arvore do Gin nao muda
+ * no roteador como o de qualquer rota, e a arvore do Gin nao muda
  * (caminho nao registrado ali pode cair no panic de KNOWN-ISSUES.md).
  */
 const fs = require('fs');
@@ -175,6 +177,20 @@ function checkTable(t) {
     const b = (t.backends || {})[s];
     if (!b || typeof b !== 'object' || !Object.keys(b).length) errs.push(`backends.${s}: sem variante de backend`);
   }
+  // cors: so o que o plugin usa (decisao do Luis em 12/10, opcao b: o plugin
+  // responde todo OPTIONS e o modulo CORS do KrakenD saiu da config, porque
+  // ele envolve o plugin e respondia o preflight antes). ACAO e ACAM sao
+  // fixos em * (valores padrao da C.4.1.9.3), e nao vem daqui.
+  const cors = t.cors;
+  if (!cors || typeof cors !== 'object' || Array.isArray(cors)) errs.push('cors: bloco ausente');
+  else {
+    const CORS_KEYS = ['allow_headers', 'expose_headers', 'max_age'];
+    for (const k of Object.keys(cors)) if (!CORS_KEYS.includes(k)) errs.push(`cors.${k}: campo sem uso (o plugin le ${CORS_KEYS.join(', ')}; ACAO e ACAM sao * pela C.4.1.9.3)`);
+    const lista = v => Array.isArray(v) && v.every(h => typeof h === 'string' && /^[A-Za-z0-9-]+$/.test(h));
+    if (!lista(cors.allow_headers) || !cors.allow_headers.length) errs.push('cors.allow_headers: lista nao vazia de nomes de cabecalho');
+    if (cors.expose_headers !== undefined && !lista(cors.expose_headers)) errs.push('cors.expose_headers: lista de nomes de cabecalho');
+    if (cors.max_age !== undefined && !/^[1-9][0-9]*(s|m|h)$/.test(cors.max_age)) errs.push(`cors.max_age "${cors.max_age}" invalido (ex.: 12h, 600s)`);
+  }
   for (const r of t.routes) {
     const id = `${r.method} ${r.path}`;
     if (seen.has(id)) errs.push(`${id}: rota duplicada`);
@@ -293,9 +309,14 @@ function pluginConfig(t, surface) {
   // como token+bind (com a regra L2 acima) para nao abrir um atalho sem
   // bind-token ao MESMO handler do tv3ws.
   if (t.auth && t.auth.current_service_context_id) c.current_service_context_id = t.auth.current_service_context_id;
-  // Cabecalhos que o plugin devolve em Access-Control-Allow-Headers no
-  // OPTIONS que nao e preflight (C.4.1.9.3): os mesmos do modulo CORS.
+  // CORS (C.4.1.9): desde 12/10 (decisao do Luis, opcao b) quem responde e o
+  // plugin, e o modulo CORS do KrakenD saiu da config (generate, abaixo).
+  // allow_headers: o Access-Control-Allow-Headers de todo OPTIONS que ele
+  // responde; max_age: o Access-Control-Max-Age do preflight;
+  // expose_headers: o Access-Control-Expose-Headers de toda resposta.
   if (t.cors && Array.isArray(t.cors.allow_headers)) c.cors_allow_headers = t.cors.allow_headers;
+  if (t.cors && Array.isArray(t.cors.expose_headers)) c.cors_expose_headers = t.cors.expose_headers;
+  if (t.cors && typeof t.cors.max_age === 'string') c.cors_max_age = t.cors.max_age;
   return c;
 }
 
@@ -330,8 +351,10 @@ function generate(t) {
         port: t.surfaces[surface].port,
         allow_insecure_connections: true,
         plugin: { pattern: '.so', folder: PLUGIN_FOLDER },
+        // sem 'security/cors': o modulo CORS do KrakenD envolve o plugin e
+        // responderia o preflight antes dele (decisao do Luis em 12/10,
+        // opcao b: o plugin responde todo OPTIONS)
         extra_config: {
-          'security/cors': t.cors,
           'plugin/http-server': { name: [PLUGIN_NAME], [PLUGIN_NAME]: pluginConfig(t, surface) },
         },
         endpoints: routes.map(r => endpointFor(r, surface, host)),

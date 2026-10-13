@@ -55,18 +55,29 @@ func newHandler(cfg *config, st store, next http.Handler) *authHandler {
 }
 
 func (h *authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// C.4.1.9.2: "Access-Control-Allow-Origin: *" em TODA resposta das APIs.
-	// O modulo CORS do KrakenD so o acrescenta quando a requisicao traz
-	// Origin; definido aqui, vale tambem para cliente fora do navegador. Set
-	// (e nao Add): o modulo CORS tambem usa Set, entao o cabecalho sai uma
-	// vez so (duplicado, o Chrome recusa — por isso o tv3ws nao o envia,
-	// tv3ws/src/middleware/basic.ts).
+	// C.4.1.9.2: "Access-Control-Allow-Origin: *" em TODA resposta das APIs,
+	// tambem para cliente fora do navegador. Set: o cabecalho sai uma vez so
+	// (duplicado, o Chrome recusa — por isso o tv3ws nao o envia,
+	// tv3ws/src/middleware/basic.ts). Desde 12/10 (decisao do Luis, opcao b)
+	// o CORS e todo do plugin: o modulo CORS do KrakenD saiu da config,
+	// porque ele envolve o plugin e respondia o preflight antes dele. Daqui
+	// sai tambem o Access-Control-Expose-Headers que o modulo mandava
+	// (cors.expose_headers); o de uma resposta do backend, como o do
+	// /manifest (B3), vem somado, numa segunda linha.
 	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if h.cfg.CORSExposeHeaders != "" {
+		w.Header().Set("Access-Control-Expose-Headers", h.cfg.CORSExposeHeaders)
+	}
 	if r.Method == http.MethodOptions {
-		// preflight CORS (com Access-Control-Request-Method): passa sempre;
-		// o modulo CORS do KrakenD responde.
+		// Preflight CORS (com Access-Control-Request-Method): a borda responde
+		// sozinha (decisao do Luis em 12/10, opcao b). Ate ali respondia o
+		// modulo CORS do KrakenD (rs/cors 1.11.0 no KrakenD 2.7.2), que recusava
+		// a lista de Access-Control-Request-Headers fora de ordem
+		// lexicografica; a C.4.1.9.3 manda responder todo OPTIONS com ACAO,
+		// ACAM e ACAH. Em qualquer caminho, como o modulo fazia: num caminho
+		// nao declarado o navegador segue para a requisicao e le o 100 dela.
 		if r.Header.Get("Access-Control-Request-Method") != "" {
-			h.serveNext(w, r)
+			writeOptions(w, r, h.cfg.CORSAllowHeaders, h.cfg.CORSMaxAge)
 			return
 		}
 		// OPTIONS que nao eh preflight numa API declarada (qualquer metodo no
@@ -74,7 +85,7 @@ func (h *authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Caminho nao declarado segue a tabela e da 100 (formato C.3.2, em
 		// vez do texto do Gin).
 		if h.cfg.Routes.pathDeclared(r.URL.Path) {
-			writeOptions(w, r, h.cfg.CORSAllowHeaders)
+			writeOptions(w, r, h.cfg.CORSAllowHeaders, "")
 			return
 		}
 	}
@@ -420,9 +431,9 @@ func writeError(w http.ResponseWriter, r *http.Request, code int, detail string)
 }
 
 // writeC32 responde no formato C.3.2: status 404 + {error, description},
-// application/json, com Access-Control-Allow-Origin: * (o plugin roda ANTES
-// do modulo CORS do KrakenD; sem isso o navegador veria erro de CORS em vez
-// do corpo) e API-Version (C.3.6.6).
+// application/json, com Access-Control-Allow-Origin: * (o CORS e todo do
+// plugin desde 12/10; sem isso o navegador veria erro de CORS em vez do
+// corpo) e API-Version (C.3.6.6).
 func writeC32(w http.ResponseWriter, r *http.Request, code int, detail string) {
 	desc := errorText[code]
 	if detail != "" {
@@ -441,15 +452,21 @@ func writeC32(w http.ResponseWriter, r *http.Request, code int, detail string) {
 	w.Write(body)
 }
 
-// writeOptions responde o OPTIONS que nao eh preflight numa API declarada
-// (C.4.1.9.3): os tres cabecalhos com os valores padrao da norma (ACAH com o
-// key do DELETE /tv3/bind-context, como o modulo CORS). Status 200, o de
-// sucesso da C.3.2.1; sem corpo.
-func writeOptions(w http.ResponseWriter, r *http.Request, allowHeaders string) {
+// writeOptions responde o OPTIONS (C.4.1.9.3): o preflight, em qualquer
+// caminho, e o que nao eh preflight, numa API declarada. Os tres cabecalhos
+// com os valores padrao da norma (ACAH com o key do DELETE
+// /tv3/bind-context, o mesmo cors.allow_headers do routes.json), sem olhar
+// o que o preflight pede: a lista e fixa, e quem decide se ela cobre o
+// pedido eh o navegador. maxAge (so no preflight) vai em
+// Access-Control-Max-Age. Status 200, o de sucesso da C.3.2.1; sem corpo.
+func writeOptions(w http.ResponseWriter, r *http.Request, allowHeaders, maxAge string) {
 	hd := w.Header()
 	hd.Set("Access-Control-Allow-Origin", "*")
 	hd.Set("Access-Control-Allow-Methods", "*")
 	hd.Set("Access-Control-Allow-Headers", allowHeaders)
+	if maxAge != "" {
+		hd.Set("Access-Control-Max-Age", maxAge)
+	}
 	hd.Set("API-Version", apiVersion(r))
 	hd.Set("Content-Length", "0")
 	w.WriteHeader(http.StatusOK)

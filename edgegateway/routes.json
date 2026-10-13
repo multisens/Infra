@@ -25,16 +25,6 @@
     "current_service_context_id": "c08b2c72-fd14-4095-adaf-2e5810850c57"
   },
   "cors": {
-    "allow_origins": [
-      "*"
-    ],
-    "allow_methods": [
-      "GET",
-      "POST",
-      "PUT",
-      "DELETE",
-      "OPTIONS"
-    ],
     "allow_headers": [
       "Content-Type",
       "Authorization",
@@ -47,8 +37,7 @@
       "Content-Length",
       "X-TV30-Auth-Warn"
     ],
-    "max_age": "12h",
-    "allow_credentials": false
+    "max_age": "12h"
   },
   "routes": [
     {
