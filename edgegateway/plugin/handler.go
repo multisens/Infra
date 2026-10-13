@@ -323,9 +323,10 @@ func (h *authHandler) evaluate(r *http.Request) verdict {
 
 	// -- associado reconhecido pelo Origin: usa as APIs sem access token e
 	// sem bind-token (C.4.1.1, D8) --
-	// PENDENTE (Joel): a norma dispensa o bind-token "referencing their own
-	// service context"; o acesso do associado a contexto de OUTRA emissora
-	// (rotas /tv3/{serviceContextId}/...) nao eh restringido aqui.
+	// PENDENTE (Joel; H1 de docs/decisoes-pendentes.md): a norma dispensa o
+	// bind-token "referencing their own service context"; o acesso do
+	// associado a contexto de OUTRA emissora (rotas /tv3/{serviceContextId}/...)
+	// nao eh restringido aqui.
 	if v.Class == classAssociated && claims == nil {
 		return v
 	}
@@ -383,8 +384,9 @@ func (h *authHandler) evaluate(r *http.Request) verdict {
 		return v.fail(200, "redis indisponivel ("+err.Error()+")")
 	}
 	if sid == "" {
-		// PENDENTE (Joel): sem servico corrente nao ha chave registrada que
-		// valide o token => 108 (a norma tambem preve 300 nessas APIs).
+		// PENDENTE (Joel; H2 de docs/decisoes-pendentes.md): sem servico
+		// corrente nao ha chave registrada que valide o token => 108 (a norma
+		// tambem preve 300 nessas APIs).
 		return v.fail(108, "sem servico corrente: nenhuma chave registrada")
 	}
 	raw, err := h.store.BindKeys(sid)
