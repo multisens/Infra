@@ -137,9 +137,9 @@ func TestExternaRotaSoDaInternaDa100(t *testing.T) {
 
 // O GET /tv3/bind-context (autonomo e nao local) fica na externa. O caminho
 // continua declarado nela, entao o OPTIONS que nao e preflight recebe os
-// cabecalhos da C.4.1.9.3; o preflight passa ao modulo CORS como em qualquer
-// caminho (o KrakenD o concede pelos allow_methods globais, inclusive POST), e
-// a requisicao de verdade da 100.
+// cabecalhos da C.4.1.9.3; o preflight a borda concede como em qualquer
+// caminho (opcao b, Luis 12/10), inclusive o do POST, e a requisicao de
+// verdade da 100.
 func TestExternaMantemGetEOptions(t *testing.T) {
 	st := baseStore()
 	bind := signJWT(t, "HS256", []byte("chave-webmedia"), timeClaims(t0, t0, t0.Add(time.Hour)))
@@ -155,12 +155,15 @@ func TestExternaMantemGetEOptions(t *testing.T) {
 		t.Errorf("OPTIONS sem preflight na externa: status %d, ACAM %q", o.status, o.hdr.Get("Access-Control-Allow-Methods"))
 	}
 
+	// preflight: desde 12/10 (opcao b do Luis) a propria borda responde, sem
+	// passar ao modulo CORS do KrakenD, tambem para o POST que nao existe na
+	// externa (o navegador le o 100 da requisicao em seguida)
 	called := false
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true; w.WriteHeader(204) })
 	rec := serve(externalHandler(t, modeEnforce, st, next), "OPTIONS", "/tv3/bind-context",
 		map[string]string{"Origin": "http://x", "Access-Control-Request-Method": "POST"})
-	if !called || rec.Code != 204 {
-		t.Errorf("preflight POST na externa nao passou ao modulo CORS (status %d)", rec.Code)
+	if called || rec.Code != http.StatusOK || rec.Header().Get("Access-Control-Allow-Methods") != "*" {
+		t.Errorf("preflight POST na externa: chegou ao roteador=%v, status %d, ACAM %q", called, rec.Code, rec.Header().Get("Access-Control-Allow-Methods"))
 	}
 }
 

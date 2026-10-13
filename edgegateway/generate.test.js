@@ -269,6 +269,37 @@ test('em cada config KrakenD, endpoints = rotas do plugin = rotas da superficie'
   }
 });
 
+test('CORS do plugin: allow_headers, expose_headers e max_age do routes.json chegam as duas superficies, sem o modulo CORS do KrakenD (opcao b, 12/10)', () => {
+  const t = real();
+  const files = g.generate(t);
+  for (const [name, cfg] of Object.entries(files)) {
+    if (!name.startsWith('krakend-')) continue;
+    const plugin = cfg.extra_config['plugin/http-server']['tv30-auth'];
+    assert.deepEqual(plugin.cors_allow_headers, t.cors.allow_headers, name);
+    assert.deepEqual(plugin.cors_expose_headers, t.cors.expose_headers, name);
+    assert.equal(plugin.cors_max_age, t.cors.max_age, name);
+    // o modulo CORS do KrakenD saiu: ele envolve o plugin e responderia o
+    // preflight antes dele
+    assert.ok(!('security/cors' in cfg.extra_config), name);
+  }
+  // sem max_age e sem expose_headers no routes.json, o plugin nao recebe os campos
+  const c = g.pluginConfig(mini([{ method: 'GET', path: '/a' }]), 'internal');
+  assert.ok(!('cors_max_age' in c) && !('cors_expose_headers' in c));
+  // bloco cors: so os campos que o plugin usa, nos formatos certos
+  const comCors = cors => { const m = mini([{ method: 'GET', path: '/a' }]); m.cors = cors; return g.checkTable(m); };
+  assert.deepEqual(comCors({ allow_headers: ['Content-Type'], expose_headers: ['X-A'], max_age: '12h' }), []);
+  for (const [nome, cors] of Object.entries({
+    'sem bloco': undefined,
+    'allow_origins (saiu)': { allow_headers: ['Content-Type'], allow_origins: ['*'] },
+    'allow_methods (saiu)': { allow_headers: ['Content-Type'], allow_methods: ['GET'] },
+    'allow_headers vazio': { allow_headers: [] },
+    'allow_headers com virgula': { allow_headers: ['Content-Type, Authorization'] },
+    'expose_headers nao lista': { allow_headers: ['Content-Type'], expose_headers: 'X-A' },
+    'max_age sem unidade': { allow_headers: ['Content-Type'], max_age: '43200' },
+    'max_age zero': { allow_headers: ['Content-Type'], max_age: '0s' },
+  })) assert.ok(comCors(cors).length > 0, nome);
+});
+
 test('APIs da C.6.7.8/C.6.7.9 por superficie: a externa nao lista as que nao oferece', () => {
   const t = real();
   const files = g.generate(t);

@@ -43,9 +43,17 @@ type config struct {
 	APIs         *apiCatalog
 	RedisAddr    string
 	RedisTimeout time.Duration
-	// Access-Control-Allow-Headers do OPTIONS que nao eh preflight
-	// (C.4.1.9.3); vem de cors.allow_headers do routes.json.
+	// Access-Control-Allow-Headers de todo OPTIONS que o plugin responde
+	// (C.4.1.9.3), preflight ou nao; vem de cors.allow_headers do routes.json.
 	CORSAllowHeaders string
+	// Access-Control-Expose-Headers de toda resposta ("" = sem o cabecalho);
+	// vem de cors.expose_headers do routes.json. Ate 12/10 era o modulo CORS
+	// do KrakenD que o mandava.
+	CORSExposeHeaders string
+	// Access-Control-Max-Age do preflight, em segundos ("" = sem o
+	// cabecalho); vem de cors.max_age do routes.json (ex.: "12h" => "43200"),
+	// o mesmo valor que o modulo CORS do KrakenD devolvia ate 12/10.
+	CORSMaxAge string
 }
 
 // Padrao da C.4.1.9.3 mais o cabecalho key do DELETE /tv3/bind-context
@@ -163,6 +171,29 @@ func loadConfig(raw interface{}, getenv func(string) string) (*config, error) {
 			names = append(names, strings.TrimSpace(s))
 		}
 		cfg.CORSAllowHeaders = strings.Join(names, ", ")
+	}
+	if v, present := m["cors_expose_headers"]; present {
+		list, ok := v.([]interface{})
+		if !ok {
+			return nil, fmt.Errorf("cors_expose_headers nao eh lista: %v", v)
+		}
+		names := make([]string, 0, len(list))
+		for _, h := range list {
+			s, ok := h.(string)
+			if !ok || strings.TrimSpace(s) == "" {
+				return nil, fmt.Errorf("cors_expose_headers contem valor invalido: %v", h)
+			}
+			names = append(names, strings.TrimSpace(s))
+		}
+		cfg.CORSExposeHeaders = strings.Join(names, ", ")
+	}
+	if v, present := m["cors_max_age"]; present {
+		s, ok := v.(string)
+		d, err := time.ParseDuration(strings.TrimSpace(s))
+		if !ok || err != nil || d <= 0 || d%time.Second != 0 {
+			return nil, fmt.Errorf("cors_max_age nao eh duracao positiva em segundos inteiros (ex.: 12h): %v", v)
+		}
+		cfg.CORSMaxAge = strconv.FormatInt(int64(d/time.Second), 10)
 	}
 
 	switch mode := strings.TrimSpace(getenv("AUTH_ENFORCE")); mode {
