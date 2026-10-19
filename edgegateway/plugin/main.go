@@ -7,32 +7,24 @@
 // em vez de repassa-las (edge.go): C.6.8 bind-context (D-0510-2) e
 // C.6.7.8/C.6.7.9 api-info (D-0510-3).
 //
-// Toda resposta leva Access-Control-Allow-Origin: * (C.4.1.9.2). O preflight
-// CORS (OPTIONS com Access-Control-Request-Method) passa sempre ao modulo
-// CORS; o OPTIONS sem esse cabecalho numa API declarada eh respondido aqui
-// (C.4.1.9.3). O resto passa, nesta ordem, por:
+// CORS todo aqui (C.4.1.9; opcao b do Luis, 12/10): Access-Control-Allow-
+// Origin: * em toda resposta, e o preflight (OPTIONS com Access-Control-
+// Request-Method) respondido pelo plugin em qualquer caminho. O resto passa
+// pela decisao de handler.go (evaluate), nesta ordem: rota (100), superficie
+// (106, F-1), associado nas rotas que nao o admitem (106, A8), classe (106),
+// nao local por HTTP (106, E7), access token (107), servico selecionado
+// (300, H2), bind-token do contexto da rota (104/108; A6, H1) e versao
+// (100/101, D2). Ver README.md.
 //
-//  1. rota: metodo+caminho tem que estar declarado na tabela unica
-//     (routes.json) para esta superficie; senao erro 100, sem repassar ao
-//     roteador (isso elimina o panic do Gin registrado em KNOWN-ISSUES);
-//  2. classe do cliente (106): claim `class` do access token; sem token, o
-//     Origin em origins:associated identifica o local associado;
-//  3. access token (107): HS256, segredo JWT_SECRET, exp obrigatorio, nbf se
-//     houver, iss == JWT_ISSUER; cliente em clients:blocked (C.4.2.2);
-//  4. bind-token (104/108): so nas rotas "token+bind" (campo "Security
-//     requirements" = shall da norma), contra as chaves registradas pela
-//     emissora do servico corrente (C.6.8, bind-context:{serviceId}).
+// Liberada a requisicao, a rota com "edge" no routes.json eh respondida aqui
+// (edge.go); as demais vao ao roteador, com a versao decidida em
+// X-TV30-API-Version e o Host original em X-TV30-Host.
 //
-// Liberada a requisicao (ou so avisada, em warn), a rota com "edge" no
-// routes.json eh respondida aqui (edge.go); as demais vao ao roteador.
-//
-// Modo (AUTH_ENFORCE): warn (padrao) nao bloqueia nada de credencial — loga
-// "[tv30-auth] WARN ..." e acrescenta o cabecalho X-TV30-Auth-Warn: <codigo>;
-// enforce responde 404 + corpo C.3.2. O erro 100 (rota nao declarada) e o
-// 200 (panic do roteador, ou resposta 5xx do KrakenD — backend lento ou
-// fora do ar, que sairia como 500 sem corpo) valem nos dois modos: nao ha
-// cliente que dependa deles (a rota nao declarada nunca chegou ao tv3ws, e
-// o tv3ws nunca responde 5xx).
+// Modo (AUTH_ENFORCE): enforce (padrao desde 15/10) responde 404 + corpo
+// C.3.2; warn, opcao transitoria, so avisa nas recusas de credencial (104,
+// 107, 108): log "[tv30-auth] WARN ..." e cabecalho X-TV30-Auth-Warn. Os
+// demais (100, 101, 106, 300 e 200, inclusive o 5xx do KrakenD trocado por
+// 200) valem nos dois modos (followsMode, handler.go; Joel, 15/10).
 //
 // SOMENTE biblioteca padrao (ver go.mod).
 package main

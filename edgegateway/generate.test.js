@@ -4,9 +4,11 @@
 // Tambem rodam no build da imagem (Dockerfile, estagio gen): tabela que
 // quebra a regra nao vira imagem.
 //
-// Foco: P1.9 (decisao do Luis em 10/10) — superficies com rotas distintas,
-// derivadas de "classes" (ausente = todas). A externa (44643) so expoe as
-// rotas que admitem o cliente nao local; a interna (44642), todas.
+// Foco: superficies (F-1, F-2 e E7, respostas do Joel em 15/10, que reveem a
+// P1.9 do Luis de 10/10). As duas tem todas as rotas; na externa (44643,
+// Server-SecureBaseURL) as de uso exclusivo do cliente local e a C.6.1.2
+// respondem 106 a qualquer requisicao (C.4.1.8); na interna (44642, HTTP) o
+// nao local so usa a C.6.1.2 e a C.6.1.3 (C.4.1.6). E o 300 sem servico (H2).
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
@@ -22,7 +24,6 @@ function mini(routes) {
   return {
     backends: { external: { linux: 'https://x:1' }, internal: { linux: 'http://x:2' } },
     surfaces: { external: { port: 44643, title: 'ext' }, internal: { port: 44642, title: 'int' } },
-    auth: { current_service_context_id: 'scid' },
     cors: { allow_headers: ['Content-Type'] },
     routes: routes.map(r => ({ headers: ['Accept-Version'], ...r })),
   };
@@ -32,181 +33,79 @@ test('routes.json atual passa na validacao', () => {
   assert.deepEqual(g.checkTable(real()), []);
 });
 
-test('regra: externa so com rotas que admitem non-local; interna com todas', () => {
+const plugin = (files, s) => files[`krakend-${s}.linux.json`].extra_config['plugin/http-server']['tv30-auth'];
+const pk = r => `${r.method} ${r.path}`;
+const EXCLUSIVAS_DO_LOCAL = [
+  'DELETE /tv3/bind-context',
+  'DELETE /tv3/remote-device/device/{handle}',
+  'GET /tv3/remote-device/device/{handle}',
+  'GET /tv3/remote-device/devices/{classId}',
+  'POST /tv3/bind-context',
+];
+
+test('as duas superficies tem todas as rotas (F-1, Joel 15/10)', () => {
   const t = real();
-  const ext = g.routesOf(t, 'external');
-  const int = g.routesOf(t, 'internal');
-  assert.equal(int.length, t.routes.length);
-  for (const r of t.routes) {
-    const admite = !r.classes || r.classes.includes('non-local');
-    assert.equal(ext.includes(r), admite, `${key(r)} (classes ${JSON.stringify(r.classes)})`);
+  for (const s of ['external', 'internal']) assert.equal(g.routesOf(t, s).length, t.routes.length, s);
+  for (const r of t.routes) assert.deepEqual(g.surfacesOf(r), ['external', 'internal'], key(r));
+  const files = g.generate(t);
+  for (const s of ['external', 'internal']) assert.equal(plugin(files, s).routes.length, 26, s);
+});
+
+test('F-1: na externa, 106 nas exclusivas do cliente local e na C.6.1.2 (C.4.1.8); na interna, nenhuma', () => {
+  const t = real();
+  const com106 = s => t.routes.filter(r => g.surfaceErrorOf(r, s) === 106).map(key).sort();
+  assert.deepEqual(com106('external'), [...EXCLUSIVAS_DO_LOCAL, 'GET /tv3/authorize'].sort());
+  assert.deepEqual(com106('internal'), []);
+  // o /tv3/token (C.6.1.3) e o GET /tv3/bind-context (C.6.8.3) continuam na externa
+  for (const k of ['GET /tv3/token', 'GET /tv3/bind-context', 'POST /tv3/remote-device', 'DELETE /tv3/remote-device/{handle}']) {
+    assert.equal(g.surfaceErrorOf(t.routes.find(r => key(r) === k), 'external'), 0, k);
+  }
+  const files = g.generate(t);
+  const ext = plugin(files, 'external').routes.filter(r => r.surface_error).map(pk).sort();
+  assert.deepEqual(ext, com106('external'));
+  assert.ok(plugin(files, 'internal').routes.every(r => !r.surface_error));
+  // e o endpoint continua registrado no roteador da externa (o plugin responde antes)
+  for (const v of Object.keys(t.backends.external)) {
+    const eps = files[`krakend-external.${v}.json`].endpoints.map(e => `${e.method} ${e.endpoint}`);
+    for (const k of com106('external')) assert.ok(eps.includes(k), `${k} (${v})`);
   }
 });
 
-test('rotas sem restricao de classe ficam nas duas; /health e /manifest nas duas', () => {
+test('E7: na interna, nonlocal_https_only e so a C.6.1.2/C.6.1.3 isentas; na externa, nada disso', () => {
+  const files = g.generate(real());
+  const int = plugin(files, 'internal'), ext = plugin(files, 'external');
+  assert.equal(int.nonlocal_https_only, true);
+  assert.ok(!('nonlocal_https_only' in ext));
+  assert.deepEqual(int.routes.filter(r => r.nonlocal_http).map(pk).sort(), ['GET /tv3/authorize', 'GET /tv3/token']);
+  assert.ok(ext.routes.every(r => !('nonlocal_http' in r)));
+});
+
+test('H2: no_service 300 na C.6.4.7 e da C.6.14.1 a C.6.14.6; nao na C.6.16.3', () => {
   const t = real();
-  for (const r of t.routes.filter(r => !r.classes)) assert.deepEqual(g.surfacesOf(r), ['external', 'internal'], key(r));
-  for (const p of ['/health', '/manifest']) {
-    const r = t.routes.find(r => r.path === p && r.method === 'GET');
-    assert.ok(r, p);
-    assert.deepEqual(g.surfacesOf(r), ['external', 'internal'], p);
-  }
+  const com300 = t.routes.filter(r => r.no_service === 300).map(r => r.api.section).sort();
+  assert.deepEqual([...new Set(com300)].sort(), ['C.6.14.1', 'C.6.14.2', 'C.6.14.3', 'C.6.14.4', 'C.6.14.5', 'C.6.14.6', 'C.6.4.7']);
+  assert.ok(!t.routes.find(r => r.api && r.api.section === 'C.6.16.3').no_service);
+  for (const r of t.routes.filter(r => r.no_service)) assert.equal(r.auth, 'token+bind', key(r));
+  const files = g.generate(t);
+  for (const s of ['external', 'internal']) assert.equal(plugin(files, s).routes.filter(r => r.no_service === 300).length, 8, s);
+  // validacao: valor e auth
+  assert.ok(g.checkTable(mini([{ method: 'GET', path: '/a', auth: 'token+bind', no_service: 108 }])).some(e => /no_service 108 invalido/.test(e)));
+  assert.ok(g.checkTable(mini([{ method: 'GET', path: '/a', auth: 'token', no_service: 300 }])).some(e => /so vale em rota token\+bind/.test(e)));
 });
 
 // A4 (decisao do Luis em 11/10): POST /tv3/{serviceContextId}/users, fora da
-// Tabela C.2 (a norma so define POST /tv3/current-service/users, C.6.14.1),
-// saiu da tabela: nenhuma superficie a tem, e a borda responde 100. As outras
-// rotas /tv3/{serviceContextId}/users/{userid} (GET e POST, C.6.14.2/C.6.14.5)
-// continuam. Contagens (P1.9 + A4): 24 rotas na externa e 26 na interna; as
-// APIs listadas na C.6.7.8/C.6.7.9 nao mudam (a rota nao tinha campo "api").
-// Desde a decisao do Luis em 12/10 (C.6.15.5 so para cliente local, teste
-// proprio abaixo), a externa tem 23 rotas e 17 APIs; a interna segue com 26
-// rotas e 20 APIs. Desde a segunda decisao do Luis em 12/10 (rotas 2.1
-// /tv3/remote-device/device/{handle} so para cliente local, teste proprio
-// abaixo), a externa tem 21 rotas; as APIs nao mudam (17 e 20), porque essas
-// duas rotas nao tem campo "api".
-test('A4: POST /tv3/{serviceContextId}/users fora da tabela; contagens por superficie', () => {
+// Tabela C.2, saiu da tabela: nenhuma superficie a tem, e a borda responde 100.
+test('A4: POST /tv3/{serviceContextId}/users fora da tabela', () => {
   const t = real();
   assert.ok(!t.routes.some(r => key(r) === 'POST /tv3/{serviceContextId}/users'), 'rota retirada (A4)');
   assert.ok(t.routes.some(r => key(r) === 'POST /tv3/current-service/users'), 'a da norma (C.6.14.1) fica');
-  for (const k of ['GET /tv3/{serviceContextId}/users/{userid}', 'POST /tv3/{serviceContextId}/users/{userid}']) {
-    assert.ok(t.routes.some(r => key(r) === k), k);
-  }
-  assert.equal(g.routesOf(t, 'external').length, 21);
-  assert.equal(g.routesOf(t, 'internal').length, 26);
   const files = g.generate(t);
   for (const [name, cfg] of Object.entries(files)) {
     if (name.startsWith('krakend-')) {
       assert.ok(!cfg.endpoints.some(e => e.method === 'POST' && e.endpoint === '/tv3/{serviceContextId}/users'), `${name}: endpoint`);
-      const plugin = cfg.extra_config['plugin/http-server']['tv30-auth'];
-      assert.ok(!plugin.routes.some(r => r.method === 'POST' && r.path === '/tv3/{serviceContextId}/users'), `${name}: plugin`);
     } else {
       assert.ok(!cfg.paths['/tv3/{serviceContextId}/users'], `${name}: OpenAPI`);
     }
-  }
-  const apis = s => files[`krakend-${s}.linux.json`].extra_config['plugin/http-server']['tv30-auth'].apis.length;
-  assert.equal(apis('internal'), 20);
-  assert.equal(apis('external'), 17);
-});
-
-test('so na interna: POST e DELETE /tv3/bind-context (so local-associated), GET /tv3/remote-device/devices/{classId} e GET e DELETE /tv3/remote-device/device/{handle} (so local, 12/10)', () => {
-  const t = real();
-  const fora = t.routes.filter(r => !g.surfacesOf(r).includes('external'));
-  assert.deepEqual(keys(fora), [
-    'DELETE /tv3/bind-context',
-    'DELETE /tv3/remote-device/device/{handle}',
-    'GET /tv3/remote-device/device/{handle}',
-    'GET /tv3/remote-device/devices/{classId}',
-    'POST /tv3/bind-context',
-  ]);
-  // o GET da mesma API (autonomo e nao local) continua nas duas
-  const get = t.routes.find(r => key(r) === 'GET /tv3/bind-context');
-  assert.deepEqual(g.surfacesOf(get), ['external', 'internal']);
-});
-
-// Decisao do Luis em 12/10: a C.6.15.5 (Tabela C.78, "allows a local client
-// application") so para o cliente local. Pela P1.9 a rota sai da 44643 (100
-// la) e, na 44642, o nao local recebe o 106 da regra de classe do plugin; o
-// codigo exato (a Tabela C.78 diz 107) fica com o Joel (F-1, generate.js).
-// O registro e o cancelamento (C.6.15.2 e C.6.15.3) sao chamados pelo
-// proprio dispositivo remoto, que e nao local: continuam nas duas. As rotas
-// 2.1 por handle tambem sairam da externa (segunda decisao de 12/10, teste
-// seguinte).
-test('C.6.15.5 so para cliente local (12/10): fora da externa, com a API dela', () => {
-  const t = real();
-  const k = 'GET /tv3/remote-device/devices/{classId}';
-  const r = t.routes.find(x => key(x) === k);
-  assert.ok(r, k);
-  assert.equal(r.api.id, 'tv3ws-remotedevice-communication');
-  assert.equal(r.api.section, 'C.6.15.5');
-  assert.deepEqual([...r.classes].sort(), ['local-associated', 'local-autonomous']);
-  assert.equal(r.auth, 'token');
-  assert.deepEqual(g.surfacesOf(r), ['internal']);
-  // a API da C.6.15.5 so tem essa rota: sai junto da lista da externa
-  assert.deepEqual(t.routes.filter(x => x.api && x.api.id === 'tv3ws-remotedevice-communication').map(key), [k]);
-  for (const outra of ['POST /tv3/remote-device', 'DELETE /tv3/remote-device/{handle}']) {
-    const o = t.routes.find(x => key(x) === outra);
-    assert.ok(o, outra);
-    assert.deepEqual(g.surfacesOf(o), ['external', 'internal'], outra);
-  }
-  const files = g.generate(t);
-  const plugin = s => files[`krakend-${s}.linux.json`].extra_config['plugin/http-server']['tv30-auth'];
-  const pi = plugin('internal').routes.find(x => `${x.method} ${x.path}` === k);
-  assert.deepEqual(pi, { method: 'GET', path: '/tv3/remote-device/devices/{classId}', auth: 'token', classes: ['local-associated', 'local-autonomous'] });
-  assert.ok(!plugin('external').routes.some(x => `${x.method} ${x.path}` === k), 'fora do plugin da externa');
-  for (const v of Object.keys(t.backends.external)) {
-    assert.ok(!files[`krakend-external.${v}.json`].endpoints.some(e => `${e.method} ${e.endpoint}` === k), `endpoint fora da externa (${v})`);
-  }
-  assert.ok(plugin('internal').apis.some(a => a.id === 'tv3ws-remotedevice-communication'));
-  assert.ok(!plugin('external').apis.some(a => a.id === 'tv3ws-remotedevice-communication'));
-  const oi = files['openapi-internal.json'].paths['/tv3/remote-device/devices/{classId}'].get;
-  assert.deepEqual(oi['x-tv30-surfaces'], ['internal']);
-  assert.match(oi.description, /Classes: local-associated, local-autonomous\. So nesta superficie \(internal; P1\.9\)/);
-  assert.ok(!files['openapi-external.json'].paths['/tv3/remote-device/devices/{classId}'], 'fora do OpenAPI da externa');
-});
-
-// Segunda decisao do Luis em 12/10: GET e DELETE
-// /tv3/remote-device/device/{handle} (C.6.15.6 e C.6.15.7 da proposta 2.1 do
-// Luis ao Forum; tv3ws/src/api/multi-device/index.ts: "This API allows a local
-// client application to establish communication with a remote device") so
-// para o cliente local, como a C.6.15.5. Pela P1.9 saem da 44643 (100 la); na
-// 44642, o nao local recebe o 106 da regra de classe do plugin. Sem campo
-// "api" (fora da Tabela C.2): as listas da C.6.7.8/C.6.7.9 nao mudam.
-test('rotas 2.1 /tv3/remote-device/device/{handle} so para cliente local (12/10): fora da externa, APIs intactas', () => {
-  const t = real();
-  const p = '/tv3/remote-device/device/{handle}';
-  const files = g.generate(t);
-  const plugin = s => files[`krakend-${s}.linux.json`].extra_config['plugin/http-server']['tv30-auth'];
-  for (const m of ['GET', 'DELETE']) {
-    const k = `${m} ${p}`;
-    const r = t.routes.find(x => key(x) === k);
-    assert.ok(r, k);
-    assert.deepEqual([...r.classes].sort(), ['local-associated', 'local-autonomous'], k);
-    assert.equal(r.auth, 'token', k);
-    assert.equal(r.api, undefined, `${k}: sem api (fora da Tabela C.2)`);
-    assert.equal(r.edge, undefined, `${k}: repassada ao tv3ws`);
-    assert.deepEqual(g.surfacesOf(r), ['internal'], k);
-    const pi = plugin('internal').routes.find(x => `${x.method} ${x.path}` === k);
-    assert.deepEqual(pi, { method: m, path: p, auth: 'token', classes: ['local-associated', 'local-autonomous'] }, `${k}: plugin da interna`);
-    assert.ok(!plugin('external').routes.some(x => `${x.method} ${x.path}` === k), `${k}: fora do plugin da externa`);
-    for (const v of Object.keys(t.backends.internal)) {
-      assert.ok(files[`krakend-internal.${v}.json`].endpoints.some(e => `${e.method} ${e.endpoint}` === k), `${k}: endpoint na interna (${v})`);
-    }
-    for (const v of Object.keys(t.backends.external)) {
-      assert.ok(!files[`krakend-external.${v}.json`].endpoints.some(e => `${e.method} ${e.endpoint}` === k), `${k}: endpoint fora da externa (${v})`);
-    }
-    const oi = files['openapi-internal.json'].paths[p][m.toLowerCase()];
-    assert.deepEqual(oi['x-tv30-surfaces'], ['internal'], k);
-    assert.deepEqual(oi['x-tv30-classes'], ['local-associated', 'local-autonomous'], k);
-    assert.match(oi.description, /Classes: local-associated, local-autonomous\. So nesta superficie \(internal; P1\.9\)/, k);
-  }
-  // o caminho inteiro sai da externa (os dois metodos), e fica so com eles na interna
-  assert.ok(!files['openapi-external.json'].paths[p], 'fora do OpenAPI da externa');
-  assert.deepEqual(Object.keys(files['openapi-internal.json'].paths[p]).sort(), ['delete', 'get']);
-  // APIs: as mesmas de antes (as rotas 2.1 nao tem api)
-  assert.equal(plugin('external').apis.length, 17);
-  assert.equal(plugin('internal').apis.length, 20);
-  // o registro e o cancelamento do proprio dispositivo remoto (nao local) ficam nas duas
-  for (const k of ['POST /tv3/remote-device', 'DELETE /tv3/remote-device/{handle}']) {
-    assert.deepEqual(g.surfacesOf(t.routes.find(x => key(x) === k)), ['external', 'internal'], k);
-    assert.ok(plugin('external').routes.some(x => `${x.method} ${x.path}` === k), `${k}: no plugin da externa`);
-  }
-});
-
-test('derivacao em tabela sintetica', () => {
-  const cases = [
-    [undefined, ['external', 'internal']],
-    [['non-local'], ['external', 'internal']],
-    [['local-associated', 'non-local'], ['external', 'internal']],
-    [['local-autonomous', 'non-local'], ['external', 'internal']],
-    [['local-autonomous'], ['internal']],
-    [['local-associated'], ['internal']],
-    [['local-associated', 'local-autonomous'], ['internal']],
-    [[], ['internal']],
-  ];
-  for (const [classes, want] of cases) {
-    const r = { method: 'GET', path: '/x', ...(classes ? { classes } : {}) };
-    assert.deepEqual(g.surfacesOf(r), want, JSON.stringify(classes));
   }
 });
 
@@ -231,13 +130,12 @@ test('superficies e backends tem de casar com SURFACE_RULES', () => {
   assert.ok(g.checkTable(semBackend).some(e => e.startsWith('backends.internal:')));
 });
 
-test('superficie sem nenhuma rota eh erro (o plugin recusaria lista vazia)', () => {
-  const t = mini([{ method: 'POST', path: '/so-associado', auth: 'none', classes: ['local-associated'] }]);
-  const errs = g.checkTable(t);
-  assert.deepEqual(errs.map(e => e.split(':')[0]), ['surfaces.external']);
+test('tabela sem nenhuma rota eh erro (o plugin recusaria lista vazia)', () => {
+  const errs = g.checkTable(mini([]));
+  assert.deepEqual(errs.map(e => e.split(':')[0]).sort(), ['surfaces.external', 'surfaces.internal']);
 });
 
-test('arquivos gerados: 3 variantes x 2 superficies + 2 OpenAPI', () => {
+test('arquivos gerados: 2 variantes x 2 superficies + 2 OpenAPI', () => {
   const t = real();
   const files = g.generate(t);
   const want = [];
@@ -246,7 +144,7 @@ test('arquivos gerados: 3 variantes x 2 superficies + 2 OpenAPI', () => {
     want.push(`openapi-${s}.json`);
   }
   assert.deepEqual(Object.keys(files).sort(), want.sort());
-  assert.equal(want.length, 8);
+  assert.equal(want.length, 6);
 });
 
 test('em cada config KrakenD, endpoints = rotas do plugin = rotas da superficie', () => {
@@ -261,11 +159,6 @@ test('em cada config KrakenD, endpoints = rotas do plugin = rotas da superficie'
     assert.equal(cfg.port, t.surfaces[surface].port, name);
     assert.deepEqual(cfg.endpoints.map(e => `${e.method} ${e.endpoint}`).sort(), esperadas, `${name}: endpoints`);
     assert.deepEqual(keys(plugin.routes), esperadas, `${name}: rotas do plugin`);
-    if (surface === 'external') {
-      assert.ok(!esperadas.includes('POST /tv3/bind-context'), name);
-      assert.ok(!esperadas.includes('DELETE /tv3/bind-context'), name);
-      assert.ok(esperadas.includes('GET /tv3/bind-context'), name);
-    }
   }
 });
 
@@ -300,31 +193,75 @@ test('CORS do plugin: allow_headers, expose_headers e max_age do routes.json che
   })) assert.ok(comCors(cors).length > 0, nome);
 });
 
-test('APIs da C.6.7.8/C.6.7.9 por superficie: a externa nao lista as que nao oferece', () => {
+test('F-2 (Joel, 15/10): as duas superficies listam todas as APIs, na ordem da Tabela C.2', () => {
   const t = real();
   const files = g.generate(t);
-  const apis = s => files[`krakend-${s}.linux.json`].extra_config['plugin/http-server']['tv30-auth'].apis.map(a => a.id);
+  const apis = s => plugin(files, s).apis.map(a => a.id);
   const todas = [...new Set(t.routes.filter(r => r.api).map(r => r.api.id))].sort();
   assert.deepEqual([...apis('internal')].sort(), todas);
-  const ext = apis('external');
-  assert.ok(!ext.includes('tv3ws-bind-context-register'));
-  assert.ok(!ext.includes('tv3ws-bind-context-remove'));
-  assert.ok(!ext.includes('tv3ws-remotedevice-communication'));
-  assert.ok(ext.includes('tv3ws-bind-context-list'));
-  assert.equal(ext.length, todas.length - 3);
-  // a ordem continua a da Tabela C.2 (a mesma relativa da interna)
-  assert.deepEqual(ext, apis('internal').filter(id => ext.includes(id)));
+  assert.deepEqual(apis('external'), apis('internal'));
+  assert.equal(todas.length, 20);
 });
 
-test('OpenAPI por superficie: /tv3/bind-context so com GET na externa', () => {
+test('OpenAPI: as duas superficies com todas as rotas; a externa documenta o 106 da C.4.1.8', () => {
   const files = g.generate(real());
   const ext = files['openapi-external.json'], int = files['openapi-internal.json'];
-  assert.deepEqual(Object.keys(ext.paths['/tv3/bind-context']), ['get']);
+  assert.deepEqual(Object.keys(ext.paths['/tv3/bind-context']).sort(), ['delete', 'get', 'post']);
   assert.deepEqual(Object.keys(int.paths['/tv3/bind-context']).sort(), ['delete', 'get', 'post']);
-  assert.deepEqual(int.paths['/tv3/bind-context'].post['x-tv30-surfaces'], ['internal']);
-  assert.match(int.paths['/tv3/bind-context'].post.description, /So nesta superficie \(internal; P1\.9\)/);
+  assert.equal(ext.paths['/tv3/bind-context'].post['x-tv30-surface-error'], 106);
+  assert.match(ext.paths['/tv3/bind-context'].post.description, /responde 106 a qualquer requisicao/);
+  assert.ok(!('x-tv30-surface-error' in int.paths['/tv3/bind-context'].post));
+  assert.ok(!('x-tv30-surface-error' in ext.paths['/tv3/bind-context'].get));
+  assert.match(int.paths['/tv3/current-service'].get.description, /nao local recebe 106 nesta superficie/);
+  assert.doesNotMatch(int.paths['/tv3/token'].get.description, /nao local recebe 106/);
   assert.deepEqual(ext.paths['/health'].get['x-tv30-surfaces'], ['external', 'internal']);
-  assert.match(ext.info.description, /P1\.9/);
-  assert.equal(ext.servers[0].url, 'http://localhost:44643');
+  assert.match(ext.info.description, /C\.4\.1\.8/);
+  assert.equal(ext.servers[0].url, 'https://localhost:44643'); // A7: TLS na 44643
   assert.equal(int.servers[0].url, 'http://localhost:44642');
+});
+
+test('D1/D4/E2 (Joel, 15/10): versoes por rota; a C.6.15.5 serve 2.0 e 100.0, as rotas por handle so 100.0', () => {
+  const t = real();
+  const files = g.generate(t);
+  const pr = plugin(files, 'internal').routes;
+  const vers = k => pr.find(r => pk(r) === k).versions;
+  assert.deepEqual(vers('GET /tv3/remote-device/devices/{classId}'), ['2.0', '100.0']);
+  assert.deepEqual(vers('GET /tv3/remote-device/device/{handle}'), ['100.0']);
+  assert.deepEqual(vers('DELETE /tv3/remote-device/device/{handle}'), ['100.0']);
+  // as demais, so a 2.0 (sem o campo no routes.json)
+  for (const r of pr.filter(r => !r.path.startsWith('/tv3/remote-device/device'))) {
+    if (pk(r) !== 'GET /tv3/remote-device/devices/{classId}') assert.deepEqual(r.versions, ['2.0'], pk(r));
+  }
+  // E2: a C.6.7.8 informa a mais recente da API
+  const apis = plugin(files, 'external').apis;
+  assert.equal(apis.find(a => a.id === 'tv3ws-remotedevice-communication').version, '100.0');
+  assert.ok(apis.filter(a => a.id !== 'tv3ws-remotedevice-communication').every(a => a.version === '2.0'));
+  // D2: o cabecalho interno vai em input_headers de toda rota, e nao no OpenAPI
+  for (const v of Object.keys(t.backends.internal)) {
+    for (const e of files[`krakend-internal.${v}.json`].endpoints) assert.ok(e.input_headers.includes('X-TV30-API-Version'), `${e.method} ${e.endpoint}`);
+  }
+  assert.ok(!files['openapi-internal.json'].paths['/tv3/current-service'].get.parameters.some(p => p.name === 'X-TV30-API-Version'));
+  assert.deepEqual(files['openapi-internal.json'].paths['/tv3/remote-device/devices/{classId}'].get['x-tv30-versions'], ['2.0', '100.0']);
+});
+
+test('D4: validacao de versions e de api.version (a mais recente da rota)', () => {
+  const r = extra => mini([{ method: 'GET', path: '/a', api: { id: 'tv3ws-a', section: 'C.6.1.2', version: '2.0' }, ...extra }]);
+  assert.deepEqual(g.checkTable(r({})), []);
+  assert.ok(g.checkTable(r({ versions: [] })).some(e => /versions nao eh lista nao vazia/.test(e)));
+  assert.ok(g.checkTable(r({ versions: ['2'] })).some(e => /fora do formato X\.Y/.test(e)));
+  assert.ok(g.checkTable(r({ versions: ['2.0', '2.0'] })).some(e => /repetida/.test(e)));
+  assert.ok(g.checkTable(r({ versions: ['2.0', '100.0'] })).some(e => /diferente da mais recente que a rota serve \(100\.0; E2\)/.test(e)));
+  assert.ok(g.checkTable(mini([{ method: 'GET', path: '/a', headers: ['Accept-Version', 'X-TV30-API-Version'] }])).some(e => /cabecalho interno da borda/.test(e)));
+});
+
+test('A7 (Joel, 15/10): TLS so na superficie segura, com o certificado do tls-init', () => {
+  const files = g.generate(real());
+  for (const [name, cfg] of Object.entries(files)) {
+    if (!name.startsWith('krakend-')) continue;
+    if (name.startsWith('krakend-external.')) {
+      assert.deepEqual(cfg.tls, { public_key: '/etc/tv30/tls/cert.pem', private_key: '/etc/tv30/tls/key.pem', min_version: 'TLS12' }, name);
+    } else {
+      assert.equal(cfg.tls, undefined, name);
+    }
+  }
 });

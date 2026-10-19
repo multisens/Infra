@@ -64,6 +64,13 @@ func (h *authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// sai tambem o Access-Control-Expose-Headers que o modulo mandava
 	// (cors.expose_headers); o de uma resposta do backend, como o do
 	// /manifest (B3), vem somado, numa segunda linha.
+	// versoes da rota (D2/D4): delas sai o API-Version das respostas que a
+	// borda escreve, inclusive as de erro e o OPTIONS (apiVersion)
+	vi := versionInfo{served: h.cfg.AllVersions, latest: h.cfg.LatestVersion}
+	if rt, _ := h.cfg.Routes.match(r.Method, r.URL.Path); rt != nil {
+		vi.served = rt.Versions
+	}
+	r = withVersionInfo(r, vi)
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if h.cfg.CORSExposeHeaders != "" {
 		w.Header().Set("Access-Control-Expose-Headers", h.cfg.CORSExposeHeaders)
@@ -97,7 +104,7 @@ func (h *authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		// caminho com %q: r.URL.Path ja vem decodificado, e um %0A nele
 		// forjaria linhas [tv30-auth] no log.
-		if h.cfg.Mode == modeEnforce || v.Code == 100 {
+		if h.cfg.Mode == modeEnforce || !followsMode(v.Code) {
 			logf("DENY surface=%s code=%d %s %q class=%s detalhe=%q", h.cfg.Surface, v.Code, r.Method, r.URL.Path, class, v.Detail)
 			writeError(w, r, v.Code, v.Detail)
 			return
@@ -105,10 +112,23 @@ func (h *authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		logf("WARN surface=%s code=%d %s %q class=%s detalhe=%q", h.cfg.Surface, v.Code, r.Method, r.URL.Path, class, v.Detail)
 		w.Header().Set(warnHeader, strconv.Itoa(v.Code))
 	}
+	// -- versao (C.3.6.5; D2, Joel 15/10) --
+	// Em toda rota declarada, depois da decisao de credencial (a mesma ordem
+	// de antes: a credencial na borda, a versao no servico). O 100 e o 101
+	// saem nos dois modos. A versao decidida vai ao servico no cabecalho
+	// interno, que apaga o que vier do cliente.
+	version, vcode, vdetail := negotiateVersion(r, vi.served)
+	if vcode != 0 {
+		logf("DENY surface=%s code=%d %s %q detalhe=%q", h.cfg.Surface, vcode, r.Method, r.URL.Path, vdetail)
+		writeError(w, r, vcode, vdetail)
+		return
+	}
+	r.Header.Set(internalVersionHeader, version)
+	r.Header.Set(internalHostHeader, r.Host)
 	// API respondida pela propria borda (C.6.8, C.6.7.8/C.6.7.9): nao vai ao
 	// roteador do KrakenD.
 	if v.rt != nil && v.rt.Edge != "" {
-		h.serveEdge(w, r, v)
+		h.serveEdge(w, r, v, version)
 		return
 	}
 	h.serveNext(w, r)
@@ -259,20 +279,41 @@ func (g *guardWriter) replace(r *http.Request, detail string) {
 	writeC32(g.ResponseWriter, r, 200, detail)
 }
 
+// followsMode diz se a recusa obedece ao modo (em warn so avisa). Regra do
+// Joel em 15/10 ("Suas decisoes", modo warn): so as recusas de CREDENCIAL —
+// 104 (bind-token ausente), 107 (access token) e 108 (bind-token invalido) —
+// seguem o modo. As demais disparam nos dois: 100 (rota), 106 (tipo de
+// cliente), 300 (estado do receptor) e o 200 do Redis fora do ar, que nao
+// e recusa de credencial. Ate 15/10 so o 100 disparava em warn.
+func followsMode(code int) bool {
+	return code == 104 || code == 107 || code == 108
+}
+
 func keptOnReplace(k string) bool {
 	k = http.CanonicalHeaderKey(k)
 	return strings.HasPrefix(k, "Access-Control-") || k == "Vary" ||
 		strings.HasPrefix(k, "X-Krakend") || k == http.CanonicalHeaderKey(warnHeader)
 }
 
-// evaluate decide, na ordem da especificacao: rota (100) -> classe (106) ->
-// access token (107) -> bind-token (104/108). Falha no Redis => 200.
+// evaluate decide, nesta ordem: rota (100) -> superficie (106, F-1) ->
+// classe (106; A8) -> nao local por HTTP (106, E7) -> access token (107) ->
+// servico selecionado (300, H2) -> bind-token (104/108). Falha no Redis =>
+// 200.
 func (h *authHandler) evaluate(r *http.Request) verdict {
 	rt, params := h.cfg.Routes.match(r.Method, r.URL.Path)
 	if rt == nil {
 		return verdict{Code: 100, Detail: r.Method + " " + r.URL.Path}
 	}
 	v := verdict{Route: rt.String(), rt: rt, params: params}
+	// -- superficie (F-1, Joel 15/10; C.4.1.8) --
+	// Na externa (Server-SecureBaseURL), as APIs de uso exclusivo do cliente
+	// local e a C.6.1.2 ("can only be accessed via the HTTP protocol")
+	// respondem 106 a qualquer requisicao, sem consultar a classe. Vale ja,
+	// sem esperar o TLS da 44643, e nos dois modos. Ate 15/10 essas rotas nem
+	// existiam na externa (100), e a C.6.1.2 era atendida la.
+	if rt.SurfaceError != 0 {
+		return v.fail(rt.SurfaceError, "API exclusiva da superficie HTTP (Server-BaseURL); nesta superficie, 106 a qualquer cliente (C.4.1.8)")
+	}
 	if rt.Auth == authNone && rt.Classes == nil {
 		return v
 	}
@@ -298,28 +339,31 @@ func (h *authHandler) evaluate(r *http.Request) verdict {
 	// so para a checagem de classe (106): senao bastaria mandar qualquer
 	// Authorization para escapar do 106 da L4 (o tv3ws classifica pelo
 	// Origin). Isso nao dispensa credencial — o 107 continua valendo.
-	originAssoc := false
-	if origin := r.Header.Get("Origin"); origin != "" && claims == nil && (authz == "" || rt.Classes != nil) {
-		assoc, err := h.store.IsAssociatedOrigin(origin)
+	// A8 (Joel, 15/10): numa rota que nao admite o associado (C.6.1.2,
+	// C.6.1.3, C.6.8.3), o Origin associado da 106 tambem com access token
+	// VALIDO de outra classe (ate 15/10 o token prevalecia sobre o Origin).
+	// A chamada sem Origin segue fora do alcance da borda: limite aceito em
+	// Escopo e desenho 6.2 (A8). O tv3ws, como emissor, tambem recusa (106).
+	excludesAssoc := rt.Classes != nil && !rt.allows(classAssociated)
+	originAssoc, originSvc := false, ""
+	if origin := r.Header.Get("Origin"); origin != "" && ((claims == nil && (authz == "" || rt.Classes != nil)) || excludesAssoc) {
+		svc, assoc, err := h.store.AssociatedOrigin(origin)
 		if err != nil {
 			return v.fail(200, "redis indisponivel ("+err.Error()+")")
 		}
-		originAssoc = assoc
+		originAssoc, originSvc = assoc, svc
 	}
 	if authz == "" && originAssoc {
 		v.Class = classAssociated
 	}
 
 	// -- classe permitida na rota (106) --
-	// PENDENTE (Joel): lacuna L4 — em /authorize e /token o 106 ao
-	// associado so bloqueia em enforce; o tv3ws continua emitindo token ao
-	// associado. Limites deste provisorio: o 106 depende do Origin (um
-	// /tv3/token chamado fora do navegador, sem Origin, passa e o tv3ws
-	// emite o token com a classe gravada do cliente), e um access token
-	// VALIDO de outra classe prevalece sobre o Origin.
-	// PENDENTE (Joel): lacuna L3 — sem TLS na borda (44643 em HTTP), o 106
-	// por protocolo (nao local fora de HTTPS, C.4.1.6) nao eh aplicado aqui
-	// (o tv3ws o aplicava ate a reuniao de 05/10; com a D-0510-1 deixa de).
+	// Dispara nos dois modos desde 15/10 (followsMode): o 106 e do tipo de
+	// cliente, nao da credencial. Em /authorize e /token isso fecha a lacuna
+	// L4 do lado da borda (A8).
+	if originAssoc && excludesAssoc {
+		return v.fail(106, "rota nao disponivel para "+classAssociated+" (Origin em origins:associated)")
+	}
 	classForRoute := v.Class
 	if classForRoute == "" && originAssoc {
 		classForRoute = classAssociated
@@ -331,15 +375,36 @@ func (h *authHandler) evaluate(r *http.Request) verdict {
 		}
 		return v.fail(106, "rota nao disponivel para "+who)
 	}
+	// -- nao local por HTTP (106, C.4.1.6; E7, Joel 15/10) --
+	// Na superficie HTTP (a interna, Server-BaseURL), o access token de classe
+	// non-local so vale na C.6.1.2 e na C.6.1.3 ("the APIs that are not
+	// authorization-related"); nas demais, 106. Ate 05/10 quem aplicava era o
+	// tv3ws; saiu dele com a D-0510-1 e ficou sem ninguem ate aqui.
+	if h.cfg.NonLocalHTTPSOnly && v.Class == classNonLocal && !rt.NonLocalHTTP {
+		return v.fail(106, "cliente nao local por HTTP fora da C.6.1.2/C.6.1.3: use o Server-SecureBaseURL (C.4.1.6)")
+	}
 
-	// -- associado reconhecido pelo Origin: usa as APIs sem access token e
-	// sem bind-token (C.4.1.1, D8) --
-	// PENDENTE (Joel; H1 de docs/decisoes-pendentes.md): a norma dispensa o
-	// bind-token "referencing their own service context"; o acesso do
-	// associado a contexto de OUTRA emissora (rotas /tv3/{serviceContextId}/...)
-	// nao eh restringido aqui.
+	// -- associado reconhecido pelo Origin: usa as APIs sem access token e,
+	// no proprio contexto de servico, sem bind-token (C.4.1.1, D8) --
 	if v.Class == classAssociated && claims == nil {
-		return v
+		if v = h.requireService(v); v.Code != 0 || rt.Auth != authTokenBind {
+			return v
+		}
+		// H1 (Joel, 15/10): leitura literal da C.4.1.1 ("referencing their
+		// own service context"). Nas rotas com bind-token, o contexto do
+		// caminho (current-service = o servico corrente) e comparado com o
+		// servico que lancou a app (origins:associated). Igual: sem
+		// bind-token, como antes. Diferente: a regra geral — 104 sem
+		// bind-token, 108 invalido ou revogado, e atende com bind-token
+		// valido daquele contexto. 104 e 108 seguem o modo.
+		ctx, err := h.pathContext(params)
+		if err != nil {
+			return v.fail(200, "redis indisponivel ("+err.Error()+")")
+		}
+		if ctx != "" && ctx == originSvc {
+			return v
+		}
+		return h.checkBindToken(v, r, ctx, now, "app associada fora do proprio contexto de servico (H1)")
 	}
 	if rt.Auth == authNone {
 		return v
@@ -379,48 +444,82 @@ func (h *authHandler) evaluate(r *http.Request) verdict {
 	}
 	// token com class local-associated: dispensa o bind-token (D8)
 	if v.Class == classAssociated || rt.Auth == authToken {
+		return h.requireService(v)
+	}
+
+	// -- servico DTV selecionado (300, H2) --
+	// Antes do bind-token: sem servico nao ha chave registrada, e toda
+	// verificacao cairia em 108 (Joel, 15/10).
+	if v = h.requireService(v); v.Code != 0 {
 		return v
 	}
 
 	// -- bind-token (104/108) --
+	ctx, err := h.pathContext(params)
+	if err != nil {
+		return v.fail(200, "redis indisponivel ("+err.Error()+")")
+	}
+	return h.checkBindToken(v, r, ctx, now, "")
+}
+
+// pathContext: o contexto de servico da rota (A6, Joel 15/10). O
+// {serviceContextId} do caminho e o globalServiceId do BAM (Tabela 6; C.3.5);
+// current-service, ou rota sem o parametro, e o servico corrente. Qualquer
+// servico explicito e aceito (as Tabelas C.71 e C.74 dao 304 a servico fora
+// do Application Catalog, o que pressupoe aceitar os demais; o 304 espera o
+// catalogo no testbed). Ate 15/10 o scid era uma constante igual para todo
+// servico, e outro valor dava 108. "" = nenhum servico selecionado.
+func (h *authHandler) pathContext(params map[string]string) (string, error) {
+	if scid, ok := params["serviceContextId"]; ok && scid != "current-service" {
+		return scid, nil
+	}
+	return h.store.CurrentServiceID()
+}
+
+// checkBindToken confere o bind-token contra as chaves registradas para o
+// contexto ctx (bind-context:{ctx}; D4: so as daquele servico).
+func (h *authHandler) checkBindToken(v verdict, r *http.Request, ctx string, now time.Time, why string) verdict {
+	if why != "" {
+		why = " (" + why + ")"
+	}
 	bt := r.Header.Get("bind-token")
 	if bt == "" {
-		return v.fail(104, "bind-token ausente")
+		return v.fail(104, "bind-token ausente"+why)
 	}
-	if scid, ok := params["serviceContextId"]; ok && !h.isCurrentSCID(scid) {
-		return v.fail(108, "service-context-id '"+scid+"' nao corresponde ao servico corrente (provisorio, lacuna L2)")
+	if ctx == "" {
+		// H2 (Joel, 15/10): nas APIs cuja tabela nao lista o 300 (a C.6.16.3,
+		// "This API only applies to the DTV service currently selected"), sem
+		// servico selecionado nao ha chave que valide o token => 108.
+		return v.fail(108, "sem servico corrente: nenhuma chave registrada"+why)
+	}
+	raw, err := h.store.BindKeys(ctx)
+	if err != nil {
+		return v.fail(200, "redis indisponivel ("+err.Error()+")")
+	}
+	if err := verifyBindToken(bt, h.keys.decodeStoredKeys(ctx, raw), now); err != nil {
+		return v.fail(108, err.Error()+why)
+	}
+	return v
+}
+
+// requireService: H2 (Joel, 15/10). Nas rotas com NoService (as APIs cuja
+// tabela lista "300: If the DTV function is not in use in the receiver": a
+// C.6.4.7 e da C.6.14.1 a C.6.14.6), sem servico DTV selecionado responde
+// esse codigo — no testbed, o espectador esta no catalogo ou no seletor de
+// perfil. Vale para todo cliente que chega ate aqui (o associado tambem) e
+// dispara nos dois modos (followsMode). Nas demais rotas nao faz nada.
+func (h *authHandler) requireService(v verdict) verdict {
+	if v.rt == nil || v.rt.NoService == 0 {
+		return v
 	}
 	sid, err := h.store.CurrentServiceID()
 	if err != nil {
 		return v.fail(200, "redis indisponivel ("+err.Error()+")")
 	}
 	if sid == "" {
-		// PENDENTE (Joel; H2 de docs/decisoes-pendentes.md): sem servico
-		// corrente nao ha chave registrada que valide o token => 108 (a norma
-		// tambem preve 300 nessas APIs).
-		return v.fail(108, "sem servico corrente: nenhuma chave registrada")
-	}
-	raw, err := h.store.BindKeys(sid)
-	if err != nil {
-		return v.fail(200, "redis indisponivel ("+err.Error()+")")
-	}
-	// D4: so valem as chaves registradas para o SERVICO CORRENTE.
-	if err := verifyBindToken(bt, h.keys.decodeStoredKeys(sid, raw), now); err != nil {
-		return v.fail(108, err.Error())
+		return v.fail(v.rt.NoService, "nenhum servico DTV selecionado")
 	}
 	return v
-}
-
-func (h *authHandler) isCurrentSCID(scid string) bool {
-	if scid == "current-service" {
-		return true
-	}
-	for _, s := range h.cfg.CurrentSCIDs {
-		if scid == s {
-			return true
-		}
-	}
-	return false
 }
 
 // writeError responde a requisicao BLOQUEADA pela decisao do plugin: sem o
@@ -474,21 +573,23 @@ func writeOptions(w http.ResponseWriter, r *http.Request, allowHeaders, maxAge s
 
 // apiVersion: o API-Version das respostas que a propria borda escreve fora do
 // sucesso de uma API dela (erros C.3.2 e o OPTIONS que nao e preflight), pela
-// negociacao de negotiateVersion (edge.go), a mesma do tv3ws:
-//   - versao pedida e suportada: ela (2.0 sem Accept-Version, C.3.6.5);
-//   - versao pedida fora do conjunto (o erro 100 da negociacao): a mais
-//     recente suportada. C.3.6.6: quando o servidor nao consegue responder de
+// negociacao de negotiateVersion (edge.go) com as versoes da rota (D4; caminho
+// nao declarado: as de todas as rotas):
+//   - versao pedida e servida: ela (2.0 sem Accept-Version, C.3.6.5);
+//   - versao pedida que a rota nao serve (o erro 100 da negociacao): a mais
+//     recente do servidor. C.3.6.6: quando o servidor nao consegue responder de
 //     forma compativel com a versao pedida, "the 'API-Version' header is
 //     assigned to the latest version supported by the server";
 //   - Accept-Version malformado (o erro 101): segue a 2.0, como antes. A
 //     excecao da C.3.6.6 fala de versao pedida, e um cabecalho fora do
 //     formato X.Y nao pede versao nenhuma.
 func apiVersion(r *http.Request) string {
-	switch v, code, _ := negotiateVersion(r); code {
+	vi := versionInfoOf(r)
+	switch v, code, _ := negotiateVersion(r, vi.served); code {
 	case 0:
 		return v
 	case 100:
-		return latestVersion
+		return vi.latest
 	}
 	return defaultVersion
 }

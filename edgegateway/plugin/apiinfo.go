@@ -22,10 +22,12 @@ import (
 // "Security requirements" e "Restrictions" = "—": todas as classes, sem
 // bind-token (p. 300-301 do PDF da norma).
 //
-// PENDENTE (Joel): a versao de cada API eh a "Current version" da Tabela C.2
-// (2.0 em todas, C.3.6.3). O tv3ws tambem aceita Accept-Version 2.1 (proposta
-// do Forum, que muda GET /tv3/remote-device/devices/{classId}); se essa API
-// deve aparecer aqui como 2.1 nao foi decidido (routes.json, campo api.version).
+// E2 (Joel, 15/10): cada API informa uma versao so, a "latest supported
+// version" (formato com um unico "version"): a mais recente que as rotas dela
+// servem (routes.json, versions e api.version; o generate.js confere). Hoje,
+// 100.0 para a tv3ws-remotedevice-communication (C.6.15.5, D1) e 2.0 para as
+// demais. O cliente descobre se a 2.0 continua servida pedindo-a (C.3.6.4):
+// e atendido ou recebe 100.
 
 // Subsistemas da Tabela C.46. O testbed so implementa APIs tv3ws; ncl e
 // nclua sao conhecidos (lista vazia, nao 101).

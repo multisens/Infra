@@ -8,18 +8,21 @@
  *
  *   node generate.js build     — gera generated/krakend-{external,internal}.
  *                                <variante>.json (uma por backend de
- *                                routes.json: linux, windows, host) + os dois
+ *                                routes.json: linux, windows) + os dois
  *                                OpenAPI
  *
  * Testes: node --test generate.test.js (tambem rodam no build da imagem).
  *
- * Superficie de cada rota (P1.9, decisao do Luis em 10/10): DERIVADA do campo
- * "classes", e nao mais declarada por rota (o campo "surfaces" das rotas saiu;
- * o build recusa quem o usar). A externa (44643) so expoe as rotas que
- * admitem o cliente nao local; a interna (44642) expoe todas. Rota sem
- * "classes" (todas as classes, inclusive /health e /manifest) fica nas duas.
- * Numa superficie em que nao existe, a rota responde 100, como qualquer
- * caminho nao declarado (o plugin nem a conhece la). Ver SURFACE_RULES.
+ * Superficies (F-1, F-2 e E7, respostas do Joel em 15/10, que reveem a P1.9
+ * do Luis de 10/10): as DUAS superficies tem TODAS as rotas da tabela. O que
+ * muda de uma para a outra e o 106, derivado do campo "classes" e da secao
+ * da API (o campo "surfaces" das rotas saiu; o build recusa quem o usar):
+ *   - externa (44643, Server-SecureBaseURL): as APIs de uso exclusivo do
+ *     cliente local ("classes" sem non-local) e a C.6.1.2 respondem 106 a
+ *     qualquer requisicao (C.4.1.8);
+ *   - interna (44642, Server-BaseURL, HTTP): o nao local so usa a C.6.1.2 e a
+ *     C.6.1.3; nas demais, o access token non-local recebe 106 (C.4.1.6).
+ * Ate 15/10, a rota fora da externa respondia 100 la. Ver SURFACE_RULES.
  *
  * (Os modos extract e verify, que liam os configs KrakenD anteriores à tabela
  * única em gateway-{external,internal}/, saíram em 10/10: esses arquivos não
@@ -39,6 +42,14 @@
  * Luis em 12/10): um tv3ws travado ou fora do ar recebe da borda o erro 200
  * em 2 s, em vez de prender o cliente. So o /tv3/authorize espera mais (15s:
  * o pop-up de autorizacao espera ate 10 s pela resposta do espectador).
+ *
+ * Campo opcional "versions" (D1 e D4, Joel 15/10): as versoes de API que a
+ * rota serve, "X.Y" (C.3.6.2); ausente => so a 2.0, a "current version" da
+ * C.3.6.3. E o registro de versoes do testbed: dele saem o que a borda aceita
+ * em cada rota (100 fora dele), o API-Version e a versao da C.6.7.8/C.6.7.9.
+ * As versoes maiores de 100 em diante sao as das propostas do testbed (hoje
+ * a 100.0, o fluxo de remote-device por handle). A borda repassa a versao
+ * decidida ao servico no cabecalho interno X-TV30-API-Version (D2).
  *
  * Campo opcional "api" = {id, section, version}: a linha da Tabela C.2 da
  * norma que a rota implementa (rotas do testbed fora da norma nao tem). A
@@ -67,6 +78,11 @@ const readJson = f => JSON.parse(fs.readFileSync(f, 'utf8'));
 // Plugin de validacao de credenciais na borda (item 9): compilado no
 // Dockerfile e copiado para PLUGIN_FOLDER; as DUAS superficies o carregam.
 const PLUGIN_NAME = 'tv30-auth';
+// A7 (Joel, 15/10): TLS da superficie segura (44643, Server-SecureBaseURL)
+// terminado na borda, com o certificado do receptor que o servico tls-init
+// gera na primeira subida (.tv30/tls da raiz, montado aqui). Terminar na borda
+// decorre da D-0510-1: ela precisa ler os cabecalhos.
+const TLS_DIR = '/etc/tv30/tls';
 const PLUGIN_FOLDER = '/opt/krakend/plugins/';
 const AUTH_VALUES = ['none', 'token', 'token+bind'];
 const CLASS_VALUES = ['local-associated', 'local-autonomous', 'non-local'];
@@ -78,67 +94,85 @@ const API_ID = /^[a-z0-9]+(-[a-z0-9]+)+$/;
 const API_SUBSYSTEMS = ['ncl', 'nclua', 'tv3ws'];
 const API_SECTION = /^C(\.[0-9]+)+$/;
 const API_VERSION = /^[1-9][0-9]*\.[0-9]+$/;
+// D2: cabecalho interno com a versao decidida pela borda (o plugin o escreve,
+// apagando o do cliente; o KrakenD so repassa o que esta em input_headers)
+const INTERNAL_VERSION_HEADER = 'X-TV30-API-Version';
+// complemento do Joel (15/10), 3.4: o Host original do cliente, para o
+// /manifest sair no mesmo host do anuncio (o plugin o escreve)
+const INTERNAL_HOST_HEADER = 'X-TV30-Host';
+const INTERNAL_HEADERS = [INTERNAL_VERSION_HEADER, INTERNAL_HOST_HEADER];
+const DEFAULT_VERSIONS = ['2.0'];
+const compareVersions = (a, b) => {
+  const [am, an] = a.split('.').map(Number), [bm, bn] = b.split('.').map(Number);
+  return am - bm || an - bn;
+};
+const versionsOf = r => [...(r.versions || DEFAULT_VERSIONS)].sort(compareVersions);
 
 const authOf = r => r.auth || 'token';
 const classesOf = r => r.classes || CLASS_VALUES;
 
-// P1.9 (decisao do Luis em 10/10): superficies com rotas distintas. Cada
-// superficie expoe as rotas cuja lista "classes" (ausente => todas) inclui a
-// classe em "requires"; requires null => todas as rotas. As chaves daqui sao
-// as de routes.json (surfaces e backends): o build falha se divergirem.
-// Duas superficies com conjuntos de rota distintos sao decisao de
-// implementacao do projeto: a norma (C.3.4, p. 216 do PDF) so define o
-// Server-BaseURL (http, porta fixa 44642, que o cliente local usa direto) e o
-// Server-SecureBaseURL (https, porta livre).
-// PENDENTE (Joel): ligado a lacuna L3 (44643 ainda em HTTP). A C.4.1.8 (p.
-// 206-207; p. 224-225 do PDF) manda responder 106, e nao 100, ao nao local
-// que chama por HTTPS uma API de uso exclusivo do cliente local; com esta
-// regra, POST e DELETE /tv3/bind-context (so local-associated) dao 100 na
-// 44643. Enquanto a 44643 nao tiver TLS, a C.4.1.8 nao se aplica a ela ao pe
-// da letra; com TLS, falta decidir se essas rotas dao 106 ali. A mesma secao
-// diz que a C.6.1.2 (/tv3/authorize) so se acessa por HTTP; esta regra a
-// mantem na 44643, porque ela admite o nao local.
-// C.6.15.5 so para o cliente local (decisao do Luis em 12/10): GET
-// /tv3/remote-device/devices/{classId} ganhou "classes" local-associated e
-// local-autonomous no routes.json. Por esta regra, ela sai da 44643 (la da
-// 100, como as duas da C.6.8 acima), e na 44642 o nao local recebe o 106 da
-// regra de classe do plugin.
-// Rotas 2.1 do remote-device so para o cliente local (decisao do Luis em
-// 12/10, a tarde): GET e DELETE /tv3/remote-device/device/{handle} (C.6.15.6
-// e C.6.15.7 da proposta 2.1 do Luis ao Forum, fora da Tabela C.2; no tv3ws,
-// src/api/multi-device/index.ts: "This API allows a local client application
-// to establish communication with a remote device") ganharam as mesmas
-// "classes" da C.6.15.5. Pela mesma regra, saem da 44643 (100 la) e, na
-// 44642, o nao local recebe o 106 da regra de classe. Nao tem campo "api":
-// a lista da C.6.7.8/C.6.7.9 nao muda.
-// PENDENTE (Joel), na F-1 (este mesmo ponto; docs/decisoes-pendentes.md da
-// raiz, secao F, P1.9): o codigo exato que o nao local recebe nessa API. A
-// Tabela C.78 (p. 339; p. 357 do PDF) lista 107 ("If invoked from a
-// non-local client"); a C.4.1.8 fala em 106 para o nao local que chama uma
-// API de uso exclusivo do cliente local. Ate a decisao, ficam o 106 da borda
-// na 44642 e o 100 na 44643 — tambem nas duas rotas 2.1 acima, que seguem a
-// C.6.15.5. Para elas o codigo exato tambem nao foi decidido (o texto da
-// proposta 2.1 nao esta neste repositorio; falta confirmar se entra na F-1).
+// C.4.1.8 (ultima frase): "the application authorization API (API C.6.1.2),
+// which, although intended for stand-alone local clients and non-local
+// clients, can only be accessed via the HTTP protocol".
+const HTTP_ONLY_SECTIONS = ['C.6.1.2'];
+// C.4.1.6: o nao local por HTTP so usa as APIs "authorization-related
+// (C.6.1.2 and C.6.1.3)"; nas demais, 106.
+const NONLOCAL_HTTP_SECTIONS = ['C.6.1.2', 'C.6.1.3'];
+// H2 (Joel, 15/10): codigo da rota token+bind sem servico DTV selecionado,
+// quando a tabela da API lista o 300 (C.6.4.7, C.6.14.1 a C.6.14.6). Rota sem
+// o campo segue o bind-token e da 108 (C.6.16.3, cuja tabela nao lista o 300).
+const NO_SERVICE_VALUES = [300];
+
+// Superficies (F-1, F-2 e E7, Joel 15/10; revisam a P1.9 do Luis, 10/10):
+// as duas tem todas as rotas. secure = a superficie do Server-SecureBaseURL
+// (C.3.4). As chaves daqui sao as de routes.json (surfaces e backends): o
+// build falha se divergirem. Duas superficies sao decisao de implementacao
+// do projeto: a norma (C.3.4) so define o Server-BaseURL (http, porta fixa
+// 44642, que o cliente local usa direto) e o Server-SecureBaseURL (https,
+// porta livre). A 44643 tem TLS desde 19/10 (A7; bloco "tls" gerado abaixo,
+// com o certificado do tls-init); as duas regras de 106 vieram antes dele
+// (F-1 e E7: "Vale agora, sem esperar o TLS").
+//   - F-1, pergunta 1: na externa, as APIs exclusivas do cliente local (POST
+//     e DELETE /tv3/bind-context, a C.6.15.5 e as rotas por handle da 100.0)
+//     e a C.6.1.2 respondem 106 a qualquer requisicao (C.4.1.8). Ate 15/10
+//     elas davam 100 la, e a C.6.1.2 era atendida.
+//   - F-1, pergunta 2: na C.6.15.5, o nao local recebe 106 (correcao proposta
+//     na Issue 47 do Forum); o 107 fica para accessToken omitido, invalido ou
+//     expirado (C.4.2.2). E o 106 da regra de classe do plugin, ja aplicado.
+//   - E7: na interna, o nao local identificado pelo access token so usa a
+//     C.6.1.2 e a C.6.1.3; nas demais, 106 (C.4.1.6).
+//   - F-2 revista: as duas listam TODAS as APIs implementadas na C.6.7.9, e a
+//     C.6.7.8 responde por todas ("all APIs of a given category", Tabela
+//     C.48): a restricao aparece pelo 106 no uso.
 const SURFACE_RULES = {
   external: {
-    requires: 'non-local',
-    doc: 'Expoe so as rotas que admitem o cliente nao local (non-local); as demais existem so na superficie interna e respondem 100 aqui (P1.9).',
+    secure: true,
+    doc: 'Server-SecureBaseURL (C.3.4). Todas as rotas da tabela; as de uso exclusivo do cliente local e a C.6.1.2 respondem 106 a qualquer requisicao (C.4.1.8; F-1, Joel 15/10).',
   },
   internal: {
-    requires: null,
-    doc: 'Expoe todas as rotas da tabela (P1.9).',
+    secure: false,
+    doc: 'Server-BaseURL (C.3.4), HTTP. Todas as rotas da tabela; o cliente nao local so usa a C.6.1.2 e a C.6.1.3 e recebe 106 nas demais (C.4.1.6; E7, Joel 15/10).',
   },
 };
 
-// superficies em que a rota existe, na ordem de SURFACE_RULES
-function surfacesOf(r) {
-  return Object.keys(SURFACE_RULES).filter(s => {
-    const need = SURFACE_RULES[s].requires;
-    return need === null || classesOf(r).includes(need);
-  });
+// superficies em que a rota existe: todas, desde 15/10 (F-1)
+function surfacesOf() {
+  return Object.keys(SURFACE_RULES);
 }
 
-const routesOf = (t, surface) => t.routes.filter(r => surfacesOf(r).includes(surface));
+const routesOf = t => t.routes;
+
+// surfaceErrorOf: o codigo que a rota responde a QUALQUER requisicao nesta
+// superficie (0 = nenhum). So a externa tem: 106 da C.4.1.8.
+function surfaceErrorOf(r, surface) {
+  if (!SURFACE_RULES[surface].secure) return 0;
+  const exclusivaDoLocal = !classesOf(r).includes('non-local');
+  const soHTTP = !!r.api && HTTP_ONLY_SECTIONS.includes(r.api.section);
+  return exclusivaDoLocal || soHTTP ? 106 : 0;
+}
+
+// rota que o nao local usa por HTTP (C.4.1.6)
+const nonLocalHTTP = r => !!r.api && NONLOCAL_HTTP_SECTIONS.includes(r.api.section);
 
 // ordem da Tabela C.2 = ordem das secoes (C.6.1.2 < C.6.1.3 < ... < C.6.16.3)
 function compareSections(a, b) {
@@ -191,6 +225,7 @@ function checkTable(t) {
     if (cors.expose_headers !== undefined && !lista(cors.expose_headers)) errs.push('cors.expose_headers: lista de nomes de cabecalho');
     if (cors.max_age !== undefined && !/^[1-9][0-9]*(s|m|h)$/.test(cors.max_age)) errs.push(`cors.max_age "${cors.max_age}" invalido (ex.: 12h, 600s)`);
   }
+  if (t.auth !== undefined) errs.push('auth: o bloco saiu em 15/10 (A6): o serviceContextId e o globalServiceId do servico, sem constante');
   for (const r of t.routes) {
     const id = `${r.method} ${r.path}`;
     if (seen.has(id)) errs.push(`${id}: rota duplicada`);
@@ -203,12 +238,25 @@ function checkTable(t) {
     }
     if (!(r.headers || []).includes('Accept-Version')) errs.push(`${id}: toda rota repassa Accept-Version`);
     if (r.timeout !== undefined && !/^[1-9][0-9]*(ms|s)$/.test(r.timeout)) errs.push(`${id}: timeout "${r.timeout}" invalido (ex.: 15s, 500ms)`);
+    if (r.versions !== undefined) {
+      if (!Array.isArray(r.versions) || !r.versions.length) errs.push(`${id}: versions nao eh lista nao vazia (D4)`);
+      else {
+        for (const v of r.versions) if (typeof v !== 'string' || !API_VERSION.test(v)) errs.push(`${id}: versions com "${v}" fora do formato X.Y (C.3.6.2)`);
+        if (new Set(r.versions).size !== r.versions.length) errs.push(`${id}: versions com versao repetida`);
+      }
+    }
+    for (const ih of INTERNAL_HEADERS) {
+      if (r.headers && r.headers.some(h => h.toLowerCase() === ih.toLowerCase())) {
+        errs.push(`${id}: ${ih} e cabecalho interno da borda; nao vai em headers`);
+      }
+    }
+    if (r.no_service !== undefined) {
+      if (!NO_SERVICE_VALUES.includes(r.no_service)) errs.push(`${id}: no_service ${JSON.stringify(r.no_service)} invalido (${NO_SERVICE_VALUES.join(', ')}; H2)`);
+      if (authOf(r) !== 'token+bind') errs.push(`${id}: no_service so vale em rota token+bind (H2)`);
+    }
     if (r.edge !== undefined) {
       if (!EDGE_HANDLERS.includes(r.edge)) errs.push(`${id}: edge "${r.edge}" invalido (${EDGE_HANDLERS.join(', ')})`);
       if (r.timeout !== undefined) errs.push(`${id}: timeout nao se aplica a rota respondida pela borda (edge)`);
-      if (String(r.edge).startsWith('bind-context-') && !(t.auth && t.auth.current_service_context_id)) {
-        errs.push(`${id}: edge ${r.edge} exige auth.current_service_context_id (devolvido pela C.6.8)`);
-      }
     }
     if (r.api !== undefined) {
       const a = r.api;
@@ -220,6 +268,12 @@ function checkTable(t) {
       }
       if (!API_SECTION.test(a.section || '')) errs.push(`${id}: api.section "${a.section}" invalida (ex.: C.6.3.1)`);
       if (!API_VERSION.test(a.version || '')) errs.push(`${id}: api.version "${a.version}" invalida (X.Y, C.3.6.2)`);
+      // E2 (Joel, 15/10): a C.6.7.8 informa uma versao so, a "latest
+      // supported version" (Tabela C.47): a mais recente das que a rota serve
+      else if (Array.isArray(versionsOf(r)) && versionsOf(r).every(v => API_VERSION.test(v))) {
+        const ultima = versionsOf(r).slice(-1)[0];
+        if (a.version !== ultima) errs.push(`${id}: api.version ${a.version} diferente da mais recente que a rota serve (${ultima}; E2)`);
+      }
       const prev = apiSeen.get(a.id);
       if (prev && (prev.section !== a.section || prev.version !== a.version)) {
         errs.push(`${id}: api.id ${a.id} com secao/versao diferente de ${prev.route} (${prev.section} ${prev.version})`);
@@ -248,6 +302,7 @@ function validate(t) {
 function headersOf(r) {
   const h = [...(r.headers || [])];
   if (authOf(r) === 'token+bind' && !h.includes('bind-token')) h.push('bind-token');
+  h.push(...INTERNAL_HEADERS);
   return h;
 }
 
@@ -273,42 +328,39 @@ function endpointFor(r, surface, host) {
 }
 
 // Bloco do plugin tv30-auth: a politica da superficie (metodo+caminho com
-// padroes {param}, auth, classes). Caminho nao listado aqui => erro 100 no
-// plugin, sem chegar ao roteador — inclusive a rota que so existe na outra
-// superficie (P1.9).
+// padroes {param}, auth, classes e os campos derivados abaixo). Caminho nao
+// listado aqui => erro 100 no plugin, sem chegar ao roteador.
 function pluginConfig(t, surface) {
   const routes = routesOf(t, surface);
+  const secure = SURFACE_RULES[surface].secure;
   const c = {
     surface,
     routes: routes.map(r => {
       const p = { method: r.method, path: r.path, auth: authOf(r) };
       if (r.classes) p.classes = r.classes;
       if (r.edge) p.edge = r.edge; // respondida pelo plugin (edge.go)
+      const se = surfaceErrorOf(r, surface);
+      if (se) p.surface_error = se; // F-1: 106 a qualquer requisicao aqui
+      if (!secure && nonLocalHTTP(r)) p.nonlocal_http = true; // E7: isenta
+      if (r.no_service) p.no_service = r.no_service; // H2
+      p.versions = versionsOf(r); // D4
       return p;
     }),
-    // APIs implementadas nesta superficie, para a C.6.7.8/C.6.7.9. Com a
-    // P1.9, a externa deixa de listar as APIs das rotas que so existem na
-    // interna (hoje tv3ws-bind-context-register, tv3ws-bind-context-remove e,
-    // desde 12/10, tv3ws-remotedevice-communication, a C.6.15.5, que so tem
-    // essa rota), e GET /tv3/api-info/<id> delas da 101 na 44643. As rotas
-    // 2.1 /tv3/remote-device/device/{handle}, que tambem sairam da externa em
-    // 12/10, nao tem "api" e nao mexem nesta lista.
-    // DECIDIDO (Luis, 11/10; F-2): cada superficie lista so as APIs que
-    // oferece. A lista por superficie ja era assim desde a D-0510-3 (05/10),
-    // mas com as duas superficies iguais a diferenca nao aparecia. A C.6.7.9
-    // (Tabela C.46, p. 301 do PDF) descreve "all APIs of a given category",
-    // no campo "receiverApis", sem falar de superficie.
+    // APIs implementadas, para a C.6.7.8/C.6.7.9: TODAS, nas duas superficies
+    // (F-2 revista pelo Joel em 15/10: a C.6.7.9 descreve "all APIs of a
+    // given category", Tabela C.48, e nao as de uma superficie; a restricao
+    // aparece pelo 106 no uso). De 11/10 a 15/10 a externa listava so as que
+    // oferecia, e a C.6.7.8 dava 101 la a uma API exclusiva do cliente local.
     apis: apisOf(routes),
   };
-  // PENDENTE (Joel): lacuna L2 — serviceContextId constante do tv3ws
-  // (tv3ws/src/core.ts): nas rotas /tv3/{serviceContextId}/... o plugin
-  // trata este valor (e current-service) como o servico corrente.
-  // A4 (decisao do Luis em 11/10): POST /tv3/{serviceContextId}/users, que nao
-  // existe na norma (so POST /tv3/current-service/users, C.6.14.1, bind-token
-  // shall), saiu do routes.json: a borda responde 100 a ela. Ate 11/10 ficava
-  // como token+bind (com a regra L2 acima) para nao abrir um atalho sem
-  // bind-token ao MESMO handler do tv3ws.
-  if (t.auth && t.auth.current_service_context_id) c.current_service_context_id = t.auth.current_service_context_id;
+  // E7: na superficie HTTP o nao local so usa as rotas nonlocal_http
+  if (!secure) c.nonlocal_https_only = true;
+  // A6 (Joel, 15/10): o serviceContextId e o globalServiceId de cada servico;
+  // a constante de antes (auth.current_service_context_id) saiu, e o build a
+  // recusa (checkTable). A4 (decisao do Luis em 11/10): POST
+  // /tv3/{serviceContextId}/users, que nao existe na norma (so POST
+  // /tv3/current-service/users, C.6.14.1), saiu do routes.json: a borda
+  // responde 100 a ela.
   // CORS (C.4.1.9): desde 12/10 (decisao do Luis, opcao b) quem responde e o
   // plugin, e o modulo CORS do KrakenD saiu da config (generate, abaixo).
   // allow_headers: o Access-Control-Allow-Headers de todo OPTIONS que ele
@@ -349,6 +401,7 @@ function generate(t) {
         version: 3,
         name: `TV30 edgegateway — ${surface} (${variant})`,
         port: t.surfaces[surface].port,
+        ...(SURFACE_RULES[surface].secure ? { tls: { public_key: `${TLS_DIR}/cert.pem`, private_key: `${TLS_DIR}/key.pem`, min_version: 'TLS12' } } : {}),
         allow_insecure_connections: true,
         plugin: { pattern: '.so', folder: PLUGIN_FOLDER },
         // sem 'security/cors': o modulo CORS do KrakenD envolve o plugin e
@@ -365,21 +418,28 @@ function generate(t) {
     for (const r of routes) {
       const auth = authOf(r);
       const where = surfacesOf(r);
+      const se = surfaceErrorOf(r, surface);
       paths[r.path] = paths[r.path] || {};
       paths[r.path][r.method.toLowerCase()] = {
         summary: r.path,
         description: (r.api ? `API ${r.api.id} (${r.api.section}, versao ${r.api.version}). ` : '') +
           (r.edge ? 'Respondida pela propria borda (plugin tv30-auth), sem repasse ao tv3ws. ' : '') +
           `Credencial: ${AUTH_DOC[auth]}. Classes: ${(r.classes || ['todas']).join(', ')}. ` +
-          (where.length < Object.keys(SURFACE_RULES).length ? `So nesta superficie (${where.join(', ')}; P1.9). ` : '') +
+          (se ? `Nesta superficie responde ${se} a qualquer requisicao: so pelo Server-BaseURL (C.4.1.8; F-1). ` : '') +
+          (!SURFACE_RULES[surface].secure && !nonLocalHTTP(r) && classesOf(r).includes('non-local')
+            ? 'O cliente nao local recebe 106 nesta superficie (HTTP): use o Server-SecureBaseURL (C.4.1.6; E7). ' : '') +
+          (r.no_service ? `Sem servico DTV selecionado: ${r.no_service} (H2). ` : '') +
+          `Versoes servidas (Accept-Version): ${versionsOf(r).join(', ')}; outra da 100 (D4). ` +
           'O local associado dispensa access token e bind-token nas rotas que o admitem (C.4.1.1).',
         'x-tv30-auth': auth,
         ...(r.classes ? { 'x-tv30-classes': r.classes } : {}),
         'x-tv30-surfaces': where,
+        'x-tv30-versions': versionsOf(r),
+        ...(se ? { 'x-tv30-surface-error': se } : {}),
         ...(r.api ? { 'x-tv30-api': r.api } : {}),
         ...(r.edge ? { 'x-tv30-edge': r.edge } : {}),
         parameters: [
-          ...headersOf(r).map(h => ({ name: h, in: 'header', required: h === 'Authorization' && auth !== 'none', schema: { type: 'string' } })),
+          ...headersOf(r).filter(h => !INTERNAL_HEADERS.includes(h)).map(h => ({ name: h, in: 'header', required: h === 'Authorization' && auth !== 'none', schema: { type: 'string' } })),
           ...(r.query || []).map(q => ({ name: q, in: 'query', required: false, schema: { type: 'string' } })),
         ],
         responses: {
@@ -395,7 +455,7 @@ function generate(t) {
         version: '2.0',
         description: 'Gerado da tabela unica de rotas (M4) — edite routes.json, nao este arquivo. ' + SURFACE_RULES[surface].doc,
       },
-      servers: [{ url: `http://localhost:${t.surfaces[surface].port}` }],
+      servers: [{ url: `${SURFACE_RULES[surface].secure ? 'https' : 'http'}://localhost:${t.surfaces[surface].port}` }],
       paths,
       components: { schemas: { Erro: ERROR_SCHEMA } },
     };
@@ -412,14 +472,15 @@ function build() {
     fs.writeFileSync(out, JSON.stringify(obj, null, 2) + '\n');
     if (obj.endpoints) console.log(`${out}: ${obj.endpoints.length} rotas, porta ${obj.port}`);
   }
-  // rotas que ficam fora de alguma superficie (P1.9), para o log do build
+  // rotas que respondem 106 a qualquer requisicao em alguma superficie (F-1),
+  // para o log do build
   for (const surface of Object.keys(t.surfaces)) {
-    const out = t.routes.filter(r => !surfacesOf(r).includes(surface)).map(r => `${r.method} ${r.path}`);
-    console.log(`superficie ${surface}: ${t.routes.length - out.length} de ${t.routes.length} rotas` + (out.length ? `; fora: ${out.join(', ')}` : ''));
+    const se = t.routes.filter(r => surfaceErrorOf(r, surface)).map(r => `${r.method} ${r.path}`);
+    console.log(`superficie ${surface}: ${t.routes.length} rotas` + (se.length ? `; 106 a qualquer requisicao (C.4.1.8): ${se.join(', ')}` : ''));
   }
 }
 
-module.exports = { SURFACE_RULES, CLASS_VALUES, surfacesOf, routesOf, checkTable, pluginConfig, apisOf, generate };
+module.exports = { SURFACE_RULES, CLASS_VALUES, surfacesOf, routesOf, surfaceErrorOf, checkTable, pluginConfig, apisOf, generate };
 
 if (require.main === module) {
   const mode = process.argv[2];

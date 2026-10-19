@@ -58,7 +58,7 @@
       "dono": "tv3ws",
       "descricao": "Servico corrente com os campos de GET /tv3/current-service (Tabela C.8), regravado inteiro pelo tv3ws a cada troca de servico; a borda le na C.6.8.3.",
       "campos": {
-        "serviceContextId": { "tipo": "texto", "min": 1, "obrigatorio": true, "fonte": "Tabela C.8; constante do tv3ws (lacuna L2)" },
+        "serviceContextId": { "tipo": "texto", "min": 1, "max": 256, "obrigatorio": true, "fonte": "Tabela C.8; o globalServiceId do servico corrente (A6, Joel 15/10; ate entao, uma constante do tv3ws)" },
         "serviceId": { "tipo": "inteiro", "min": 0, "vazio": true, "obrigatorio": true, "fonte": "Tabela C.8: serviceId inteiro; vazio quando o testbed nao o conhece (sem SLT, A6)" },
         "serviceName": { "tipo": "texto", "obrigatorio": true, "fonte": "Tabela C.8; vazio quando desconhecido" },
         "transportStreamId": { "tipo": "texto", "min": 1, "obrigatorio": true, "fonte": "Tabela C.8; constante do tv3ws" },
@@ -81,7 +81,7 @@
       "chave": "user:{id}",
       "tipo": "hash",
       "dono": "AoP",
-      "descricao": "Perfil do telespectador: atributos basicos da Tabela 7 mais lastAccess (despejo P3).",
+      "descricao": "Perfil do telespectador: atributos basicos da Tabela 7 mais lastAccess.",
       "partes": { "id": { "ref": "idPerfil" } },
       "campos": {
         "id": { "ref": "idPerfil", "obrigatorio": true, "fonte": "Tabela 7: UUID string, required (F-3, decisao do Luis em 11/10)" },
@@ -99,7 +99,7 @@
         "audioDescription": { "ref": "booleano", "obrigatorio": true, "fonte": "Tabela 7: (true | false), required" },
         "dialogEnhancement": { "ref": "booleano", "obrigatorio": true, "fonte": "Tabela 7: (true | false), required" },
         "voiceGuidance": { "ref": "booleano", "obrigatorio": true, "fonte": "Tabela 7: (true | false), required" },
-        "lastAccess": { "tipo": "inteiro", "min": 0, "fonte": "P3 (despejo pelo ultimo acesso): instante em ms, decisao de implementacao; fora da Tabela 7" }
+        "lastAccess": { "tipo": "inteiro", "min": 0, "fonte": "Instante do ultimo acesso em ms, decisao de implementacao; fora da Tabela 7. Ate 15/10, criterio do despejo do sexto perfil (P3), que saiu: o sexto e recusado (Joel, 15/10)" }
       },
       "outrosCampos": false,
       "campoIgualAParte": { "campo": "id", "parte": "id" },
@@ -119,7 +119,11 @@
       "familia": "user:{id}:broadcaster-attrs:{scid}",
       "chave": "user:{id}:broadcaster-attrs:{scid}",
       "tipo": "hash",
-      "dono": "tv3ws (grava) e AoP (apaga no despejo) - PENDENTE (Joel), E4",
+      "dono": "tv3ws e AoP (dois escritores, E4: Joel em 15/10, Principios e criterios 5.3)",
+      "escritores": [
+        { "componente": "tv3ws", "operacao": "grava e apaga atributos de emissora (C.6.14.5)", "funcao": "tv30_atributos_emissora" },
+        { "componente": "AoP", "operacao": "remove a familia inteira junto com o perfil, na mesma funcao que remove o perfil (atomico)", "funcao": "tv30_perfil_remove" }
+      ],
       "descricao": "Atributos de emissora do perfil num contexto de servico (C.6.14.5); valor vazio na API remove o atributo.",
       "partes": { "id": { "ref": "idPerfil" }, "scid": { "ref": "idServico" } },
       "outrosCampos": {
@@ -174,7 +178,7 @@
       "chave": "origins:associated",
       "tipo": "hash",
       "dono": "AoP",
-      "descricao": "Origem propria de cada aplicacao de emissora lancada (P1.3) -> id do servico corrente (ou 'current-service' sem servico). Limpo no boot do AoP.",
+      "descricao": "Origem propria de cada aplicacao de emissora lancada (P1.3) -> globalServiceId do servico que lancou a app (A6; o proprio contexto da H1). Sem servico corrente, o AoP nao registra (ate 15/10 gravava 'current-service'). Limpo no boot do AoP.",
       "outrosCampos": {
         "nome": { "tipo": "origem", "fonte": "P1.3 (Luis, 10/10): a origem como o navegador a manda no Origin (RFC 6454): esquema http/https e host em minusculas, porta so se nao for a padrao" },
         "valor": { "ref": "idServico" }
@@ -210,7 +214,7 @@
     {
       "id": "perfil-dependentes",
       "descricao": "user:{id}:consent e user:{id}:broadcaster-attrs:{scid} so existem para id em users:index.",
-      "fonte": "Derivada do codigo: a criacao grava perfil e visibilidade juntos e o despejo (P3) apaga as quatro familias juntas"
+      "fonte": "Derivada do codigo: a criacao grava perfil e visibilidade juntos e a remocao do perfil (tv30_perfil_remove) apaga as quatro familias juntas"
     },
     {
       "id": "clientes-disjuntos",
@@ -230,7 +234,7 @@
     { "nome": "tv30_sessao_servico", "argumentos": "<campo> <valor> [<campo> <valor> ...]", "efeito": "regrava inteiro o hash session:current-service (DEL + HSET)", "retorno": "1", "chamadores": ["tv3ws (core.ts, troca de servico)"] },
     { "nome": "tv30_perfil_grava", "argumentos": "<id> <n> <servico 1> ... <servico n> <campo> <valor> [...]", "efeito": "SADD users:index; regrava user:{id} (DEL + HSET); acrescenta os n servicos a user:{id}:consent", "retorno": "1", "chamadores": ["AoP (criacao de perfil)", "carga inicial (emit_seed.py)", "migrate_to_redis.py (depuracao manual)"] },
     { "nome": "tv30_perfil_ultimo_acesso", "argumentos": "<id> <instante em ms>", "efeito": "HSET user:{id} lastAccess, so se o id estiver em users:index", "retorno": "1 se gravou, 0 se o perfil nao existe", "chamadores": ["AoP (troca de usuario corrente)"] },
-    { "nome": "tv30_perfil_remove", "argumentos": "<id>", "efeito": "SREM users:index; DEL user:{id}, user:{id}:consent e todo user:{id}:broadcaster-attrs:*", "retorno": "numero de chaves e membros removidos", "chamadores": ["AoP (despejo P3)"] },
+    { "nome": "tv30_perfil_remove", "argumentos": "<id>", "efeito": "SREM users:index; DEL user:{id}, user:{id}:consent e todo user:{id}:broadcaster-attrs:*", "retorno": "numero de chaves e membros removidos", "chamadores": ["AoP (remocao do perfil; sem chamador desde 15/10, quando o despejo P3 saiu)"] },
     { "nome": "tv30_atributos_emissora", "argumentos": "<id> <scid> <campo> <valor> [...] (valor vazio remove o campo)", "efeito": "HDEL/HSET user:{id}:broadcaster-attrs:{scid}, com o teto de 20 MB conferido no resultado", "retorno": "numero de campos alterados", "chamadores": ["tv3ws (C.6.14.5)"] },
     { "nome": "tv30_cliente_grava", "argumentos": "<id> <campo> <valor> [...]", "efeito": "HSET client:{id} (acrescenta ou troca campos)", "retorno": "1", "chamadores": ["tv3ws (rotacao do refresh token, emissao do access token)"] },
     { "nome": "tv30_cliente_autoriza", "argumentos": "<id> <campo> <valor> [...]", "efeito": "HSET client:{id}; SREM clients:blocked; SADD clients:authorized", "retorno": "1", "chamadores": ["tv3ws (C.6.1.2, pop-up aceito)"] },

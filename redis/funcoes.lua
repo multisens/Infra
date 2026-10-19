@@ -631,7 +631,7 @@ OP.tv30_perfil_remove = function(args)
   return n
 end
 
--- atributos de emissora (grava: tv3ws; apaga no despejo: AoP; PENDENTE E4) --
+-- atributos de emissora (E4, Joel 15/10: grava o tv3ws; remove o AoP, em tv30_perfil_remove) --
 
 OP.tv30_atributos_emissora = function(args)
   local uso = 'tv30_atributos_emissora <id> <scid> <campo> <valor> [...] (valor vazio remove o campo)'

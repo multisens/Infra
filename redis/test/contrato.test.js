@@ -24,7 +24,7 @@ const AOP = path.join(TV30, 'aop');
 
 // G8 (decisao do Luis em 12/10, esquema versao 4): o AoP grava o avatar do
 // perfil criado em <USER_DATA_PATH>/thumbs/<id>.svg, guarda no campo avatar so
-// o nome do arquivo e apaga o arquivo no despejo (P3). O TV30 esta montado so
+// o nome do arquivo. O TV30 esta montado so
 // para leitura no container do teste: aqui o diretorio de dados do AoP e um
 // temporario, com o thumbs/ que o userfiles-seed cria na stack. Definido
 // ANTES de carregar o AoP (vale se ele le o ambiente na carga ou na chamada).
@@ -42,11 +42,6 @@ const SVG_AZUL = '<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"
     '<path d="M 14 90 a 36 36 0 0 1 72 0" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/>' +
     '</svg>';
 const arquivoAvatar = id => path.join(THUMBS, `${id}.svg`);
-// o despejo pode apagar o arquivo logo depois de responder: ate 1 s
-async function semArquivo(f) {
-    for (let i = 0; i < 20 && fs.existsSync(f); i++) await new Promise(res => setTimeout(res, 50));
-    return !fs.existsSync(f);
-}
 
 // tv3ws e TypeScript: ts-node do proprio tv3ws, so transpilando
 require(path.join(TV3WS, 'node_modules', 'ts-node')).register({
@@ -114,12 +109,11 @@ test('tv3ws: auth-manager de verdade (autorizar, emitir e rotacionar, bloquear, 
     assert.equal(await r('SISMEMBER', 'clients:authorized', 'c-x'), 0);
 });
 
-test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ultimo acesso; despejo P3', async () => {
+test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ultimo acesso; sexto recusado; remocao (E4)', async () => {
     await tv.sessaoServicoId('urn:tv30:service:users-test');
     const bodies = [
         { nickname: 'Viewer 1' },
-        // com o avatar escolhido no formulario (G8): e o primeiro a ser
-        // despejado, abaixo
+        // com o avatar escolhido no formulario (G8)
         { nickname: 'é'.repeat(20), parentalControl: true, maxContentRating: 'L', audioLanguage: 'en', userInterfaceLanguage: 'pt-BR', avatar: SVG_AZUL },
         { nickname: 'Libras', closedSigning: true, closedSigningSide: 'left', closedSigningWidth: '14' },
         { nickname: 'Legenda', closedCaptioning: true, closedCaptioningLanguage: 'es-419', audioDescription: true, dialogEnhancement: 'on', voiceGuidance: 1 },
@@ -136,7 +130,6 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
         const { user } = await profiles.createProfile(b);
         assert.match(user.id, UUID, 'id do perfil criado pelo AoP');
         ids.push(user.id);
-        await new Promise(res => setTimeout(res, 2)); // lastAccess distintos (ordem do despejo)
     }
     assert.equal(new Set(ids).size, 5);
     assert.equal(await r('SCARD', 'users:index'), 5);
@@ -156,7 +149,7 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
     assert.ok(fs.readFileSync(arquivoAvatar(ids[1]), 'utf8').includes('#4d5b7c'), 'o SVG escolhido no formulario vai para o arquivo');
     assert.equal(await profiles.touchLastAccess(ids[1], 5), true);
     assert.equal(await profiles.touchLastAccess('desconhecido', 5), false);
-    // atributo de emissora no perfil que sera despejado (o tv3ws grava)
+    // atributo de emissora no perfil que sera removido abaixo (o tv3ws grava)
     assert.equal(await tv.atributosEmissora(ids[0], 'urn:tv30:service:users-test', { cor: 'azul' }), 1);
     await assert.rejects(tv.atributosEmissora(ids[0], 'urn:tv30:service:users-test', { nickname: 'x' }), esquema);
     // UUID valido fora de users:index (invariante perfil-dependentes) e id no
@@ -167,17 +160,13 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
     // servico como erro TV30ESQUEMA, com a parte que falhou
     await assert.rejects(tv.atributosEmissora('00000000-0000-0000-0000-000000000000', 'urn:s', { cor: 'azul' }), { message: /^TV30ESQUEMA .*UUID nulo/ });
     await assert.rejects(tv.atributosEmissora('9d1e2f3a-4b5c-9d6e-8f70-81a2b3c4d5e6', 'urn:s', { cor: 'azul' }), { message: /^TV30ESQUEMA .*versao do UUID deve ser de 1 a 8/ });
-    // sexto perfil: despeja o de ultimo acesso mais antigo (ids[1] ficou com 5)
-    const { evicted } = await profiles.createProfile({ nickname: 'Sexto' });
-    assert.equal(evicted.id, ids[1]);
-    assert.equal(await r('EXISTS', `user:${ids[1]}`), 0);
+    // sexto perfil: recusado, sem despejo nem arquivo novo (Joel, 15/10; ate
+    // 15/10, P3, despejava o de ultimo acesso mais antigo)
+    const thumbsAntes = fs.readdirSync(THUMBS).sort();
+    await assert.rejects(profiles.createProfile({ nickname: 'Sexto' }), err => err instanceof profiles.ValidationError);
     assert.equal(await r('SCARD', 'users:index'), 5);
-    assert.ok(await semArquivo(arquivoAvatar(ids[1])), 'o despejo (P3) apaga o arquivo do avatar (G8)');
-    const { evicted: e2 } = await profiles.createProfile({ nickname: 'Setimo' });
-    assert.equal(e2.id, ids[0]);
-    assert.deepEqual(await r('KEYS', `user:${ids[0]}*`), [], 'o despejo leva os atributos de emissora juntos');
-    assert.ok(await semArquivo(arquivoAvatar(ids[0])), 'o despejo apaga o arquivo do avatar (G8)');
-    assert.deepEqual(await auditoria(), []);
+    assert.equal(await r('HGET', `user:${ids[0]}:broadcaster-attrs:urn:tv30:service:users-test`, 'cor'), 'azul');
+    assert.deepEqual(fs.readdirSync(THUMBS).sort(), thumbsAntes, 'a recusa nao grava arquivo de avatar');
     // no diretorio de miniaturas, so os avatares dos perfis que existem
     const vivos = [];
     for (const id of await r('SMEMBERS', 'users:index')) {
@@ -185,6 +174,13 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
         if (av !== null) vivos.push(av);
     }
     assert.deepEqual(fs.readdirSync(THUMBS).sort(), vivos.sort(), 'arquivos de thumbs/ = avatares dos perfis existentes');
+    // E4 (Joel, 15/10): a remocao do perfil, pelo adaptador do AoP, leva os
+    // atributos de emissora na mesma funcao (tv30_perfil_remove). A remocao
+    // pelo telespectador ainda nao existe; o adaptador e o que ela vai usar.
+    assert.ok(await aop.perfilRemove(ids[0]) >= 4);
+    assert.deepEqual(await r('KEYS', `user:${ids[0]}*`), [], 'a remocao leva os atributos de emissora juntos');
+    assert.equal(await r('SISMEMBER', 'users:index', ids[0]), 0);
+    assert.deepEqual(await auditoria(), []);
 });
 
 test('AoP: origens montadas por app-hosts cumprem o esquema; registro, remocao e limpeza', async () => {

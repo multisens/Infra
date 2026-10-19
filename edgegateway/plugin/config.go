@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -25,19 +26,19 @@ const (
 type config struct {
 	Surface string
 	Mode    string
-	Secret  []byte
-	Issuer  string
-	// valores de {serviceContextId} no caminho tratados como o servico
-	// corrente (alem do literal current-service). PENDENTE (Joel): lacuna
-	// L2 — o tv3ws usa um serviceContextId CONSTANTE para todo servico
-	// (tv3ws/src/core.ts), entao nao ha como ligar outro valor a um servico;
-	// qualquer outro valor da 108 nas rotas token+bind (provisorio).
-	CurrentSCIDs []string
-	// serviceContextId que as respostas da C.6.8 devolvem (o mesmo valor de
-	// current_service_context_id; L2 acima). Obrigatorio se alguma rota
-	// bind-context-* eh respondida pela borda.
-	ServiceContextID string
-	Routes           *routeTable
+	// NonLocalHTTPSOnly: superficie HTTP (a interna, Server-BaseURL). Nela o
+	// nao local identificado pelo access token so usa as rotas NonLocalHTTP
+	// (C.6.1.2 e C.6.1.3); nas demais recebe 106 (C.4.1.6; E7, Joel 15/10:
+	// vale ja, sem esperar o TLS da 44643, e tambem em warn).
+	NonLocalHTTPSOnly bool
+	// AllVersions: as versoes servidas por alguma rota, em ordem crescente;
+	// LatestVersion, a ultima — o API-Version do erro 100 ("the latest
+	// version supported by the server", C.3.6.6). D4 (Joel, 15/10).
+	AllVersions   []string
+	LatestVersion string
+	Secret        []byte
+	Issuer        string
+	Routes        *routeTable
 	// APIs implementadas (id da Tabela C.2 + versao), na ordem da tabela,
 	// para as APIs C.6.7.8/C.6.7.9 (apiinfo.go). Vem de routes.json.
 	APIs         *apiCatalog
@@ -76,13 +77,11 @@ func loadConfig(raw interface{}, getenv func(string) string) (*config, error) {
 		return nil, fmt.Errorf("campo surface ausente")
 	}
 
-	if v, present := m["current_service_context_id"]; present {
-		s, ok := v.(string)
-		if !ok || s == "" {
-			return nil, fmt.Errorf("current_service_context_id invalido: %v", v)
-		}
-		cfg.CurrentSCIDs = append(cfg.CurrentSCIDs, s)
-		cfg.ServiceContextID = s
+	// A6 (Joel, 15/10): sem constante de serviceContextId — o contexto e o
+	// globalServiceId de cada servico (handler.go, pathContext). O campo
+	// current_service_context_id, se vier de um routes.json antigo, e recusado.
+	if _, present := m["current_service_context_id"]; present {
+		return nil, fmt.Errorf("current_service_context_id saiu em 15/10 (A6): o serviceContextId e o globalServiceId do servico")
 	}
 
 	rawRoutes, ok := m["routes"].([]interface{})
@@ -129,21 +128,78 @@ func loadConfig(raw interface{}, getenv func(string) string) (*config, error) {
 			}
 			rt.Edge = name
 		}
+		if v, present := rm["surface_error"]; present {
+			// so o 106 da C.4.1.8 existe hoje (F-1, Joel 15/10)
+			if n, ok := v.(float64); !ok || n != 106 {
+				return nil, fmt.Errorf("routes[%d].surface_error invalido: %v (so 106, C.4.1.8)", i, v)
+			}
+			rt.SurfaceError = 106
+		}
+		if v, present := rm["nonlocal_http"]; present {
+			b, ok := v.(bool)
+			if !ok {
+				return nil, fmt.Errorf("routes[%d].nonlocal_http nao eh booleano: %v", i, v)
+			}
+			rt.NonLocalHTTP = b
+		}
+		rt.Versions = []string{defaultVersion}
+		if v, present := rm["versions"]; present {
+			list, ok := v.([]interface{})
+			if !ok || len(list) == 0 {
+				return nil, fmt.Errorf("routes[%d].versions nao eh lista nao vazia: %v", i, v)
+			}
+			rt.Versions = nil
+			for _, x := range list {
+				s, ok := x.(string)
+				if !ok || !versionPattern.MatchString(s) {
+					return nil, fmt.Errorf("routes[%d].versions com valor fora do formato X.Y: %v", i, x)
+				}
+				for _, y := range rt.Versions {
+					if y == s {
+						return nil, fmt.Errorf("routes[%d].versions com %s repetida", i, s)
+					}
+				}
+				rt.Versions = append(rt.Versions, s)
+			}
+			sort.Slice(rt.Versions, func(a, b int) bool { return compareVersions(rt.Versions[a], rt.Versions[b]) < 0 })
+		}
+		if v, present := rm["no_service"]; present {
+			// so o 300 (H2, Joel 15/10); e so faz sentido com bind-token
+			if n, ok := v.(float64); !ok || n != 300 {
+				return nil, fmt.Errorf("routes[%d].no_service invalido: %v (so 300)", i, v)
+			}
+			if rt.Auth != authTokenBind {
+				return nil, fmt.Errorf("routes[%d].no_service so vale em rota %s", i, authTokenBind)
+			}
+			rt.NoService = 300
+		}
 		table.add(rt)
 	}
 	cfg.Routes = table
-
-	var needAPIs, needSCID bool
+	all := map[string]bool{}
 	for _, rt := range table.routes {
-		switch {
-		case rt.Edge == edgeAPIInfo || rt.Edge == edgeAPIList:
-			needAPIs = true
-		case strings.HasPrefix(rt.Edge, "bind-context-"):
-			needSCID = true
+		for _, v := range rt.Versions {
+			if !all[v] {
+				all[v] = true
+				cfg.AllVersions = append(cfg.AllVersions, v)
+			}
 		}
 	}
-	if needSCID && cfg.ServiceContextID == "" {
-		return nil, fmt.Errorf("current_service_context_id ausente: as respostas da C.6.8 respondidas pela borda o devolvem")
+	sort.Slice(cfg.AllVersions, func(a, b int) bool { return compareVersions(cfg.AllVersions[a], cfg.AllVersions[b]) < 0 })
+	cfg.LatestVersion = cfg.AllVersions[len(cfg.AllVersions)-1]
+	if v, present := m["nonlocal_https_only"]; present {
+		b, ok := v.(bool)
+		if !ok {
+			return nil, fmt.Errorf("nonlocal_https_only nao eh booleano: %v", v)
+		}
+		cfg.NonLocalHTTPSOnly = b
+	}
+
+	var needAPIs bool
+	for _, rt := range table.routes {
+		if rt.Edge == edgeAPIInfo || rt.Edge == edgeAPIList {
+			needAPIs = true
+		}
 	}
 	cfg.APIs = &apiCatalog{}
 	if v, present := m["apis"]; present {
@@ -196,10 +252,13 @@ func loadConfig(raw interface{}, getenv func(string) string) (*config, error) {
 		cfg.CORSMaxAge = strconv.FormatInt(int64(d/time.Second), 10)
 	}
 
+	// Padrao enforce desde 15/10 (Joel, "Suas decisoes", modo warn): o warn
+	// fica como opcao explicita e transitoria (ex.: o Guarana, ate obter o
+	// token), ligada por AUTH_ENFORCE=warn. Ate entao o vazio valia warn.
 	switch mode := strings.TrimSpace(getenv("AUTH_ENFORCE")); mode {
-	case "", modeWarn:
+	case modeWarn:
 		cfg.Mode = modeWarn
-	case modeEnforce:
+	case "", modeEnforce:
 		cfg.Mode = modeEnforce
 	default:
 		return nil, fmt.Errorf("AUTH_ENFORCE=%q invalido (use warn ou enforce)", mode)

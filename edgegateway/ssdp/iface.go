@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"net"
-	"os"
-	"strconv"
 	"strings"
 )
 
@@ -15,7 +13,12 @@ import (
 //     configuracao, conferido uma vez na partida por checkForced; existir
 //     sem IPv4 = falta de rede);
 //  2. a interface que tem o IPv4 do host anunciado;
-//  3. a interface da rota padrao (/proc/net/route), com aviso.
+//  3. a interface da rota padrao, com aviso (sem aviso quando o host e
+//     detectado: B2 revista pelo Joel em 15/10, ver config.go).
+// A rota padrao vem do proprio sistema, pelo endereco local que ele escolhe
+// para um socket UDP "conectado" a um endereco fora da rede (nada e enviado):
+// vale nos tres sistemas (complemento do Joel de 15/10). Ate 15/10 lia o
+// /proc/net/route, que so existe no Linux.
 // Quando nada serve, o erro e de falta de rede (netDown): o anunciante espera
 // e escolhe de novo na tentativa seguinte (decisao do Luis, 10/10).
 
@@ -57,37 +60,30 @@ func systemInterfaces() []ifaceInfo {
 	return out
 }
 
-// parseDefaultRoute: interface da rota padrao de menor metrica, a partir do
-// texto de /proc/net/route.
-func parseDefaultRoute(text string) string {
-	best, bestMetric := "", -1
-	lines := strings.Split(text, "\n")
-	for _, line := range lines[min(1, len(lines)):] {
-		f := strings.Fields(line)
-		if len(f) < 8 || f[1] != "00000000" || f[7] != "00000000" {
-			continue
-		}
-		flags, err := strconv.ParseUint(f[3], 16, 32)
-		if err != nil || flags&0x1 == 0 {
-			continue
-		}
-		m, err := strconv.Atoi(f[6])
-		if err != nil {
-			continue
-		}
-		if bestMetric < 0 || m < bestMetric {
-			best, bestMetric = f[0], m
-		}
-	}
-	return best
-}
+// routeProbe: endereco fora de qualquer rede local (TEST-NET-1, RFC 5737),
+// para o sistema escolher a rota padrao. O "connect" de UDP nao manda pacote.
+const routeProbe = "192.0.2.1:9"
 
-func readDefaultRoute() string {
-	b, err := os.ReadFile("/proc/net/route")
+// defaultRouteAddr: o IPv4 local que o sistema usaria para sair pela rota
+// padrao ("" sem rota).
+func defaultRouteAddr() string {
+	c, err := net.Dial("udp4", routeProbe)
 	if err != nil {
 		return ""
 	}
-	return parseDefaultRoute(string(b))
+	defer c.Close()
+	if a, ok := c.LocalAddr().(*net.UDPAddr); ok && a.IP.To4() != nil && !a.IP.IsLoopback() {
+		return a.IP.String()
+	}
+	return ""
+}
+
+// readDefaultRoute: a interface que tem o IPv4 da rota padrao.
+func readDefaultRoute() string {
+	if ifi := owner(systemInterfaces(), defaultRouteAddr()); ifi != nil {
+		return ifi.Name
+	}
+	return ""
 }
 
 func describe(ifaces []ifaceInfo) string {
@@ -169,6 +165,17 @@ func chooseInterface(host, forced string, ifaces []ifaceInfo, defaultRoute func(
 	}
 	if len(ifaces) == 0 {
 		return choice{}, netDown{fmt.Errorf("nenhuma interface de pe com IPv4 externo")}
+	}
+	// host detectado (sem SSDP_ADVERTISE_HOST; B2 revista): a interface da
+	// rota padrao, sem aviso; o IPv4 dela vira o host do LOCATION
+	if host == "" {
+		if r := defaultRoute(); r != "" {
+			if ifi := find(ifaces, r); ifi != nil {
+				return choice{Name: ifi.Name, Addr: ifi.IPv4s[0], Source: "default-route"}, nil
+			}
+		}
+		return choice{}, netDown{fmt.Errorf("nenhuma rota padrao com IPv4 para detectar o host do anuncio "+
+			"(interfaces com IPv4: %s). Defina SSDP_INTERFACE ou SSDP_ADVERTISE_HOST", describe(ifaces))}
 	}
 
 	why := fmt.Sprintf("'%s' nao e um IPv4 (nome ou IPv6)", host)

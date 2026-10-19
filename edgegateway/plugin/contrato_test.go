@@ -115,14 +115,15 @@ func TestContratoFuncoes(t *testing.T) {
 	}()
 	h := newTestHandler(t, modeEnforce, nil, nil)
 	h.store = s
-	wantOK(t, "POST", postBind(t, h, regBody("HS512", "segredo-contrato")), okRegister)
-	wantOK(t, "POST repetido", postBind(t, h, regBody("HS512", "segredo-contrato")), okRegister)
+	okReg := `{"serviceContextId":"` + sid + `"}` // A6: o globalServiceId corrente
+	wantOK(t, "POST", postBind(t, h, regBody("HS512", "segredo-contrato")), okReg)
+	wantOK(t, "POST repetido", postBind(t, h, regBody("HS512", "segredo-contrato")), okReg)
 	if l, _ := s.BindKeys(sid); len(l) != 1 || !strings.HasPrefix(l[0], `{"alg":"HS512","key":"segredo-contrato","registeredAt":`) {
 		t.Fatalf("bind-context:%s = %q", sid, l)
 	}
 	bt := signJWT(t, "HS512", []byte("segredo-contrato"), timeClaims(t0, t0, t0.Add(time.Hour)))
 	r := bindGet(t, h, bt)
-	if r.status != 200 || !strings.Contains(r.body, `"boundServices":[{"serviceContextId":"`+tSCID+`"`) {
+	if r.status != 200 || !strings.Contains(r.body, `"boundServices":[{"serviceContextId":"`+sid+`"`) {
 		t.Fatalf("GET bind-context: %d %s", r.status, r.body)
 	}
 	wantOK(t, "DELETE", bindDelete(t, h, "segredo-contrato"), `{}`)

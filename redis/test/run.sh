@@ -35,7 +35,14 @@ RDS="$TAG-redis"
 IMG="tv30-redis:teste-$$"
 NODE_IMG=${NODE_IMG:-node:20-alpine}
 REDIS_IMG=${REDIS_IMG:-redis:7-alpine}
-GO_IMG=${GO_IMG:-krakend/builder:2.7.2}
+# Go do plugin da borda: o mesmo da imagem dela, escolhido pela arquitetura
+# do Docker (infra/edgegateway/Dockerfile, estagio 0): o krakend/builder so
+# existe para amd64, e o Go dele cai emulado num host ARM (Mac com Apple
+# Silicon). So o teste roda aqui (sem cgo), entao basta o mesmo Go.
+case "$(docker info --format '{{.Architecture}}' 2>/dev/null)" in
+  aarch64|arm64) GO_IMG=${GO_IMG:-golang:1.22.7-alpine3.19} ;;
+  *)             GO_IMG=${GO_IMG:-krakend/builder:2.7.2} ;;
+esac
 FALHAS=()
 
 cleanup() {

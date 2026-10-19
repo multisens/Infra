@@ -461,15 +461,8 @@ func TestErrosDeConfiguracaoEncerram(t *testing.T) {
 		want    string
 		opens   int
 	}{
-		// B2 (decisao do Luis em 11/10): SSDP_ADVERTISE_HOST obrigatorio
-		{"SSDP_ADVERTISE_HOST ausente", map[string]string{"SSDP_ADVERTISE_HOST": "-"}, nil, false,
-			cfg + "SSDP_ADVERTISE_HOST ausente ou vazio", 0},
-		{"SSDP_ADVERTISE_HOST ausente com SERVER_URL", map[string]string{"SSDP_ADVERTISE_HOST": "-", "SERVER_URL": "192.168.2.7"}, nil, false,
-			cfg + "SSDP_ADVERTISE_HOST ausente ou vazio", 0},
-		{"SSDP_ADVERTISE_HOST vazio", map[string]string{"SSDP_ADVERTISE_HOST": ""}, nil, false,
-			cfg + "SSDP_ADVERTISE_HOST ausente ou vazio", 0},
-		{"SSDP_ADVERTISE_HOST so com espacos e sem rede", map[string]string{"SSDP_ADVERTISE_HOST": "  "}, nil, true,
-			cfg + "SSDP_ADVERTISE_HOST ausente ou vazio", 0},
+		// B2 revista (Joel, 15/10): ausente ou vazio vale host detectado
+		// (TestHostDetectado); definido sem host continua erro
 		{"SSDP_ADVERTISE_HOST sem host", map[string]string{"SSDP_ADVERTISE_HOST": "http://:44642"}, nil, false,
 			cfg + "SSDP_ADVERTISE_HOST=\"http://:44642\" sem host", 0},
 		{"porta invalida", map[string]string{"EDGE_HTTP_PORT": "abc"}, nil, false,
@@ -575,7 +568,7 @@ func TestAvisosNaoSeRepetem(t *testing.T) {
 		t.Fatalf("saida %d:\n%s", code, h.log())
 	}
 	h.wantLog(anunciando, 3)
-	h.wantLog("SEM TLS", 1)
+	h.wantLog("SEM TLS", 0) // a 44643 tem TLS desde a A7
 	h.wantLog("AVISO host anunciado: 'tv.local' nao e um IPv4 (nome ou IPv6); o anuncio sai pela interface da rota padrao wlp2s0 (192.168.2.7)", 1)
 	h.wantLog("AVISO host anunciado: 'tv.local' nao e um IPv4 (nome ou IPv6); o anuncio sai pela interface da rota padrao wlp2s0 (192.168.0.23)", 1)
 	h.wantLog(semRede, 2) // uma por queda
@@ -621,5 +614,102 @@ func TestIsNetDown(t *testing.T) {
 	}
 	if !isNetDown(step("x", netDown{fmt.Errorf("y")})) {
 		t.Error("netDown embrulhado")
+	}
+}
+
+// B2 revista (Joel, 15/10): sem SSDP_ADVERTISE_HOST, o host do LOCATION e o
+// IPv4 da interface da rota padrao, sem aviso.
+func TestHostDetectado(t *testing.T) {
+	h := newHarness(t)
+	delete(h.env, "SSDP_ADVERTISE_HOST")
+	h.net.set("wlp2s0", wifi2, dock)
+	h.stopAfterFirstNotify(1)
+	if code := h.run(); code != 0 {
+		t.Fatalf("saida %d:\n%s", code, h.log())
+	}
+	c := h.net.conns()[0]
+	c.mu.Lock()
+	sent := append([]string(nil), c.sent...)
+	c.mu.Unlock()
+	if len(sent) == 0 || !strings.Contains(sent[0], "LOCATION: http://192.168.2.7:44642/manifest\r\n") {
+		t.Fatalf("NOTIFY: %q", sent)
+	}
+	h.wantLog("LOCATION http://192.168.2.7:44642/manifest (host detectado: IPv4 da interface)", 1)
+	h.wantLog("AVISO host anunciado", 0)
+	h.wantLog(falha, 0)
+}
+
+// Complemento do Joel (15/10), medicao M4: com o host detectado, a troca de
+// rede com o anuncio no ar e percebida no NOTIFY seguinte. O anunciante
+// manda o byebye do endereco antigo, avisa no log, nao cai nem passa pelo
+// estado "sem rede", e volta a anunciar com o IP novo.
+func TestTrocaDeRedeComHostDetectado(t *testing.T) {
+	h := newHarness(t)
+	delete(h.env, "SSDP_ADVERTISE_HOST")
+	h.ticks = 1
+	h.net.set("wlp2s0", wifi2)
+	h.onOpen = func(n int, c *fakeConn) {
+		switch n {
+		case 1:
+			c.onSend = func(k int) {
+				if k == 2 {
+					h.net.set("wlp2s0", wifi0) // outro Wi-Fi: o mesmo adaptador, outro IPv4
+				}
+			}
+		case 2:
+			c.onSend = func(k int) {
+				if k == 2 {
+					h.sigterm()
+				}
+			}
+		}
+	}
+	if code := h.run(); code != 0 {
+		t.Fatalf("saida %d:\n%s", code, h.log())
+	}
+	h.wantLog("AVISO a rede mudou (wlp2s0 192.168.2.7 -> wlp2s0 192.168.0.23): anunciando de novo com o endereco novo", 1)
+	h.wantLog(semRede, 0)
+	h.wantLog(anunciando, 2)
+	h.wantLog("LOCATION http://192.168.2.7:44642/manifest (host detectado", 1)
+	h.wantLog("LOCATION http://192.168.0.23:44642/manifest (host detectado", 1)
+	cs := h.net.conns()
+	if len(cs) != 2 || cs[0].count(ssdpByebye) != 2 || !cs[0].isClosed() || cs[1].ch.Addr != "192.168.0.23" {
+		t.Fatalf("conexoes %d; byebye da antiga %d", len(cs), cs[0].count(ssdpByebye))
+	}
+	// com SSDP_ADVERTISE_HOST definido, a troca de IPv4 nao encerra a sessao
+	// (o host e fixo): TestQuedaDeRedeDuranteOAnuncio cobre o caminho da falha
+}
+
+// Arquivo de parada (SSDP_STOP_FILE): o comando de descida o cria, e o
+// anunciante manda o byebye como no SIGTERM (no Windows nao ha SIGTERM para
+// processo em segundo plano). Medicao M3.
+func TestArquivoDeParada(t *testing.T) {
+	sig := make(chan os.Signal, 1)
+	n := 0
+	go watchStopFile("/tmp/tv30-parar", time.Millisecond, sig, func(string) bool { n++; return n >= 3 })
+	select {
+	case s := <-sig:
+		if s.String() != "arquivo de parada /tmp/tv30-parar" {
+			t.Fatalf("sinal %q", s)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("o arquivo de parada nao foi percebido")
+	}
+
+	h := newHarness(t)
+	h.net.set("wlp2s0", wifi2)
+	h.onOpen = func(n int, c *fakeConn) {
+		c.onSend = func(k int) {
+			if k == 2 {
+				h.stop <- stopFile("/tmp/tv30-parar")
+			}
+		}
+	}
+	if code := h.run(); code != 0 {
+		t.Fatalf("saida %d:\n%s", code, h.log())
+	}
+	h.wantLog("arquivo de parada /tmp/tv30-parar: "+enviaByebye, 1)
+	if c := h.net.conns()[0]; c.count(ssdpByebye) != 2 {
+		t.Fatalf("byebye %d", c.count(ssdpByebye))
 	}
 }

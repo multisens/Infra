@@ -236,9 +236,11 @@ type bindKey struct {
 // assinatura (qualquer chave registrada do servico corrente com o MESMO alg
 // valida — C.4.1.3, lista rotacionavel), nbf/exp, iat.
 //
-// PENDENTE (Joel): lacuna L5 — a norma compara nbf/exp/iat com o relogio do
-// System Time Fragment da radiodifusao (C.4.1.3); o testbed nao tem STF e
-// usa o relogio do host, sem tolerancia de defasagem.
+// DECIDIDO (Joel, 15/10; A9, a lacuna L5): relogio do host, sem tolerancia
+// de defasagem. A norma compara nbf/exp/iat com o relogio do System Time
+// Fragment (C.4.1.3); a emissora simulada e o receptor rodam na mesma
+// maquina. Se o simulador vier a emitir o STF, a borda passa a comparar com
+// ele.
 func verifyBindToken(tok string, keys []bindKey, now time.Time) error {
 	t, err := parseJWT(strings.TrimSpace(tok))
 	if err != nil {

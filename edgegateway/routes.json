@@ -2,13 +2,11 @@
   "backends": {
     "external": {
       "linux": "https://tv3ws:44653",
-      "windows": "https://host.docker.internal:44655",
-      "host": "https://127.0.0.1:44653"
+      "windows": "https://host.docker.internal:44655"
     },
     "internal": {
       "linux": "http://tv3ws:44652",
-      "windows": "http://host.docker.internal:44654",
-      "host": "http://127.0.0.1:44652"
+      "windows": "http://host.docker.internal:44654"
     }
   },
   "surfaces": {
@@ -20,9 +18,6 @@
       "port": 44642,
       "title": "TV 3.0 WebServices — superficie interna"
     }
-  },
-  "auth": {
-    "current_service_context_id": "c08b2c72-fd14-4095-adaf-2e5810850c57"
   },
   "cors": {
     "allow_headers": [
@@ -211,6 +206,7 @@
         "version": "2.0"
       },
       "auth": "token+bind",
+      "no_service": 300,
       "headers": [
         "Authorization",
         "Accept-Version",
@@ -226,6 +222,7 @@
         "version": "2.0"
       },
       "auth": "token+bind",
+      "no_service": 300,
       "headers": [
         "Authorization",
         "Accept-Version"
@@ -240,6 +237,7 @@
         "version": "2.0"
       },
       "auth": "token+bind",
+      "no_service": 300,
       "headers": [
         "Authorization",
         "Accept-Version",
@@ -255,6 +253,7 @@
         "version": "2.0"
       },
       "auth": "token+bind",
+      "no_service": 300,
       "headers": [
         "Authorization",
         "Accept-Version"
@@ -272,6 +271,7 @@
         "version": "2.0"
       },
       "auth": "token+bind",
+      "no_service": 300,
       "headers": [
         "Authorization",
         "Accept-Version"
@@ -289,6 +289,7 @@
         "version": "2.0"
       },
       "auth": "token+bind",
+      "no_service": 300,
       "headers": [
         "Authorization",
         "Accept-Version",
@@ -333,8 +334,12 @@
       "api": {
         "id": "tv3ws-remotedevice-communication",
         "section": "C.6.15.5",
-        "version": "2.0"
+        "version": "100.0"
       },
+      "versions": [
+        "2.0",
+        "100.0"
+      ],
       "auth": "token",
       "classes": [
         "local-associated",
@@ -348,6 +353,9 @@
     {
       "path": "/tv3/remote-device/device/{handle}",
       "method": "GET",
+      "versions": [
+        "100.0"
+      ],
       "auth": "token",
       "classes": [
         "local-associated",
@@ -361,6 +369,9 @@
     {
       "path": "/tv3/remote-device/device/{handle}",
       "method": "DELETE",
+      "versions": [
+        "100.0"
+      ],
       "auth": "token",
       "classes": [
         "local-associated",
@@ -423,6 +434,7 @@
         "version": "2.0"
       },
       "auth": "token+bind",
+      "no_service": 300,
       "headers": [
         "Authorization",
         "Accept-Version"
@@ -440,6 +452,7 @@
         "version": "2.0"
       },
       "auth": "token+bind",
+      "no_service": 300,
       "headers": [
         "Authorization",
         "Accept-Version",

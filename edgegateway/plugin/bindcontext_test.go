@@ -61,7 +61,7 @@ func spkiB64(t *testing.T, k *rsa.PrivateKey) string {
 func edgeStore() *fakeStore {
 	st := baseStore()
 	st.keys = map[string][]string{}
-	st.svcHash = map[string]string{"serviceContextId": tSCID, "serviceName": "Canal A", "serviceId": "7"}
+	st.svcHash = map[string]string{"serviceContextId": tSvc, "serviceName": "Canal A", "serviceId": "7"}
 	return st
 }
 
@@ -141,7 +141,9 @@ func regBody(alg, key string) string {
 	return string(b)
 }
 
-var okRegister = `{"serviceContextId":"` + tSCID + `"}`
+// A6 (Joel, 15/10): o serviceContextId devolvido e o globalServiceId do
+// servico corrente (tSvc nos testes); ate 15/10, a constante do tv3ws
+var okRegister = `{"serviceContextId":"` + tSvc + `"}`
 
 // C.6.8.2 (Tabela C.47): 101 corpo fora do formato / alg nao suportado /
 // chave incompativel; 105 falta alg ou key num objeto JSON. Nada eh gravado.
@@ -280,7 +282,7 @@ func TestRegistroClasseEVersao(t *testing.T) {
 		v    string
 		code int
 		api  string
-	}{{"abc", 101, "2.0"}, {"", 101, "2.0"}, {"2", 101, "2.0"}, {"3.0", 100, "2.1"}, {"1.9", 100, "2.1"}} {
+	}{{"abc", 101, "2.0"}, {"", 101, "2.0"}, {"2", 101, "2.0"}, {"3.0", 100, "100.0"}, {"1.9", 100, "100.0"}, {"2.1", 100, "100.0"}, {"100.0", 100, "100.0"}} {
 		hd := map[string]string{"Origin": tAssoc, "Content-Type": "application/json", "Accept-Version": c.v}
 		r := edgeCall(t, h, "POST", "/tv3/bind-context", hd, regBody("HS256", "s"))
 		wantErr(t, "Accept-Version "+c.v, r, c.code)
@@ -291,28 +293,28 @@ func TestRegistroClasseEVersao(t *testing.T) {
 	if len(st.keys) != 0 {
 		t.Fatalf("gravou: %v", st.keys)
 	}
-	hd := map[string]string{"Origin": tAssoc, "Content-Type": "application/json", "Accept-Version": "2.1"}
+	hd := map[string]string{"Origin": tAssoc, "Content-Type": "application/json", "Accept-Version": "2.0"}
 	r := edgeCall(t, h, "POST", "/tv3/bind-context", hd, regBody("HS256", "s"))
-	wantOK(t, "Accept-Version 2.1", r, okRegister)
-	if v := r.hdr.Get("API-Version"); v != "2.1" {
-		t.Errorf("API-Version %q, esperado 2.1", v)
+	wantOK(t, "Accept-Version 2.0", r, okRegister)
+	if v := r.hdr.Get("API-Version"); v != "2.0" {
+		t.Errorf("API-Version %q, esperado 2.0", v)
 	}
 	if v := postBind(t, h, regBody("HS256", "s2")).hdr.Get("API-Version"); v != "2.0" {
 		t.Errorf("sem Accept-Version: API-Version %q, esperado 2.0", v)
 	}
 
-	// warn: o nao associado so leva o aviso, e a borda responde a API
+	// warn: desde 15/10 (Joel) o 106 dispara nos dois modos — o nao associado
+	// nao registra chave nem em warn (ate entao so levava o aviso, e a borda
+	// executava a API)
 	st = edgeStore()
 	h = newTestHandler(t, modeWarn, st, nil)
 	r = edgeCall(t, h, "POST", "/tv3/bind-context", map[string]string{"Content-Type": "application/json"}, regBody("HS256", "s"))
-	wantOK(t, "warn nao associado", r, okRegister)
-	if r.hdr.Get(warnHeader) != "106" {
-		t.Errorf("warn: %s=%q, esperado 106", warnHeader, r.hdr.Get(warnHeader))
+	wantErr(t, "warn nao associado", r, 106)
+	if r.hdr.Get(warnHeader) != "" {
+		t.Errorf("warn: %s=%q, esperado vazio (o 106 bloqueia)", warnHeader, r.hdr.Get(warnHeader))
 	}
-	r = edgeCall(t, h, "POST", "/tv3/bind-context", map[string]string{"Content-Type": "application/json"}, `{}`)
-	wantErr(t, "warn + erro da API", r, 105)
-	if r.hdr.Get(warnHeader) != "106" {
-		t.Errorf("warn + erro da API: %s=%q, esperado 106", warnHeader, r.hdr.Get(warnHeader))
+	if len(st.keys) != 0 {
+		t.Fatalf("warn: o nao associado gravou chave: %v", st.keys)
 	}
 }
 
@@ -337,7 +339,7 @@ func hsTok(t *testing.T, secret string, claims map[string]interface{}) string {
 func twoServices(t *testing.T) *fakeStore {
 	st := edgeStore()
 	st.current = tSvcB
-	st.svcHash = map[string]string{"serviceContextId": tSCID, "serviceName": "Canal B", "serviceId": "9"}
+	st.svcHash = map[string]string{"serviceContextId": tSvcB, "serviceName": "Canal B", "serviceId": "9"}
 	st.keys[tSvc] = []string{storedJSON("HS256", "segredo-a")}
 	st.keys[tSvcB] = []string{storedJSON("RS256", pkcs1PrivB64(testRSA512(t)))}
 	return st
@@ -371,13 +373,13 @@ func TestBindListServicos(t *testing.T) {
 	h := newTestHandler(t, modeEnforce, st, nil)
 	rsTok := signJWT(t, "RS256", testRSA512(t), timeClaims(t0.Add(-5*time.Second), t0.Add(-5*time.Second), t0.Add(10*time.Minute)))
 	// corrente = b: nome e id (serviceId volta a inteiro, Tabela C.8)
-	wantOK(t, "token de b", bindGet(t, h, rsTok), `{"boundServices":[{"serviceContextId":"`+tSCID+`","serviceName":"Canal B","serviceId":9}]}`)
-	// a nao eh o corrente: so o serviceContextId
-	wantOK(t, "token de a", bindGet(t, h, hsTok(t, "segredo-a", nil)), `{"boundServices":[{"serviceContextId":"`+tSCID+`"}]}`)
+	wantOK(t, "token de b", bindGet(t, h, rsTok), `{"boundServices":[{"serviceContextId":"`+tSvcB+`","serviceName":"Canal B","serviceId":9}]}`)
+	// a nao eh o corrente: so o serviceContextId, o globalServiceId dele (A6)
+	wantOK(t, "token de a", bindGet(t, h, hsTok(t, "segredo-a", nil)), `{"boundServices":[{"serviceContextId":"`+tSvc+`"}]}`)
 
 	// serviceId nao numerico e nome vazio sao omitidos
 	st.svcHash = map[string]string{"serviceName": "", "serviceId": "9a"}
-	wantOK(t, "sem nome nem id numerico", bindGet(t, h, rsTok), `{"boundServices":[{"serviceContextId":"`+tSCID+`"}]}`)
+	wantOK(t, "sem nome nem id numerico", bindGet(t, h, rsTok), `{"boundServices":[{"serviceContextId":"`+tSvcB+`"}]}`)
 
 	// o mesmo segredo nas duas emissoras: dois itens; lista ilegivel
 	// (WRONGTYPE) e entrada malformada sao ignoradas
@@ -387,7 +389,7 @@ func TestBindListServicos(t *testing.T) {
 	h = newTestHandler(t, modeEnforce, st, nil)
 	// (BindServices do fakeStore vem em ordem: ...:b antes de ...:webmedia)
 	wantOK(t, "dois servicos", bindGet(t, h, hsTok(t, "segredo-a", nil)),
-		`{"boundServices":[{"serviceContextId":"`+tSCID+`","serviceName":"Canal B","serviceId":9},{"serviceContextId":"`+tSCID+`"}]}`)
+		`{"boundServices":[{"serviceContextId":"`+tSvcB+`","serviceName":"Canal B","serviceId":9},{"serviceContextId":"`+tSvc+`"}]}`)
 }
 
 // Politica da rota: access token (107) e classe (106) antes da API.
@@ -396,10 +398,17 @@ func TestBindListPolitica(t *testing.T) {
 	tok := hsTok(t, "segredo-a", nil)
 	wantErr(t, "sem access token", edgeCall(t, h, "GET", "/tv3/bind-context", map[string]string{"bind-token": tok}, ""), 107)
 	wantErr(t, "associado", edgeCall(t, h, "GET", "/tv3/bind-context", map[string]string{"Origin": tAssoc, "bind-token": tok}, ""), 106)
-	nonLocal := accessFor(t, "cli-2", classNonLocal)
-	r := edgeCall(t, h, "GET", "/tv3/bind-context", map[string]string{"Authorization": nonLocal, "bind-token": tok}, "")
+	auto := accessFor(t, "cli-1", classAutonomous)
+	r := edgeCall(t, h, "GET", "/tv3/bind-context", map[string]string{"Authorization": auto, "bind-token": tok}, "")
 	if r.status != 200 {
-		t.Errorf("nao local: status %d %s", r.status, r.body)
+		t.Errorf("autonomo: status %d %s", r.status, r.body)
+	}
+	// nao local: 106 na superficie HTTP (E7); na externa, passa
+	nonLocal := accessFor(t, "cli-2", classNonLocal)
+	wantErr(t, "nao local na interna (E7)", edgeCall(t, h, "GET", "/tv3/bind-context", map[string]string{"Authorization": nonLocal, "bind-token": tok}, ""), 106)
+	r = edgeCall(t, externalHandler(t, modeEnforce, twoServices(t), nil), "GET", "/tv3/bind-context", map[string]string{"Authorization": nonLocal, "bind-token": tok}, "")
+	if r.status != 200 {
+		t.Errorf("nao local na externa: status %d %s", r.status, r.body)
 	}
 }
 
@@ -561,7 +570,7 @@ func TestC68ComClienteRedis(t *testing.T) {
 	f := startFakeRedis(t)
 	f.with(func() {
 		f.strs[keyCurrentService] = tSvc
-		f.hashes[keyAssociated] = map[string]string{tAssoc: tSCID}
+		f.hashes[keyAssociated] = map[string]string{tAssoc: tSvc}
 		f.hashes[keyCurrentSvcHash] = map[string]string{"serviceName": "Canal A", "serviceId": "7"}
 		// E6 (Luis, 11/10): os clientes dos tokens do teste estao autorizados
 		f.sets[keyAuthorized] = map[string]bool{"cli-1": true, "cli-2": true, "cli-3": true}
@@ -584,7 +593,7 @@ func TestC68ComClienteRedis(t *testing.T) {
 	if v := h.evaluate(req); v.Code != 0 {
 		t.Fatalf("rota token+bind com o bind-token registrado: %d %s", v.Code, v.Detail)
 	}
-	wantOK(t, "GET", bindGet(t, h, bt), `{"boundServices":[{"serviceContextId":"`+tSCID+`","serviceName":"Canal A","serviceId":7}]}`)
+	wantOK(t, "GET", bindGet(t, h, bt), `{"boundServices":[{"serviceContextId":"`+tSvc+`","serviceName":"Canal A","serviceId":7}]}`)
 
 	wantOK(t, "DELETE", bindDelete(t, h, "segredo-c68"), `{}`)
 	f.with(func() {

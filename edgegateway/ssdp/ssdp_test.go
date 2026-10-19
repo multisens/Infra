@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -24,9 +25,10 @@ func TestNormalizeHost(t *testing.T) {
 	}
 }
 
-// B2 (decisao do Luis em 11/10): o host do anuncio e o SSDP_ADVERTISE_HOST,
-// obrigatorio. Ausente, vazio ou sem host e erro; o SERVER_URL nao e mais
-// fonte do host (nem como reserva), e o IP local tambem nao.
+// B2 revista pelo Joel em 15/10: o SSDP_ADVERTISE_HOST e sobreposicao.
+// Ausente ou vazio, o host e detectado (Host vazio, preenchido a cada sessao
+// com o IPv4 da interface); definido sem host continua erro. O SERVER_URL
+// nao e fonte do host do anuncio.
 func TestResolveEndpoint(t *testing.T) {
 	e, err := resolveEndpoint(env(map[string]string{"SSDP_ADVERTISE_HOST": "192.168.2.7", "SERVER_URL": "x"}))
 	if err != nil || e.Host != "192.168.2.7" || e.HTTPPort != 44642 || e.HTTPSPort != 44643 {
@@ -45,8 +47,8 @@ func TestResolveEndpoint(t *testing.T) {
 		"vazio":                  {"SSDP_ADVERTISE_HOST": "", "SERVER_URL": "192.168.2.7"},
 		"so espacos":             {"SSDP_ADVERTISE_HOST": "   "},
 	} {
-		if e, err := resolveEndpoint(env(m)); err == nil || !strings.Contains(err.Error(), "SSDP_ADVERTISE_HOST ausente ou vazio") {
-			t.Errorf("%s: esperado erro de SSDP_ADVERTISE_HOST obrigatorio, veio %+v %v", name, e, err)
+		if e, err := resolveEndpoint(env(m)); err != nil || e.Host != "" || e.HTTPPort != 44642 {
+			t.Errorf("%s: esperado host detectado (Host vazio), veio %+v %v", name, e, err)
 		}
 	}
 	for _, v := range []string{"http://", "http://:44642", "[", ":44642"} {
@@ -61,25 +63,26 @@ func TestResolveEndpoint(t *testing.T) {
 
 func TestWarnings(t *testing.T) {
 	w := warnings(endpoint{"localhost", 44642, 44643})
-	if len(w) != 2 || !strings.Contains(w[0], "SSDP_ADVERTISE_HOST='localhost' e de loopback") || !strings.Contains(w[1], "SEM TLS") {
+	if len(w) != 1 || !strings.Contains(w[0], "SSDP_ADVERTISE_HOST='localhost' e de loopback") {
 		t.Fatalf("loopback: %v", w)
 	}
 	w = warnings(endpoint{"192.168.2.7", 8080, 44643})
-	if len(w) != 2 || !strings.Contains(w[0], "EDGE_HTTP_PORT=8080") {
+	if len(w) != 1 || !strings.Contains(w[0], "EDGE_HTTP_PORT=8080") {
 		t.Fatalf("porta: %v", w)
+	}
+	// host detectado e porta padrao: nenhum aviso (a 44643 tem TLS desde a A7)
+	if w = warnings(endpoint{"", 44642, 44643}); len(w) != 0 {
+		t.Fatalf("detectado: %v", w)
 	}
 }
 
-func TestParseDefaultRoute(t *testing.T) {
-	text := "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n" +
-		"docker0\t000011AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n" +
-		"wlp2s0\t00000000\t0102A8C0\t0003\t0\t0\t600\t00000000\t0\t0\t0\n" +
-		"eth0\t00000000\t0102A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n"
-	if got := parseDefaultRoute(text); got != "eth0" {
-		t.Fatalf("rota padrao = %q, want eth0 (menor metrica)", got)
-	}
-	if got := parseDefaultRoute("Iface\tDestination\n"); got != "" {
-		t.Fatalf("sem rota = %q", got)
+// A rota padrao vem do sistema (socket UDP "conectado"), nos tres sistemas:
+// numa maquina com rede, o endereco e um IPv4 nao loopback; sem rede, vazio.
+func TestDefaultRouteAddr(t *testing.T) {
+	if a := defaultRouteAddr(); a != "" {
+		if ip := net.ParseIP(a); ip == nil || ip.To4() == nil || ip.IsLoopback() {
+			t.Fatalf("endereco da rota padrao %q", a)
+		}
 	}
 }
 
@@ -110,6 +113,18 @@ func TestChooseInterface(t *testing.T) {
 	if _, err = chooseInterface("tv.local", "", nil, func() string { return "" }); err == nil || !isNetDown(err) ||
 		!strings.Contains(err.Error(), "nenhuma interface") {
 		t.Fatalf("sem interface deveria ser falta de rede: %v", err)
+	}
+	// host detectado (B2 revista): a interface da rota padrao, sem aviso
+	c, err = chooseInterface("", "", ifs, route)
+	if err != nil || c.Name != "wlp2s0" || c.Addr != "192.168.2.7" || c.Source != "default-route" || len(c.Warnings) != 0 {
+		t.Fatalf("detectado: %+v %v", c, err)
+	}
+	c, err = chooseInterface("", "br-1", ifs, route)
+	if err != nil || c.Name != "br-1" || c.Addr != "172.20.0.1" || c.Source != "SSDP_INTERFACE" {
+		t.Fatalf("detectado com SSDP_INTERFACE: %+v %v", c, err)
+	}
+	if _, err = chooseInterface("", "", ifs, func() string { return "" }); err == nil || !isNetDown(err) {
+		t.Fatalf("detectado sem rota padrao deveria ser falta de rede: %v", err)
 	}
 }
 

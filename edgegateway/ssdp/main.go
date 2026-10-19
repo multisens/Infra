@@ -1,20 +1,19 @@
-// Anunciante SSDP da borda (C.3.4).
+// Anunciante SSDP do testbed (C.3.4).
 //
-// L6 decidida = opcao A (Luis, 09/10): quem anuncia e a borda. Roda como
-// processo do container edgegateway, ao lado dos dois KrakenD, quando a borda
-// esta em rede do host (docker-compose.ssdp.yml, so Linux nativo — decisao
-// do Joel, 04/10) e SSDP_ENABLED=true. Na bridge o multicast nao sai para a
-// LAN (docs/ssdp-verificacao.md), entao ali o anuncio fica desligado.
+// Complemento do Joel de 15/10 (B1 e B2): roda NATIVO no host, fora do
+// Docker, nos tres sistemas (Linux, macOS, Windows), subido pelo ./tv30 up
+// (tv30.ps1 no Windows) depois do compose. Dentro do Docker o multicast so sai
+// em Linux nativo (no Mac e no Windows o container fica na VM do Docker;
+// medido). Ele so divulga onde esta o /manifest e responde a buscas: nao
+// guarda estado nem valida credencial. De 09/10 a 15/10 rodava como processo
+// do container da borda, em rede do host (docker-compose.ssdp.yml, so Linux).
 //
-// Politica de falha (decisao do Luis, 10/10, revendo o morre-inteiro de
-// 09/10): "derrubar a borda so em erro de configuracao e tolerar a falta de
-// rede com novas tentativas". Motivo: numa troca de rede, a borda reiniciou
-// 12 vezes, com todas as APIs fora, so porque o Wi-Fi ainda nao tinha IPv4
-// (testes 44-45 de docs/ssdp-verificacao.md).
-//   - Erro de configuracao: encerra com exit 1, e o entrypoint derruba a
-//     borda inteira (morre-inteiro; o restart do compose a traz de volta).
-//     SSDP_ADVERTISE_HOST ausente, vazio ou sem host (B2, decisao do Luis em
-//     11/10), porta invalida em EDGE_HTTP_PORT/EDGE_HTTPS_PORT, SSDP_INTERFACE
+// Politica de falha (C8, decisao do Luis em 10/10, mantida pelo Joel em
+// 15/10): "so erro de configuracao encerra; a falta de rede e tolerada com
+// novas tentativas".
+//   - Erro de configuracao: encerra com exit 1 (o ./tv30 up mostra as
+//     ultimas linhas do log). SSDP_ADVERTISE_HOST definido sem host, porta
+//     invalida em EDGE_HTTP_PORT/EDGE_HTTPS_PORT, SSDP_INTERFACE
 //     com nome que nao existe na maquina (ou de loopback), UDP 1900 presa por
 //     socket sem SO_REUSEADDR (EADDRINUSE no bind) e todo erro que nao seja
 //     de rede.
@@ -27,12 +26,15 @@
 //     IPv4 de origem a cada tentativa.
 //
 // O LOCATION aponta para o /manifest, que continua no tv3ws, atras da propria
-// borda (44642), com o host de SSDP_ADVERTISE_HOST (B2, config.go). Esse host
-// nao muda com a rede: numa troca de rede, o anuncio volta pela interface
-// escolhida de novo, com o mesmo LOCATION (e aviso, se o IPv4 configurado nao
-// estiver mais em nenhuma interface). O anunciante Node do tv3ws (dev-host,
-// tv3ws/src/ssdp-server.ts) nao mudou: la, qualquer falha do anuncio ainda
-// encerra o processo, e o host ainda segue a cadeia antiga.
+// borda (44642). O host e DETECTADO — o IPv4 da interface escolhida — e
+// acompanha a troca de rede: a cada NOTIFY o anunciante confere a interface da
+// rota padrao e, se ela ou o IPv4 mudaram, encerra a sessao e anuncia de novo
+// com o IP novo (B2 revista e complemento do Joel, 15/10; medicao M4). Com
+// SSDP_ADVERTISE_HOST definido, vale ele, fixo, como de 11/10 a 15/10.
+//
+// Parada: SIGTERM ou SIGINT, ou o arquivo de SSDP_STOP_FILE aparecer (o
+// comando de descida o cria; no Windows nao ha SIGTERM para processo em
+// segundo plano). Nos dois casos sai o ssdp:byebye antes (medicao M3).
 package main
 
 import (
@@ -59,18 +61,14 @@ func logf(format string, a ...any) {
 
 // --- classificacao das falhas ---
 
-// netDown marca a falta de rede: espera e tenta de novo, sem derrubar a borda.
+// netDown marca a falta de rede: espera e tenta de novo, sem encerrar.
 type netDown struct{ err error }
 
 func (e netDown) Error() string { return e.err.Error() }
 func (e netDown) Unwrap() error { return e.err }
 
-// netErrnos: erros do sistema que sao falta de rede (endereco ou interface
-// que sumiu, sem rota). Lista fechada: erro fora dela e de configuracao.
-var netErrnos = []syscall.Errno{
-	syscall.ENETUNREACH, syscall.EHOSTUNREACH, syscall.ENETDOWN,
-	syscall.EHOSTDOWN, syscall.EADDRNOTAVAIL, syscall.ENODEV,
-}
+// netErrnos e errAddrInUse dependem do sistema: sockopt_other.go e
+// sockopt_windows.go.
 
 func isNetDown(err error) bool {
 	var nd netDown
@@ -183,10 +181,7 @@ func setMulticastOut(conn *net.UDPConn, addr string, ttl int) error {
 	}
 	var serr error
 	if err := raw.Control(func(fd uintptr) {
-		if serr = syscall.SetsockoptInet4Addr(int(fd), syscall.IPPROTO_IP, syscall.IP_MULTICAST_IF, a); serr != nil {
-			return
-		}
-		serr = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IP, syscall.IP_MULTICAST_TTL, ttl)
+		serr = setMulticastOpts(fd, a, ttl) // por sistema: sockopt_*.go
 	}); err != nil {
 		return err
 	}
@@ -209,10 +204,20 @@ type announcer struct {
 // session: um par de sockets aberto numa interface, ate a rede cair.
 type session struct {
 	ch      choice
-	ep      endpoint
+	ep      endpoint // com o host desta sessao (o detectado, sem SSDP_ADVERTISE_HOST)
+	auto    bool     // host detectado: a troca de rede encerra a sessao
+	forced  string
 	udn     string
 	conn    ssdpConn
 	readErr chan error
+}
+
+// netChanged: a interface ou o IPv4 da rota padrao mudaram com o anuncio no
+// ar (host detectado). Nao e falta de rede: o laco anuncia de novo na hora.
+type netChanged struct{ from, to choice }
+
+func (e netChanged) Error() string {
+	return fmt.Sprintf("a rede mudou (%s %s -> %s %s)", e.from.Name, e.from.Addr, e.to.Name, e.to.Addr)
 }
 
 func (s *session) sendAll(alive bool) error {
@@ -240,7 +245,7 @@ func (a *announcer) read(s *session) {
 			continue
 		}
 		for _, r := range answers(st, s.udn, s.ep.location(), a.now()) {
-			// Endereco ruim de um cliente nao derruba a borda: so avisa.
+			// Endereco ruim de um cliente nao derruba o anunciante: so avisa.
 			if err := s.conn.Reply([]byte(r), src); err != nil && !errors.Is(err, net.ErrClosed) {
 				a.logf("AVISO resposta a %s nao enviada: %v", src, err)
 			}
@@ -259,7 +264,11 @@ func (a *announcer) start(ep endpoint, forced, udn string) (*session, []string, 
 	if err != nil {
 		return nil, nil, a.classify(ch, err)
 	}
-	s := &session{ch: ch, ep: ep, udn: udn, conn: conn, readErr: make(chan error, 1)}
+	auto := ep.Host == ""
+	if auto {
+		ep.Host = ch.Addr // B2 revista: o host do LOCATION e o IPv4 da interface
+	}
+	s := &session{ch: ch, ep: ep, auto: auto, forced: forced, udn: udn, conn: conn, readErr: make(chan error, 1)}
 	go a.read(s)
 	if err := s.sendAll(true); err != nil {
 		err = a.classify(ch, step("envio do NOTIFY", err))
@@ -274,7 +283,7 @@ func (a *announcer) start(ep endpoint, forced, udn string) (*session, []string, 
 // que importa e que a origem do anuncio sumiu). EADDRINUSE e sempre
 // configuracao (a 1900 presa sem SO_REUSEADDR).
 func (a *announcer) classify(ch choice, err error) error {
-	if isNetDown(err) || errors.Is(err, syscall.EADDRINUSE) {
+	if isNetDown(err) || errors.Is(err, errAddrInUse) {
 		return err
 	}
 	if ifi := owner(a.net.Interfaces(), ch.Addr); ifi == nil || ifi.Name != ch.Name {
@@ -303,6 +312,9 @@ func (a *announcer) serve(s *session) (stop bool, err error) {
 		if !ok {
 			select {
 			case <-tick:
+				if err := a.checkNetwork(s); err != nil {
+					return false, err
+				}
 				if err := s.sendAll(true); err != nil {
 					return false, a.classify(s.ch, step("envio do NOTIFY", err))
 				}
@@ -321,8 +333,28 @@ func (a *announcer) serve(s *session) (stop bool, err error) {
 	}
 }
 
+// checkNetwork: com o host detectado, a rota padrao de agora tem de ser a da
+// sessao. Mudou: byebye (melhor esforco: o IPv4 antigo pode ja ter sumido) e
+// netChanged; sumiu: falta de rede.
+func (a *announcer) checkNetwork(s *session) error {
+	if !s.auto {
+		return nil
+	}
+	ch, err := chooseInterface("", s.forced, a.net.Interfaces(), a.net.DefaultRoute)
+	if err != nil {
+		return step("escolha da interface do anuncio", err)
+	}
+	if ch.Name == s.ch.Name && ch.Addr == s.ch.Addr {
+		return nil
+	}
+	if err := s.sendAll(false); err != nil {
+		a.logf("byebye do endereco antigo nao enviado: %v", err)
+	}
+	return netChanged{s.ch, ch}
+}
+
 func (a *announcer) fatal(err error) int {
-	a.logf("FALHA em %v — encerrando (erro de configuracao, nao de rede: a borda cai junto)", err)
+	a.logf("FALHA em %v — encerrando (erro de configuracao, nao de rede)", err)
 	return 1
 }
 
@@ -363,14 +395,23 @@ func (a *announcer) run() int {
 				now[w] = true
 			}
 			shown = now
-			a.logf("anunciando %s em UDP 1900 pela interface %s (%s, via %s); LOCATION %s (host de SSDP_ADVERTISE_HOST)",
-				ssdpST, s.ch.Name, s.ch.Addr, s.ch.Source, s.ep.location())
+			origem := "host de SSDP_ADVERTISE_HOST"
+			if s.auto {
+				origem = "host detectado: IPv4 da interface"
+			}
+			a.logf("anunciando %s em UDP 1900 pela interface %s (%s, via %s); LOCATION %s (%s)",
+				ssdpST, s.ch.Name, s.ch.Addr, s.ch.Source, s.ep.location(), origem)
 			stop, serr := a.serve(s)
 			if stop {
 				return 0
 			}
 			s.conn.Close()
 			err = serr
+			var nc netChanged
+			if errors.As(err, &nc) {
+				a.logf("AVISO %v: anunciando de novo com o endereco novo", nc)
+				continue
+			}
 		}
 		if !isNetDown(err) {
 			return a.fatal(err)
@@ -378,7 +419,7 @@ func (a *announcer) run() int {
 		if downSince.IsZero() {
 			downSince = a.now()
 			a.logf("AVISO sem rede para o anuncio (%v): sockets fechados, nada e anunciado nem respondido; "+
-				"a borda e as APIs seguem de pe. Nova tentativa em %s, com espera crescente ate %s, escolhendo "+
+				"as APIs seguem de pe. Nova tentativa em %s, com espera crescente ate %s, escolhendo "+
 				"de novo a interface e o IP; o proximo aviso sai quando a rede voltar.", err, wait, retryMax)
 		}
 		tries++
@@ -403,9 +444,31 @@ func (a *announcer) run() int {
 	}
 }
 
+// stopFile: o "sinal" do arquivo de parada (SSDP_STOP_FILE).
+type stopFile string
+
+func (f stopFile) String() string { return "arquivo de parada " + string(f) }
+func (stopFile) Signal()          {}
+
+// watchStopFile manda stopFile ao canal quando o arquivo aparecer.
+func watchStopFile(path string, every time.Duration, sig chan<- os.Signal, exists func(string) bool) {
+	for {
+		if exists(path) {
+			sig <- stopFile(path)
+			return
+		}
+		time.Sleep(every)
+	}
+}
+
+func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
+
 func main() {
-	sig := make(chan os.Signal, 1)
+	sig := make(chan os.Signal, 2)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
+	if f := os.Getenv("SSDP_STOP_FILE"); f != "" {
+		go watchStopFile(f, 500*time.Millisecond, sig, fileExists)
+	}
 	a := &announcer{
 		net:    realNet{},
 		getenv: os.Getenv,

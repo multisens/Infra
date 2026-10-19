@@ -62,17 +62,23 @@ func TestAPIInfoPolitica(t *testing.T) {
 		wantErr(t, p+" token lixo", apiGet(t, h, p, map[string]string{"Authorization": "Bearer lixo"}), 107)
 		for name, hd := range map[string]map[string]string{
 			"associado pelo Origin": {"Origin": tAssoc},
-			"token de nao local":    {"Authorization": accessFor(t, "cli-2", classNonLocal)},
+			"token de autonomo":     {"Authorization": accessFor(t, "cli-1", classAutonomous)},
 			"token de associado":    {"Authorization": accessFor(t, "cli-3", classAssociated)},
 		} {
 			if r := apiGet(t, h, p, hd); r.status != 200 {
 				t.Errorf("%s %s: status %d %s", p, name, r.status, r.body)
 			}
 		}
+		// o nao local: 106 na superficie HTTP (E7, C.4.1.6); na externa, passa
+		nl := map[string]string{"Authorization": accessFor(t, "cli-2", classNonLocal)}
+		wantErr(t, p+" token de nao local na interna (E7)", apiGet(t, h, p, nl), 106)
+		if r := apiGet(t, externalHandler(t, modeEnforce, baseStore(), nil), p, nl); r.status != 200 {
+			t.Errorf("%s token de nao local na externa: status %d %s", p, r.status, r.body)
+		}
 		r := apiGet(t, h, p, map[string]string{"Origin": tAssoc, "Accept-Version": "9.9"})
 		wantErr(t, p+" Accept-Version 9.9", r, 100)
-		if v := r.hdr.Get("API-Version"); v != latestVersion {
-			t.Errorf("%s Accept-Version 9.9: API-Version %q, esperado a mais recente (%s, C.3.6.6)", p, v, latestVersion)
+		if v := r.hdr.Get("API-Version"); v != h.cfg.LatestVersion {
+			t.Errorf("%s Accept-Version 9.9: API-Version %q, esperado a mais recente (%s, C.3.6.6)", p, v, h.cfg.LatestVersion)
 		}
 	}
 	// warn: sem token so avisa, e a borda responde

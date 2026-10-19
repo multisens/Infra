@@ -176,9 +176,11 @@ func (h *authHandler) bindRegister(r *http.Request, _ map[string]string) edgeRep
 	if sid == "" {
 		return edgeReply{Code: 300, Detail: "no DTV service selected for the bind context"}
 	}
+	// A6 (Joel, 15/10): o serviceContextId e o globalServiceId do servico
+	// corrente (o BAM; Tabela 6, C.3.5); ate 15/10, a constante do tv3ws
 	ok := edgeReply{Body: struct {
 		ServiceContextID string `json:"serviceContextId"`
-	}{h.cfg.ServiceContextID}}
+	}{sid}}
 
 	raws, err := h.store.BindKeys(sid)
 	if err != nil {
@@ -259,9 +261,8 @@ func (h *authHandler) bindList(r *http.Request, _ map[string]string) edgeReply {
 
 	// Nome e id so se conhecem para o servico corrente (session:current-
 	// service); para os demais nao ha fonte no testbed e os campos sao
-	// omitidos (C.3.2.2).
-	// PENDENTE (Joel): serviceContextId eh a constante do tv3ws, igual para
-	// todo servico (L2) — itens de servicos diferentes saem indistinguiveis.
+	// omitidos (C.3.2.2). O serviceContextId de cada item e o globalServiceId
+	// do servico (A6, Joel 15/10): os itens deixaram de ser indistinguiveis.
 	cur, err := h.store.CurrentServiceID()
 	if err != nil {
 		return redisDown(err)
@@ -277,8 +278,8 @@ func (h *authHandler) bindList(r *http.Request, _ map[string]string) edgeReply {
 	}
 	items := make([]boundService, 0, len(matched))
 	for _, sid := range matched {
-		it := boundService{ServiceContextID: h.cfg.ServiceContextID}
-		if cur != "" && sid == cur {
+		it := boundService{ServiceContextID: sid}
+		if cur != "" && sid == cur && (info["serviceContextId"] == "" || info["serviceContextId"] == sid) {
 			it.ServiceName = info["serviceName"]
 			if id, ok := numericServiceID(info["serviceId"]); ok {
 				it.ServiceID = &id
@@ -304,8 +305,9 @@ func numericServiceID(s string) (uint64, bool) {
 // C.6.8.4 (Tabela C.49): remove do servico corrente toda entrada com a mesma
 // chave (o cabecalho "key" nao traz alg). Sucesso mesmo se a chave nao existe
 // — inclusive sem servico corrente, quando nao ha lista de que remover.
-// PENDENTE (Joel): ao revogar, a C.4.4 manda liberar os recursos
-// compartilhados que a aplicacao usava — nao implementado (L7).
+// ADIADO (Joel, 15/10; A10): ao revogar, a C.4.4 manda liberar os recursos
+// compartilhados que a aplicacao usava — nao implementado (L7). Depende do
+// Application Lifecycle Manager e do menu de autorizacoes.
 func (h *authHandler) bindRemove(r *http.Request, _ map[string]string) edgeReply {
 	key := strings.TrimSpace(r.Header.Get("key"))
 	if key == "" {

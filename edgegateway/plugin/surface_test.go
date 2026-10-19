@@ -7,39 +7,31 @@ import (
 	"time"
 )
 
-// P1.9 (decisao do Luis em 10/10): superficies com rotas distintas. A externa
-// (44643) so expoe as rotas que admitem o cliente nao local; a interna
-// (44642), todas. Quem aplica a regra eh o generate.js: o bloco do plugin de
-// cada superficie ja chega filtrado (generate.test.js confere a derivacao).
-// Aqui fica o comportamento do plugin com a tabela da externa: a rota que
-// ficou so na interna responde 100, nos dois modos, sem consultar o Redis e
-// sem chegar ao roteador, inclusive para o local associado (a quem POST e
-// DELETE /tv3/bind-context sao restritos); o GET da mesma API continua.
+// F-1, F-2 e E7 (respostas do Joel em 15/10, que reveem a P1.9 do Luis de
+// 10/10): as duas superficies tem todas as rotas. Quem deriva as diferencas
+// eh o generate.js (generate.test.js confere a derivacao): na externa
+// (Server-SecureBaseURL), as rotas de uso exclusivo do cliente local e a
+// C.6.1.2 chegam com surface_error 106 (C.4.1.8); na interna (HTTP), o
+// bloco chega com nonlocal_https_only e as rotas C.6.1.2/C.6.1.3 com
+// nonlocal_http (C.4.1.6). Aqui fica o comportamento do plugin com a tabela
+// da externa.
 
 // externalExtra: testExtra() como o generate.js o entrega a superficie
-// externa: so as rotas cuja lista "classes" (ausente = todas) inclui
-// non-local, e o catalogo de APIs sem as das rotas que sairam.
+// externa: as mesmas rotas e o mesmo catalogo de APIs, com o 106 da C.4.1.8
+// nas rotas cuja lista "classes" nao inclui non-local e no /tv3/authorize,
+// e sem as marcas da superficie HTTP.
 func externalExtra() map[string]interface{} {
 	ex := testExtra()
 	ex["surface"] = "external"
-	var routes []interface{}
+	delete(ex, "nonlocal_https_only")
 	for _, rr := range ex["routes"].([]interface{}) {
 		m := rr.(map[string]interface{})
-		if cl, ok := m["classes"].([]interface{}); ok && !hasValue(cl, classNonLocal) {
-			continue
+		delete(m, "nonlocal_http")
+		cl, ok := m["classes"].([]interface{})
+		if (ok && !hasValue(cl, classNonLocal)) || m["path"] == "/tv3/authorize" {
+			m["surface_error"] = float64(106)
 		}
-		routes = append(routes, m)
 	}
-	ex["routes"] = routes
-	var apis []interface{}
-	for _, a := range ex["apis"].([]interface{}) {
-		switch a.(map[string]interface{})["id"] {
-		case "tv3ws-bind-context-register", "tv3ws-bind-context-remove":
-			continue
-		}
-		apis = append(apis, a)
-	}
-	ex["apis"] = apis
 	return ex
 }
 
@@ -64,62 +56,57 @@ func externalHandler(t *testing.T, mode string, st *fakeStore, next http.Handler
 	return h
 }
 
-func TestExternaTabelaDerivada(t *testing.T) {
+func TestExternaTodasAsRotas(t *testing.T) {
 	h := externalHandler(t, modeEnforce, baseStore(), nil)
-	if h.cfg.Surface != "external" {
-		t.Fatalf("surface %q", h.cfg.Surface)
+	if h.cfg.Surface != "external" || h.cfg.NonLocalHTTPSOnly {
+		t.Fatalf("surface %q, nonlocal_https_only %v", h.cfg.Surface, h.cfg.NonLocalHTTPSOnly)
 	}
-	got := map[string]bool{}
+	if n, all := len(h.cfg.Routes.routes), len(testExtra()["routes"].([]interface{})); n != all {
+		t.Errorf("externa com %d rotas, esperado %d (todas)", n, all)
+	}
+	want106 := map[string]bool{"GET /tv3/authorize": true, "POST /tv3/bind-context": true, "DELETE /tv3/bind-context": true,
+		"GET /tv3/remote-device/devices/{classId}": true, "GET /tv3/remote-device/device/{handle}": true}
 	for _, rt := range h.cfg.Routes.routes {
-		got[rt.String()] = true
-	}
-	for _, out := range []string{"POST /tv3/bind-context", "DELETE /tv3/bind-context"} {
-		if got[out] {
-			t.Errorf("%s nao deveria estar na externa", out)
+		if got := rt.SurfaceError == 106; got != want106[rt.String()] {
+			t.Errorf("%s: surface_error 106 = %v, esperado %v", rt, got, want106[rt.String()])
 		}
-	}
-	for _, in := range []string{"GET /health", "GET /manifest", "GET /tv3/authorize", "GET /tv3/bind-context", "GET /tv3/api-info", "GET /tv3/current-service"} {
-		if !got[in] {
-			t.Errorf("%s deveria estar na externa", in)
-		}
-	}
-	if n, all := len(h.cfg.Routes.routes), len(testExtra()["routes"].([]interface{})); n != all-2 {
-		t.Errorf("externa com %d rotas, esperado %d", n, all-2)
 	}
 }
 
-// A rota que so existe na interna da 100 na externa: nos dois modos (o 100
-// nao eh decisao de credencial), para qualquer classe, sem Redis, sem
+// A rota de uso exclusivo do cliente local e a C.6.1.2 dao 106 na externa a
+// qualquer requisicao: nos dois modos, para qualquer classe, sem Redis, sem
 // roteador (edgeCall falha o teste se o next for chamado) e sem mexer nas
 // chaves registradas. Na interna, a mesma requisicao do associado funciona.
-func TestExternaRotaSoDaInternaDa100(t *testing.T) {
+func TestExternaRotaExclusivaDoLocalDa106(t *testing.T) {
 	assocTok := accessFor(t, "cli-3", classAssociated)
 	nonLocal := accessFor(t, "cli-2", classNonLocal)
 	cases := []struct {
-		name, method string
-		hdr          map[string]string
-		body         string
+		name, method, path string
+		hdr                map[string]string
+		body               string
 	}{
-		{"POST pelo associado (Origin)", "POST", jsonHdr, regBody("HS256", "nova")},
-		{"POST com token de associado", "POST", map[string]string{"Authorization": assocTok, "Content-Type": "application/json"}, regBody("HS256", "nova")},
-		{"POST pelo nao local", "POST", map[string]string{"Authorization": nonLocal, "Content-Type": "application/json"}, regBody("HS256", "nova")},
-		{"DELETE pelo associado (Origin)", "DELETE", map[string]string{"Origin": tAssoc, "key": "chave-webmedia"}, ""},
-		{"DELETE sem nada", "DELETE", map[string]string{}, ""},
+		{"POST pelo associado (Origin)", "POST", "/tv3/bind-context", jsonHdr, regBody("HS256", "nova")},
+		{"POST com token de associado", "POST", "/tv3/bind-context", map[string]string{"Authorization": assocTok, "Content-Type": "application/json"}, regBody("HS256", "nova")},
+		{"POST pelo nao local", "POST", "/tv3/bind-context", map[string]string{"Authorization": nonLocal, "Content-Type": "application/json"}, regBody("HS256", "nova")},
+		{"DELETE pelo associado (Origin)", "DELETE", "/tv3/bind-context", map[string]string{"Origin": tAssoc, "key": "chave-webmedia"}, ""},
+		{"DELETE sem nada", "DELETE", "/tv3/bind-context", map[string]string{}, ""},
+		{"/tv3/authorize sem nada", "GET", "/tv3/authorize", map[string]string{}, ""},
+		{"/tv3/authorize pelo nao local", "GET", "/tv3/authorize", map[string]string{"Authorization": nonLocal}, ""},
 	}
 	for _, mode := range []string{modeWarn, modeEnforce} {
 		st := baseStore()
 		h := externalHandler(t, mode, st, nil)
 		for _, c := range cases {
 			st.calls = 0
-			r := edgeCall(t, h, c.method, "/tv3/bind-context", c.hdr, c.body)
-			wantErr(t, mode+" "+c.name, r, 100)
+			r := edgeCall(t, h, c.method, c.path, c.hdr, c.body)
+			wantErr(t, mode+" "+c.name, r, 106)
 			if st.calls != 0 {
 				t.Errorf("%s %s: consultou o Redis %d vez(es)", mode, c.name, st.calls)
 			}
 			if w := r.hdr.Get(warnHeader); w != "" {
-				t.Errorf("%s %s: %s=%q no 100", mode, c.name, warnHeader, w)
+				t.Errorf("%s %s: %s=%q no 106", mode, c.name, warnHeader, w)
 			}
-			if d, _ := r.json["description"].(string); !strings.Contains(d, "API not found: "+c.method+" /tv3/bind-context") {
+			if d, _ := r.json["description"].(string); !strings.Contains(d, "C.4.1.8") {
 				t.Errorf("%s %s: description %q", mode, c.name, d)
 			}
 		}
@@ -135,18 +122,24 @@ func TestExternaRotaSoDaInternaDa100(t *testing.T) {
 	}
 }
 
-// O GET /tv3/bind-context (autonomo e nao local) fica na externa. O caminho
-// continua declarado nela, entao o OPTIONS que nao e preflight recebe os
-// cabecalhos da C.4.1.9.3; o preflight a borda concede como em qualquer
-// caminho (opcao b, Luis 12/10), inclusive o do POST, e a requisicao de
-// verdade da 100.
+// Na externa o nao local usa as APIs (sem o 106 da E7, que e da superfície
+// HTTP). O caminho do POST continua declarado, entao o OPTIONS que nao e
+// preflight recebe os cabecalhos da C.4.1.9.3; o preflight a borda concede
+// como em qualquer caminho (opcao b, Luis 12/10), e a requisicao de verdade
+// da 106.
 func TestExternaMantemGetEOptions(t *testing.T) {
 	st := baseStore()
 	bind := signJWT(t, "HS256", []byte("chave-webmedia"), timeClaims(t0, t0, t0.Add(time.Hour)))
+	nonLocal := accessFor(t, "cli-2", classNonLocal)
 	r := edgeCall(t, externalHandler(t, modeEnforce, st, nil), "GET", "/tv3/bind-context",
-		map[string]string{"Authorization": accessFor(t, "cli-2", classNonLocal), "bind-token": bind}, "")
+		map[string]string{"Authorization": nonLocal, "bind-token": bind}, "")
 	if r.status != 200 || !strings.HasPrefix(r.body, `{"boundServices":[`) {
 		t.Errorf("GET /tv3/bind-context na externa: status %d %s", r.status, r.body)
+	}
+	req, _ := http.NewRequest("GET", "/tv3/current-service", nil)
+	req.Header.Set("Authorization", nonLocal)
+	if v := externalHandler(t, modeEnforce, st, nil).evaluate(req); v.Code != 0 {
+		t.Errorf("nao local na externa: codigo %d (%s)", v.Code, v.Detail)
 	}
 
 	h := externalHandler(t, modeEnforce, st, nil)
@@ -155,9 +148,6 @@ func TestExternaMantemGetEOptions(t *testing.T) {
 		t.Errorf("OPTIONS sem preflight na externa: status %d, ACAM %q", o.status, o.hdr.Get("Access-Control-Allow-Methods"))
 	}
 
-	// preflight: desde 12/10 (opcao b do Luis) a propria borda responde, sem
-	// passar ao modulo CORS do KrakenD, tambem para o POST que nao existe na
-	// externa (o navegador le o 100 da requisicao em seguida)
 	called := false
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true; w.WriteHeader(204) })
 	rec := serve(externalHandler(t, modeEnforce, st, next), "OPTIONS", "/tv3/bind-context",
@@ -167,21 +157,15 @@ func TestExternaMantemGetEOptions(t *testing.T) {
 	}
 }
 
-// C.6.7.8/C.6.7.9 na externa: o catalogo eh o das rotas da superficie (ver
-// o DECIDIDO (Luis, 11/10; F-2) no generate.js, pluginConfig).
+// F-2 revista (Joel, 15/10): a C.6.7.9 lista todas as APIs implementadas nas
+// duas superficies, e a C.6.7.8 responde por todas.
 func TestExternaAPIInfo(t *testing.T) {
 	h := externalHandler(t, modeEnforce, baseStore(), nil)
-	wantOK(t, "externa: lista", apiGet(t, h, "/tv3/api-info", nil), `{"receiverApis":[`+
-		`{"id":"tv3ws-application-authorization","version":"2.0"},`+
-		`{"id":"tv3ws-current-service","version":"2.0"},`+
-		`{"id":"tv3ws-api-info","version":"2.0"},`+
-		`{"id":"tv3ws-bind-context-list","version":"2.0"}]}`)
-	wantOK(t, "externa: bind-context-list", apiGet(t, h, "/tv3/api-info/tv3ws-bind-context-list", nil),
-		`{"receiverApi":{"id":"tv3ws-bind-context-list","version":"2.0"}}`)
-	wantErr(t, "externa: bind-context-register", apiGet(t, h, "/tv3/api-info/tv3ws-bind-context-register", nil), 101)
-	wantErr(t, "externa: bind-context-remove", apiGet(t, h, "/tv3/api-info/tv3ws-bind-context-remove", nil), 101)
-	// na interna as duas continuam
+	wantOK(t, "externa: lista", apiGet(t, h, "/tv3/api-info", nil), allAPIs)
+	for _, id := range []string{"tv3ws-bind-context-register", "tv3ws-bind-context-remove", "tv3ws-bind-context-list"} {
+		wantOK(t, "externa: "+id, apiGet(t, h, "/tv3/api-info/"+id, nil),
+			`{"receiverApi":{"id":"`+id+`","version":"2.0"}}`)
+	}
 	hi := newTestHandler(t, modeEnforce, baseStore(), nil)
-	wantOK(t, "interna: bind-context-register", apiGet(t, hi, "/tv3/api-info/tv3ws-bind-context-register", nil),
-		`{"receiverApi":{"id":"tv3ws-bind-context-register","version":"2.0"}}`)
+	wantOK(t, "interna: lista", apiGet(t, hi, "/tv3/api-info", nil), allAPIs)
 }

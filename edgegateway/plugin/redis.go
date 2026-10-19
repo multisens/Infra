@@ -12,7 +12,7 @@ import (
 )
 
 // Mini cliente Redis (protocolo RESP2) so com net da biblioteca padrao —
-// leitura (GET, SISMEMBER, HEXISTS, LRANGE, HGETALL, SCAN) e, para a C.6.8
+// leitura (GET, SISMEMBER, HGET, LRANGE, HGETALL, SCAN) e, para a C.6.8
 // respondida pela borda, escrita SO por FCALL (P4, decisao do Luis em 10/10,
 // "Funcoes + auditoria"): o registro e a revogacao chamam as funcoes
 // tv30_bind_registra e tv30_bind_remove da biblioteca de funcoes do Redis
@@ -374,7 +374,10 @@ const (
 type store interface {
 	IsBlocked(clientID string) (bool, error)
 	IsAuthorized(clientID string) (bool, error) // SISMEMBER clients:authorized (E6)
-	IsAssociatedOrigin(origin string) (bool, error)
+	// AssociatedOrigin: HGET origins:associated <origem> — o servico que lancou
+	// a app (o AoP grava ao lancar; H1, Joel 15/10); ok=false se a origem nao
+	// esta na lista.
+	AssociatedOrigin(origin string) (service string, ok bool, err error)
 	CurrentServiceID() (string, error)
 	BindKeys(serviceID string) ([]string, error)
 
@@ -397,11 +400,18 @@ func (s *redisStore) IsAuthorized(id string) (bool, error) {
 	return n == 1, err
 }
 
-// origins:associated eh HASH (o AoP grava com HSET origem scid e o tv3ws
-// le com HGET), nao SET — por isso HEXISTS.
-func (s *redisStore) IsAssociatedOrigin(origin string) (bool, error) {
-	n, err := s.c.intCmd("HEXISTS", keyAssociated, origin)
-	return n == 1, err
+// origins:associated eh HASH: origem -> servico que lancou a app (o AoP grava
+// com HSET ao lancar e apaga ao encerrar).
+func (s *redisStore) AssociatedOrigin(origin string) (string, bool, error) {
+	v, err := s.c.do("HGET", keyAssociated, origin)
+	if err != nil || v == nil {
+		return "", false, err
+	}
+	sv, ok := v.(string)
+	if !ok {
+		return "", false, errors.New("HGET: resposta inesperada")
+	}
+	return sv, true, nil
 }
 
 func (s *redisStore) CurrentServiceID() (string, error) {

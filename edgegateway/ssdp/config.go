@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -10,17 +9,16 @@ import (
 
 // Endereco que a descoberta SSDP divulga (C.3.4). LOCATION e Server-BaseURL
 // (o /manifest, montado pelo tv3ws/src/ssdp-config.ts) tem de sair do mesmo
-// host. L6 decidida = opcao A (Luis, 09/10): quem anuncia e a borda, em rede
-// do host (so Linux nativo).
+// host. Desde o complemento do Joel de 15/10, quem anuncia e este programa,
+// nativo no host, fora do Docker, nos tres sistemas (./tv30 up; ate ali, a
+// borda em rede do host, so Linux nativo, opcao A do Luis de 09/10).
 //
-// B2 (decisao do Luis em 11/10): com o anuncio ligado (SSDP_ENABLED=true), o
-// host e o SSDP_ADVERTISE_HOST, OBRIGATORIO — ausente, vazio ou sem host e
-// erro de configuracao (o anunciante sai com 1 e a borda cai inteira, como os
-// outros erros de configuracao da C8). O SERVER_URL e o IP local deixaram de
-// ser fonte do host do anuncio da borda. O tv3ws manteve a cadeia dele
-// (SSDP_ADVERTISE_HOST > SERVER_URL > IP local; o anunciante Node do dev-host
-// nao mudou) e le os mesmos arquivos de ambiente que a borda: com o
-// SSDP_ADVERTISE_HOST definido, os dois saem do mesmo valor.
+// B2 revista pelo Joel em 15/10: o host e DETECTADO — o IPv4 da interface por
+// onde o anuncio sai (iface.go), e acompanha a troca de rede (main.go). O
+// SSDP_ADVERTISE_HOST deixou de ser obrigatorio e fica como sobreposicao:
+// definido, vale ele, fixo. Definido sem host ("http://:44642") continua erro
+// de configuracao. De 11/10 a 15/10 (B2 do Luis) ele era obrigatorio. O
+// /manifest do tv3ws tem de sair com o mesmo host (complemento do Joel, 3.4).
 
 const (
 	ssdpST              = "urn:schemas-sbtvd-org:service:TV3.0WebServices:1"
@@ -30,7 +28,7 @@ const (
 )
 
 type endpoint struct {
-	Host      string // de SSDP_ADVERTISE_HOST (B2)
+	Host      string // de SSDP_ADVERTISE_HOST; "" = detectado (B2 revista)
 	HTTPPort  int
 	HTTPSPort int
 }
@@ -70,8 +68,9 @@ func parsePort(name, raw string, fallback int) (int, error) {
 	return n, nil
 }
 
-// resolveEndpoint: <host> = SSDP_ADVERTISE_HOST, obrigatorio (B2, decisao do
-// Luis em 11/10). Conferido uma vez, na partida: erro aqui e de configuracao.
+// resolveEndpoint: <host> = SSDP_ADVERTISE_HOST, se definido; vazio ou ausente
+// = detectado a cada sessao (B2 revista). Conferido uma vez, na partida: erro
+// aqui e de configuracao.
 func resolveEndpoint(getenv func(string) string) (endpoint, error) {
 	httpPort, err := parsePort("EDGE_HTTP_PORT", getenv("EDGE_HTTP_PORT"), defaultEdgeHTTPPort)
 	if err != nil {
@@ -83,9 +82,7 @@ func resolveEndpoint(getenv func(string) string) (endpoint, error) {
 	}
 	raw := getenv("SSDP_ADVERTISE_HOST")
 	if strings.TrimSpace(raw) == "" {
-		return endpoint{}, errors.New("SSDP_ADVERTISE_HOST ausente ou vazio: com SSDP_ENABLED=true ele e " +
-			"obrigatorio (B2). Defina no .env da raiz o IP (ou nome) desta maquina na rede, por exemplo " +
-			"SSDP_ADVERTISE_HOST=192.168.0.23")
+		return endpoint{"", httpPort, httpsPort}, nil
 	}
 	h := normalizeHost(raw)
 	if h == "" {
@@ -110,9 +107,8 @@ func isLoopbackHost(host string) bool {
 // silencio). Nao mudam o anuncio.
 func warnings(e endpoint) []string {
 	var out []string
-	if isLoopbackHost(e.Host) {
-		// A B2 (Luis, 11/10) fez do SSDP_ADVERTISE_HOST ausente ou vazio um erro;
-		// um valor de loopback configurado de proposito segue so com aviso.
+	if e.Host != "" && isLoopbackHost(e.Host) {
+		// um valor de loopback configurado de proposito segue so com aviso
 		out = append(out, fmt.Sprintf("SSDP_ADVERTISE_HOST='%s' e de loopback: um cliente em outro "+
 			"equipamento recebe o anuncio mas nao alcanca o LOCATION nem o Server-BaseURL (C.3.4). "+
 			"Defina no .env da raiz o IP do equipamento na rede.", e.Host))
@@ -121,7 +117,6 @@ func warnings(e endpoint) []string {
 		out = append(out, fmt.Sprintf("EDGE_HTTP_PORT=%d: a C.3.4 fixa %d no Server-BaseURL; "+
 			"o anuncio fica fora da norma (use so para teste).", e.HTTPPort, defaultEdgeHTTPPort))
 	}
-	out = append(out, fmt.Sprintf("Server-SecureBaseURL %s aponta para porta SEM TLS (a borda ainda nao "+
-		"tem HTTPS, lacuna L3): cliente que use https:// nesse endereco falha.", e.secureBase()))
+	// a 44643 tem TLS desde a A7 (Joel, 15/10): o aviso de porta sem TLS saiu
 	return out
 }

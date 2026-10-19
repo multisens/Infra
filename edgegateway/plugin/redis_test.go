@@ -155,6 +155,14 @@ func (f *fakeRedis) exec(a []string) string {
 		}
 		_, ok := f.hashes[a[1]][a[2]]
 		return b(ok)
+	case "HGET":
+		if _, isStr := f.strs[a[1]]; isStr {
+			return "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n"
+		}
+		if v, ok := f.hashes[a[1]][a[2]]; ok {
+			return bulk(v)
+		}
+		return "$-1\r\n"
 	case "LRANGE":
 		if _, isStr := f.strs[a[1]]; isStr {
 			return "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n"
@@ -364,11 +372,12 @@ func TestRedisComandos(t *testing.T) {
 	if b, err := s.IsAuthorized("cli-bloq"); err != nil || b {
 		t.Fatalf("SISMEMBER fora do conjunto: %v %v", b, err)
 	}
-	if b, err := s.IsAssociatedOrigin(tAssoc); err != nil || !b {
-		t.Fatalf("HEXISTS: %v %v", b, err)
+	// H1 (Joel, 15/10): o valor da origem e o servico que lancou a app
+	if svc, ok, err := s.AssociatedOrigin(tAssoc); err != nil || !ok || svc != tSvc {
+		t.Fatalf("HGET: %q %v %v", svc, ok, err)
 	}
-	if b, err := s.IsAssociatedOrigin("http://x"); err != nil || b {
-		t.Fatalf("HEXISTS ausente: %v %v", b, err)
+	if svc, ok, err := s.AssociatedOrigin("http://x"); err != nil || ok || svc != "" {
+		t.Fatalf("HGET ausente: %q %v %v", svc, ok, err)
 	}
 	l, err := s.BindKeys(tSvc)
 	if err != nil || len(l) != 2 || l[1] != "x\r\ny" {
@@ -383,11 +392,11 @@ func TestRedisComandos(t *testing.T) {
 	}
 	// erro do servidor (WRONGTYPE) nao derruba a conexao
 	f.with(func() { f.strs[keyAssociated] = "x" })
-	if _, err := s.IsAssociatedOrigin(tAssoc); err == nil || !strings.Contains(err.Error(), "WRONGTYPE") {
+	if _, _, err := s.AssociatedOrigin(tAssoc); err == nil || !strings.Contains(err.Error(), "WRONGTYPE") {
 		t.Fatalf("esperado WRONGTYPE, veio %v", err)
 	}
 	f.with(func() { delete(f.strs, keyAssociated) })
-	if _, err := s.IsAssociatedOrigin(tAssoc); err != nil {
+	if _, _, err := s.AssociatedOrigin(tAssoc); err != nil {
 		t.Fatalf("conexao ficou ruim depois de -ERR: %v", err)
 	}
 }

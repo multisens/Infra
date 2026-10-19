@@ -266,5 +266,15 @@
     "items": {
       "type": "object"
     }
+  },
+  "aop/+/currentApp": {
+    "type": "string",
+    "maxLength": 256,
+    "description": "G4 (Joel, 15/10): o appId da aplicacao corrente do servico {serviceId} (o globalServiceId, A6), RETIDO. A mensagem vazia retida e o fim da aplicacao (DESTROY, KILL, troca de servico, saida para o catalogo) e apaga o retido; na troca de servico, o publicador apaga o retido do servico que deixa. Publicador: o Application Lifecycle Manager (item 13); enquanto ele nao for extraido, o AoP (startApp). Hoje sem publicador neste repositorio."
+  },
+  "aop/+/+/path": {
+    "type": "string",
+    "maxLength": 1024,
+    "description": "G4: o diretorio da aplicacao {appId} do servico {serviceId}, RETIDO, do mesmo publicador de currentApp (C.6.4.7 le dele)."
   }
 }

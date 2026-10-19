@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"regexp"
@@ -14,7 +15,8 @@ import (
 // decisoes da reuniao de 05/10 com o Joel: C.6.8 (D-0510-2) e C.6.7.8/C.6.7.9
 // (D-0510-3). A requisicao passa antes pela mesma decisao de credencial das
 // demais rotas (evaluate: 100, 106, 107; em warn so avisa) e depois chega ao
-// handler daqui, sem repasse ao roteador do KrakenD. O endpoint dessas rotas
+// handler daqui, sem repasse ao roteador do KrakenD. A versao ja vem
+// negociada (ServeHTTP, handler.go). O endpoint dessas rotas
 // continua gerado no KrakenD (generate.js), mas nunca eh alcancado: ele so
 // mantem o caminho registrado no roteador, como o de qualquer outra rota.
 
@@ -52,47 +54,89 @@ func edgeHandlerNames() string {
 	return strings.Join(names, ", ")
 }
 
-// Negociacao de versao (C.3.6.5), o MESMO contrato do tv3ws
-// (tv3ws/src/middleware/basic.ts), que continua fazendo isso nas rotas dele:
-// sem Accept-Version vale a 2.0; fora do formato X.Y => 101; fora do
-// conjunto => 100. A 2.1 eh a proposta do Forum (fluxo de remote-device por
-// handle); as APIs daqui respondem igual nas duas.
-// A lista vai em ordem crescente: a ultima eh a mais recente (latestVersion,
-// o API-Version do erro 100, C.3.6.6).
-var (
-	supportedVersions = []string{"2.0", "2.1"}
-	latestVersion     = supportedVersions[len(supportedVersions)-1]
-	versionPattern    = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
+// Negociacao de versao (C.3.6.5) — D2 e D4 (Joel, 15/10): a BORDA negocia a
+// versao em toda rota, a partir das versoes que o routes.json declara para
+// ela (campo versions; ausente = 2.0, a "current version" da C.3.6.3), e
+// repassa a versao decidida ao servico no cabecalho interno
+// X-TV30-API-Version, que apaga o que vier do cliente. O tv3ws deixou de
+// interpretar o Accept-Version. Ate 15/10, o tv3ws negociava nas rotas dele e
+// a borda nas que ela responde, com o mesmo conjunto ['2.0', '2.1'] escrito a
+// mao nos dois lugares. Sem Accept-Version vale a 2.0; fora do formato X.Y =>
+// 101; versao que a rota nao serve => 100. O 100 e o 101 disparam nos dois
+// modos. As versoes maiores de 100 em diante sao as das propostas do testbed
+// (D1): hoje so a 100.0, o fluxo de remote-device por handle.
+const (
+	defaultVersion        = "2.0"
+	internalVersionHeader = "X-TV30-API-Version"
+	// internalHostHeader: o Host original da requisicao do cliente, que o
+	// KrakenD troca pelo do backend. O /manifest do tv3ws monta com ele o
+	// Server-BaseURL, para sair no mesmo host que o anunciante nativo detecta
+	// (complemento do Joel de 15/10, 3.4). Apaga o que vier do cliente.
+	internalHostHeader = "X-TV30-Host"
 )
 
-const defaultVersion = "2.0"
+var versionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
 
-func negotiateVersion(r *http.Request) (version string, code int, detail string) {
+// compareVersions: "X.Y" numerico (C.3.6.2): 2.10 e mais recente que 2.9.
+func compareVersions(a, b string) int {
+	am, an := splitVersion(a)
+	bm, bn := splitVersion(b)
+	if am != bm {
+		return am - bm
+	}
+	return an - bn
+}
+
+func splitVersion(v string) (int, int) {
+	maj, min, _ := strings.Cut(v, ".")
+	x, _ := strconv.Atoi(maj)
+	y, _ := strconv.Atoi(min)
+	return x, y
+}
+
+func negotiateVersion(r *http.Request, served []string) (version string, code int, detail string) {
 	vals := r.Header.Values("Accept-Version")
-	if len(vals) == 0 {
-		return defaultVersion, 0, ""
+	v := defaultVersion
+	if len(vals) > 0 {
+		// varios cabecalhos: o node junta com ", " (e o resultado eh malformado)
+		v = strings.Join(vals, ", ")
+		if !versionPattern.MatchString(v) {
+			return "", 101, "malformed Accept-Version '" + v + "'"
+		}
 	}
-	// varios cabecalhos: o node junta com ", " (e o resultado eh malformado)
-	v := strings.Join(vals, ", ")
-	if !versionPattern.MatchString(v) {
-		return "", 101, "malformed Accept-Version '" + v + "'"
-	}
-	for _, s := range supportedVersions {
+	for _, s := range served {
 		if v == s {
 			return v, 0, ""
 		}
 	}
-	return "", 100, "unsupported version '" + v + "' (supported: " + strings.Join(supportedVersions, ", ") + ")"
+	return "", 100, "unsupported version '" + v + "' for this API (served: " + strings.Join(served, ", ") + ")"
+}
+
+// versionInfo: as versoes da rota da requisicao e a mais recente do servidor,
+// guardadas no contexto da requisicao para o API-Version das respostas que a
+// borda escreve (apiVersion, handler.go).
+type versionInfo struct {
+	served []string
+	latest string
+}
+
+type versionCtxKey struct{}
+
+func withVersionInfo(r *http.Request, vi versionInfo) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), versionCtxKey{}, vi))
+}
+
+func versionInfoOf(r *http.Request) versionInfo {
+	if vi, ok := r.Context().Value(versionCtxKey{}).(versionInfo); ok {
+		return vi
+	}
+	return versionInfo{served: []string{defaultVersion}, latest: defaultVersion}
 }
 
 // serveEdge responde uma rota da borda. O aviso do modo warn (se houver)
 // ja esta nos cabecalhos e fica: ele diz o que o enforce faria.
-func (h *authHandler) serveEdge(w http.ResponseWriter, r *http.Request, v verdict) {
-	version, code, detail := negotiateVersion(r)
-	reply := edgeReply{Code: code, Detail: detail}
-	if code == 0 {
-		reply = h.runEdge(edgeHandlers[v.rt.Edge], r, v.params)
-	}
+func (h *authHandler) serveEdge(w http.ResponseWriter, r *http.Request, v verdict, version string) {
+	reply := h.runEdge(edgeHandlers[v.rt.Edge], r, v.params)
 	if reply.Code != 0 {
 		logf("API surface=%s code=%d %s %q detalhe=%q", h.cfg.Surface, reply.Code, r.Method, r.URL.Path, reply.Detail)
 		writeC32(w, r, reply.Code, reply.Detail)

@@ -103,8 +103,8 @@ func storedJSON(alg, key string) string {
 // fakeStore: Redis em memoria para os testes da decisao e das APIs da borda.
 type fakeStore struct {
 	blocked    map[string]bool
-	authorized map[string]bool // clients:authorized (E6)
-	associated map[string]bool
+	authorized map[string]bool   // clients:authorized (E6)
+	associated map[string]string // origins:associated: origem -> servico que lancou a app
 	current    string
 	keys       map[string][]string // bind-context:{serviceId}
 	svcHash    map[string]string   // session:current-service
@@ -126,9 +126,10 @@ func (f *fakeStore) IsAuthorized(id string) (bool, error) {
 	}
 	return f.authorized[id], f.err
 }
-func (f *fakeStore) IsAssociatedOrigin(o string) (bool, error) {
+func (f *fakeStore) AssociatedOrigin(o string) (string, bool, error) {
 	f.calls++
-	return f.associated[o], f.err
+	svc, ok := f.associated[o]
+	return svc, ok, f.err
 }
 func (f *fakeStore) CurrentServiceID() (string, error) {
 	f.calls++

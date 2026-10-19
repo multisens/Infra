@@ -14,7 +14,13 @@ services:
       dockerfile: redis/Dockerfile
     container_name: redis
     ports:
-      - "6379:6379"   # fixa por convencao (plano, V10); SEM senha (D-L1)
+      # 6379 fixa e SO em 127.0.0.1 (A1, Joel 15/10): aberta a rede, um aparelho
+      # gravaria na lista de associados ou nas chaves de bind e contornaria a
+      # borda. Sem senha e sem ACL (D-L1): escrita direta fora das funcoes que
+      # validam fica vedada por convencao. Os servicos em container usam a
+      # ginga_net; os que rodam no host (dev-host, borda em rede do host)
+      # usam 127.0.0.1.
+      - "127.0.0.1:6379:6379"
       - "18081"       # UI do commander: porta de host DINAMICA (V10), com login
     environment:
       # D-L1 (Luis, 03/10): usuario e senha SO na UI do commander; a conexao

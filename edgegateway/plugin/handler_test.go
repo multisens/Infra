@@ -39,12 +39,23 @@ func testExtra() map[string]interface{} {
 		return m
 	}
 	edge := func(m map[string]interface{}, name string) map[string]interface{} { m["edge"] = name; return m }
+	// campos que o generate.js deriva para a superficie interna (F-1, E7, H2)
+	httpNL := func(m map[string]interface{}) map[string]interface{} { m["nonlocal_http"] = true; return m }
+	semServ := func(m map[string]interface{}) map[string]interface{} { m["no_service"] = float64(300); return m }
+	vers := func(m map[string]interface{}, vs ...string) map[string]interface{} {
+		l := []interface{}{}
+		for _, v := range vs {
+			l = append(l, v)
+		}
+		m["versions"] = l
+		return m
+	}
 	api := func(id, version string) map[string]interface{} {
 		return map[string]interface{}{"id": id, "version": version}
 	}
 	return map[string]interface{}{
-		"surface":                    "internal",
-		"current_service_context_id": tSCID,
+		"surface":             "internal",
+		"nonlocal_https_only": true,
 		"apis": []interface{}{
 			api("tv3ws-application-authorization", "2.0"),
 			api("tv3ws-current-service", "2.0"),
@@ -56,18 +67,25 @@ func testExtra() map[string]interface{} {
 		"routes": []interface{}{
 			r("GET", "/health", authNone),
 			r("GET", "/manifest", authNone),
-			r("GET", "/tv3/authorize", authNone, classAutonomous, classNonLocal),
+			httpNL(r("GET", "/tv3/authorize", authNone, classAutonomous, classNonLocal)),
+			httpNL(r("GET", "/tv3/token", authNone, classAutonomous, classNonLocal)),
 			edge(r("POST", "/tv3/bind-context", authNone, classAssociated), edgeBindRegister),
 			edge(r("GET", "/tv3/bind-context", authToken, classAutonomous, classNonLocal), edgeBindList),
 			edge(r("DELETE", "/tv3/bind-context", authNone, classAssociated), edgeBindRemove),
 			edge(r("GET", "/tv3/api-info", authToken), edgeAPIList),
 			edge(r("GET", "/tv3/api-info/{apiId}", authToken), edgeAPIInfo),
 			r("GET", "/tv3/current-service", authToken),
-			r("GET", "/tv3/current-service/users/current-user", authTokenBind),
-			r("POST", "/tv3/current-service/users", authTokenBind),
+			semServ(r("GET", "/tv3/current-service/users/current-user", authTokenBind)),
+			semServ(r("POST", "/tv3/current-service/users", authTokenBind)),
+			// C.6.16.3: a tabela nao lista o 300 (sem servico => 108, H2)
+			r("POST", "/tv3/sensory-effect-renderers/{rendererId}", authTokenBind),
+			// D1/D4 (Joel, 15/10): a C.6.15.5 serve 2.0 e 100.0; a rota por
+			// handle so existe na 100.0
+			vers(r("GET", "/tv3/remote-device/devices/{classId}", authToken, classAssociated, classAutonomous), "2.0", "100.0"),
+			vers(r("GET", "/tv3/remote-device/device/{handle}", authToken, classAssociated, classAutonomous), "100.0"),
 			// POST /tv3/{serviceContextId}/users saiu da tabela (A4, decisao do
 			// Luis em 11/10): fora da norma, a borda responde 100
-			r("GET", "/tv3/{serviceContextId}/users/{userid}", authTokenBind),
+			semServ(r("GET", "/tv3/{serviceContextId}/users/{userid}", authTokenBind)),
 		},
 	}
 }
@@ -105,7 +123,7 @@ func baseStore() *fakeStore {
 		// E6 (Luis, 11/10): so passa quem esta em clients:authorized; o
 		// bloqueado nunca esta (invariante clientes-disjuntos do esquema)
 		authorized: map[string]bool{"cli-1": true, "cli-2": true, "cli-3": true},
-		associated: map[string]bool{tAssoc: true},
+		associated: map[string]string{tAssoc: tSvc},
 		current:    tSvc,
 		keys:       map[string][]string{tSvc: {storedJSON("HS256", "chave-webmedia")}, "urn:outra": {storedJSON("HS256", "chave-outra")}},
 	}
@@ -122,10 +140,11 @@ func TestDecisao(t *testing.T) {
 	blockedAssoc := accessFor(t, "cli-bloq", classAssociated)
 	// E6: token valido de cliente fora de clients:authorized (desbloqueado sem
 	// nova autorizacao, ou nunca autorizado) e token valido sem sub
-	fora := accessFor(t, "cli-fora", classNonLocal)
+	fora := accessFor(t, "cli-fora", classAutonomous)
+	foraNL := accessFor(t, "cli-fora", classNonLocal)
 	foraAssoc := accessFor(t, "cli-fora", classAssociated)
 	semSub := "Bearer " + signJWT(t, "HS256", []byte(tSecret), map[string]interface{}{
-		"iat": t0.Unix(), "exp": t0.Add(time.Hour).Unix(), "iss": "GenericIssuer", "class": classNonLocal})
+		"iat": t0.Unix(), "exp": t0.Add(time.Hour).Unix(), "iss": "GenericIssuer", "class": classAutonomous})
 	expired := "Bearer " + signJWT(t, "HS256", []byte(tSecret), map[string]interface{}{"exp": t0.Add(-time.Second).Unix(), "iss": "GenericIssuer", "sub": "x", "class": classNonLocal})
 
 	type hdr map[string]string
@@ -157,7 +176,21 @@ func TestDecisao(t *testing.T) {
 		{"authorize Authorization lixo, Origin qualquer", "GET", "/tv3/authorize", hdr{"Origin": "http://qualquer", "Authorization": "x"}, 0},
 		// token (107)
 		{"token ausente", "GET", "/tv3/current-service", nil, 107},
-		{"token valido", "GET", "/tv3/current-service", hdr{"Authorization": nonLocal}, 0},
+		{"token valido", "GET", "/tv3/current-service", hdr{"Authorization": auto}, 0},
+		// E7 (Joel, 15/10; C.4.1.6): na superficie HTTP o nao local so usa a
+		// C.6.1.2 e a C.6.1.3; o 106 vem antes do 107 (tipo de cliente)
+		{"E7: nao local por HTTP em rota comum", "GET", "/tv3/current-service", hdr{"Authorization": nonLocal}, 106},
+		{"E7: nao local por HTTP numa API da borda", "GET", "/tv3/api-info", hdr{"Authorization": nonLocal}, 106},
+		{"E7: nao local por HTTP no /authorize", "GET", "/tv3/authorize", hdr{"Authorization": nonLocal}, 0},
+		{"E7: nao local por HTTP no /token", "GET", "/tv3/token", hdr{"Authorization": nonLocal}, 0},
+		{"E7: nao local fora de clients:authorized (106 antes do 107)", "GET", "/tv3/current-service", hdr{"Authorization": foraNL}, 106},
+		{"E7: token nao local invalido nao identifica a classe (107)", "GET", "/tv3/current-service", hdr{"Authorization": expired}, 107},
+		// A8 (Joel, 15/10): o Origin associado da 106 em /authorize e /token
+		// tambem com access token valido de outra classe
+		{"A8: authorize com Origin associado e token autonomo valido", "GET", "/tv3/authorize", hdr{"Origin": tAssoc, "Authorization": auto}, 106},
+		{"A8: token com Origin associado e token autonomo valido", "GET", "/tv3/token", hdr{"Origin": tAssoc, "Authorization": auto}, 106},
+		{"A8: token com Origin associado, sem Authorization", "GET", "/tv3/token", hdr{"Origin": tAssoc}, 106},
+		{"A8: rota que admite o associado nao muda (token autonomo + Origin associado)", "GET", "/tv3/current-service", hdr{"Origin": tAssoc, "Authorization": auto}, 0},
 		{"token expirado", "GET", "/tv3/current-service", hdr{"Authorization": expired}, 107},
 		{"token lixo", "GET", "/tv3/current-service", hdr{"Authorization": "Bearer lixo"}, 107},
 		{"cliente bloqueado", "GET", "/tv3/current-service", hdr{"Authorization": blocked}, 107},
@@ -183,9 +216,21 @@ func TestDecisao(t *testing.T) {
 		{"bind nao-JWT", "GET", "/tv3/current-service/users/current-user", hdr{"Authorization": auto, "bind-token": "abc"}, 108},
 		{"bind sem token: 107 vem antes", "GET", "/tv3/current-service/users/current-user", hdr{"bind-token": bindOK}, 107},
 		{"associado dispensa bind (D8)", "GET", "/tv3/current-service/users/current-user", hdr{"Origin": tAssoc}, 0},
-		{"scid constante = corrente", "GET", "/tv3/" + tSCID + "/users/u1", hdr{"Authorization": auto, "bind-token": bindOK}, 0},
+		// A6 (Joel, 15/10): o scid e o globalServiceId; qualquer servico e
+		// aceito, e o bind-token vale contra as chaves DAQUELE servico (D4)
+		{"scid = globalServiceId do corrente", "GET", "/tv3/" + tSvc + "/users/u1", hdr{"Authorization": auto, "bind-token": bindOK}, 0},
 		{"scid current-service", "GET", "/tv3/current-service/users/u1", hdr{"Authorization": auto, "bind-token": bindOK}, 0},
-		{"scid de outro servico (L2)", "GET", "/tv3/urn:outra/users/u1", hdr{"Authorization": auto, "bind-token": bindOutra}, 108},
+		{"scid de outro servico com bind-token dele (A6)", "GET", "/tv3/urn:outra/users/u1", hdr{"Authorization": auto, "bind-token": bindOutra}, 0},
+		{"scid de outro servico com bind-token do corrente (D4)", "GET", "/tv3/urn:outra/users/u1", hdr{"Authorization": auto, "bind-token": bindOK}, 108},
+		{"a constante de antes nao e mais servico (A6)", "GET", "/tv3/" + tSCID + "/users/u1", hdr{"Authorization": auto, "bind-token": bindOK}, 108},
+		// H1 (Joel, 15/10): o associado so dispensa o bind-token no proprio
+		// contexto (o servico que lancou a app, origins:associated)
+		{"H1: associado no proprio contexto (scid explicito)", "GET", "/tv3/" + tSvc + "/users/u1", hdr{"Origin": tAssoc}, 0},
+		{"H1: associado no proprio contexto (current-service)", "GET", "/tv3/current-service/users/u1", hdr{"Origin": tAssoc}, 0},
+		{"H1: associado em outro contexto sem bind-token", "GET", "/tv3/urn:outra/users/u1", hdr{"Origin": tAssoc}, 104},
+		{"H1: associado em outro contexto com bind-token invalido", "GET", "/tv3/urn:outra/users/u1", hdr{"Origin": tAssoc, "bind-token": bindOK}, 108},
+		{"H1: associado em outro contexto com bind-token daquele contexto", "GET", "/tv3/urn:outra/users/u1", hdr{"Origin": tAssoc, "bind-token": bindOutra}, 0},
+		{"H1: rota sem bind-token nao muda", "GET", "/tv3/current-service", hdr{"Origin": tAssoc}, 0},
 		// C.6.14.1 (bind shall); a variante POST {scid}/users saiu da tabela
 		// (A4, Luis 11/10): 100 com qualquer scid, inclusive o constante e o
 		// current-service com a caixa trocada
@@ -193,7 +238,7 @@ func TestDecisao(t *testing.T) {
 		{"POST {scid}/users sem bind (A4)", "POST", "/tv3/xyz/users", hdr{"Authorization": auto}, 100},
 		{"POST {scid}/users scid qualquer (A4)", "POST", "/tv3/xyz/users", hdr{"Authorization": auto, "bind-token": bindOK}, 100},
 		{"POST Current-Service/users (caixa trocada, A4)", "POST", "/tv3/Current-Service/users", hdr{"Authorization": auto, "bind-token": bindOK}, 100},
-		{"POST {scid}/users scid constante (A4)", "POST", "/tv3/" + tSCID + "/users", hdr{"Authorization": auto, "bind-token": bindOK}, 100},
+		{"POST {scid}/users com o globalServiceId (A4)", "POST", "/tv3/" + tSvc + "/users", hdr{"Authorization": auto, "bind-token": bindOK}, 100},
 	}
 	for _, c := range cases {
 		h := newTestHandler(t, modeEnforce, baseStore(), nil)
@@ -255,21 +300,45 @@ func TestDecisaoClientesAutorizados(t *testing.T) {
 	}
 	// warn: so avisa
 	hw := newTestHandler(t, modeWarn, baseStore(), nil)
-	rec := serve(hw, "GET", "/tv3/current-service", map[string]string{"Authorization": accessFor(t, "cli-fora", classNonLocal)})
+	rec := serve(hw, "GET", "/tv3/current-service", map[string]string{"Authorization": accessFor(t, "cli-fora", classAutonomous)})
 	if rec.Code != 200 || rec.Header().Get(warnHeader) != "107" {
 		t.Fatalf("warn: status %d, aviso %q", rec.Code, rec.Header().Get(warnHeader))
 	}
 }
 
+// H2 (Joel, 15/10): sem servico DTV selecionado, 300 nas rotas cuja tabela o
+// lista (no_service), conferido depois do access token (107) e antes do
+// bind-token (104/108); 108 na C.6.16.3, cuja tabela nao lista o 300.
 func TestDecisaoSemServicoCorrente(t *testing.T) {
 	st := baseStore()
 	st.current = ""
 	h := newTestHandler(t, modeEnforce, st, nil)
-	req := httptest.NewRequest("GET", "/tv3/current-service/users/current-user", nil)
-	req.Header.Set("Authorization", accessFor(t, "cli-1", classAutonomous))
-	req.Header.Set("bind-token", signJWT(t, "HS256", []byte("chave-webmedia"), timeClaims(t0, t0, t0.Add(time.Hour))))
-	if v := h.evaluate(req); v.Code != 108 {
-		t.Fatalf("sem servico corrente: esperado 108, veio %d", v.Code)
+	bind := signJWT(t, "HS256", []byte("chave-webmedia"), timeClaims(t0, t0, t0.Add(time.Hour)))
+	auto := accessFor(t, "cli-1", classAutonomous)
+	type hdr map[string]string
+	for _, c := range []struct {
+		name, method, path string
+		h                  hdr
+		want               int
+	}{
+		{"C.6.14.3 com token e bind-token", "GET", "/tv3/current-service/users/current-user", hdr{"Authorization": auto, "bind-token": bind}, 300},
+		{"C.6.14.3 sem bind-token (300 antes do 104)", "GET", "/tv3/current-service/users/current-user", hdr{"Authorization": auto}, 300},
+		{"C.6.14.3 sem access token (107 antes do 300)", "GET", "/tv3/current-service/users/current-user", nil, 107},
+		{"C.6.14.1", "POST", "/tv3/current-service/users", hdr{"Authorization": auto}, 300},
+		{"C.6.14.2 com scid no caminho", "GET", "/tv3/" + tSvc + "/users/u1", hdr{"Authorization": auto, "bind-token": bind}, 300},
+		{"C.6.14.3 pelo associado (Origin)", "GET", "/tv3/current-service/users/current-user", hdr{"Origin": tAssoc}, 300},
+		{"C.6.14.3 com token de classe associado", "GET", "/tv3/current-service/users/current-user", hdr{"Authorization": accessFor(t, "cli-3", classAssociated)}, 300},
+		{"C.6.16.3: a tabela nao lista o 300", "POST", "/tv3/sensory-effect-renderers/r1", hdr{"Authorization": auto, "bind-token": bind}, 108},
+		{"C.6.16.3 sem bind-token", "POST", "/tv3/sensory-effect-renderers/r1", hdr{"Authorization": auto}, 104},
+		{"rota sem bind-token nao depende do servico", "GET", "/tv3/current-service", hdr{"Authorization": auto}, 0},
+	} {
+		req := httptest.NewRequest(c.method, c.path, nil)
+		for k, v := range c.h {
+			req.Header.Set(k, v)
+		}
+		if v := h.evaluate(req); v.Code != c.want {
+			t.Errorf("%s: codigo %d (%s), esperado %d", c.name, v.Code, v.Detail, c.want)
+		}
 	}
 }
 
@@ -338,7 +407,6 @@ func TestWarnSoAvisa(t *testing.T) {
 	}{
 		{"/tv3/current-service", nil, "107"},
 		{"/tv3/current-service/users/current-user", map[string]string{"Authorization": accessFor(t, "cli-1", classAutonomous)}, "104"},
-		{"/tv3/authorize", map[string]string{"Origin": tAssoc}, "106"},
 	} {
 		rec := serve(h, "GET", c.path, c.hdr)
 		if rec.Code != 200 || rec.Body.String() != "backend" {
@@ -349,9 +417,34 @@ func TestWarnSoAvisa(t *testing.T) {
 		}
 	}
 	// requisicao valida nao recebe aviso
-	rec := serve(h, "GET", "/tv3/current-service", map[string]string{"Authorization": accessFor(t, "cli-1", classNonLocal)})
+	rec := serve(h, "GET", "/tv3/current-service", map[string]string{"Authorization": accessFor(t, "cli-1", classAutonomous)})
 	if rec.Header().Get(warnHeader) != "" {
 		t.Error("requisicao valida recebeu aviso")
+	}
+}
+
+// Regra do Joel em 15/10: so 104, 107 e 108 seguem o modo; o 106 (tipo de
+// cliente), o 300 (estado do receptor) e o 200 (Redis fora do ar) bloqueiam
+// tambem em warn, sem aviso, e nao chegam ao backend.
+func TestWarnNaoAliviaForaDaCredencial(t *testing.T) {
+	st := baseStore()
+	st.current = ""
+	h := newTestHandler(t, modeWarn, st, nil)
+	for _, c := range []struct {
+		name, method, path string
+		hdr                map[string]string
+		code               int
+	}{
+		{"106 ao associado em /authorize", "GET", "/tv3/authorize", map[string]string{"Origin": tAssoc}, 106},
+		{"106 ao nao associado no POST da C.6.8", "POST", "/tv3/bind-context", nil, 106},
+		{"106 ao nao local por HTTP (E7)", "GET", "/tv3/current-service", map[string]string{"Authorization": accessFor(t, "cli-1", classNonLocal)}, 106},
+		{"300 sem servico na C.6.14.3", "GET", "/tv3/current-service/users/current-user", map[string]string{"Authorization": accessFor(t, "cli-1", classAutonomous)}, 300},
+	} {
+		rec := serve(h, c.method, c.path, c.hdr)
+		checkC32(t, rec, c.code)
+		if rec.Header().Get(warnHeader) != "" {
+			t.Errorf("%s: aviso %q num erro que bloqueia", c.name, rec.Header().Get(warnHeader))
+		}
 	}
 }
 
@@ -370,19 +463,19 @@ func TestRotaNaoDeclaradaNosDoisModos(t *testing.T) {
 
 // API-Version (C.3.6.6) nas respostas que a borda escreve sem repassar:
 // erros C.3.2 (rota nao declarada, credencial) e o OPTIONS que nao e
-// preflight. Versao pedida e suportada: ela; fora do conjunto: a mais recente
-// suportada; malformada ou ausente: 2.0.
+// preflight. Versao pedida e servida pela rota: ela; que a rota nao serve: a
+// mais recente do servidor (100.0, D1); malformada ou ausente: 2.0.
 func TestAPIVersionDasRespostasDaBorda(t *testing.T) {
-	if latestVersion != "2.1" {
-		t.Fatalf("latestVersion = %s, esperado 2.1 (a ultima de %v)", latestVersion, supportedVersions)
-	}
 	h := newTestHandler(t, modeEnforce, baseStore(), nil)
+	if h.cfg.LatestVersion != "100.0" || strings.Join(h.cfg.AllVersions, ",") != "2.0,100.0" {
+		t.Fatalf("versoes do servidor: %v, mais recente %s", h.cfg.AllVersions, h.cfg.LatestVersion)
+	}
 	for _, c := range []struct {
 		accept []string // nil = sem Accept-Version
 		want   string
 	}{
-		{nil, "2.0"}, {[]string{"2.0"}, "2.0"}, {[]string{"2.1"}, "2.1"},
-		{[]string{"3.0"}, "2.1"}, {[]string{"1.9"}, "2.1"}, {[]string{"9.99"}, "2.1"},
+		{nil, "2.0"}, {[]string{"2.0"}, "2.0"}, {[]string{"100.0"}, "100.0"},
+		{[]string{"2.1"}, "100.0"}, {[]string{"3.0"}, "100.0"}, {[]string{"9.99"}, "100.0"},
 		{[]string{"abc"}, "2.0"}, {[]string{"2"}, "2.0"}, {[]string{"2.1", "2.0"}, "2.0"},
 	} {
 		for _, rq := range []struct {
@@ -404,6 +497,57 @@ func TestAPIVersionDasRespostasDaBorda(t *testing.T) {
 			}
 			if v := rec.Header().Get("API-Version"); v != c.want {
 				t.Errorf("%s com Accept-Version %v: API-Version %q, esperado %s", rq.name, c.accept, v, c.want)
+			}
+		}
+	}
+}
+
+// D2 e D4 (Joel, 15/10): a borda negocia a versao em toda rota, pelas versoes
+// que o routes.json declara para ela, e repassa a decidida ao servico em
+// X-TV30-API-Version, que apaga o que vier do cliente. 100 (versao que a rota
+// nao serve) e 101 (malformado) saem nos dois modos e nao chegam ao servico.
+func TestVersaoNegociadaPorRota(t *testing.T) {
+	auto := accessFor(t, "cli-1", classAutonomous)
+	for _, mode := range []string{modeWarn, modeEnforce} {
+		var got string
+		calls := 0
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			got = r.Header.Get(internalVersionHeader)
+			w.WriteHeader(200)
+		})
+		h := newTestHandler(t, mode, baseStore(), next)
+		for _, c := range []struct {
+			name, path string
+			hdr        map[string]string
+			code       int    // 0 = repassa
+			version    string // o que o servico recebe
+		}{
+			{"rota so 2.0, sem Accept-Version", "/tv3/current-service", map[string]string{"Authorization": auto}, 0, "2.0"},
+			{"rota so 2.0, pede 100.0", "/tv3/current-service", map[string]string{"Authorization": auto, "Accept-Version": "100.0"}, 100, ""},
+			{"rota so 2.0, pede 2.1 (nao existe mais)", "/tv3/current-service", map[string]string{"Authorization": auto, "Accept-Version": "2.1"}, 100, ""},
+			{"Accept-Version malformado", "/tv3/current-service", map[string]string{"Authorization": auto, "Accept-Version": "x"}, 101, ""},
+			{"cabecalho interno do cliente e apagado", "/tv3/current-service", map[string]string{"Authorization": auto, internalVersionHeader: "100.0"}, 0, "2.0"},
+			{"C.6.15.5 sem Accept-Version", "/tv3/remote-device/devices/x", map[string]string{"Authorization": auto}, 0, "2.0"},
+			{"C.6.15.5 com 100.0", "/tv3/remote-device/devices/x", map[string]string{"Authorization": auto, "Accept-Version": "100.0"}, 0, "100.0"},
+			{"handle sem Accept-Version (so 100.0)", "/tv3/remote-device/device/h1", map[string]string{"Authorization": auto}, 100, ""},
+			{"handle com 2.0", "/tv3/remote-device/device/h1", map[string]string{"Authorization": auto, "Accept-Version": "2.0"}, 100, ""},
+			{"handle com 100.0", "/tv3/remote-device/device/h1", map[string]string{"Authorization": auto, "Accept-Version": "100.0"}, 0, "100.0"},
+		} {
+			calls, got = 0, ""
+			rec := serve(h, "GET", c.path, c.hdr)
+			if c.code != 0 {
+				checkC32(t, rec, c.code)
+				if calls != 0 {
+					t.Errorf("%s %s: chegou ao servico", mode, c.name)
+				}
+				if c.code == 100 && rec.Header().Get("API-Version") != "100.0" {
+					t.Errorf("%s %s: API-Version %q no 100, esperado 100.0", mode, c.name, rec.Header().Get("API-Version"))
+				}
+				continue
+			}
+			if calls != 1 || got != c.version {
+				t.Errorf("%s %s: repasses %d, %s=%q, esperado %q", mode, c.name, calls, internalVersionHeader, got, c.version)
 			}
 		}
 	}
@@ -569,10 +713,12 @@ func TestRedisFora(t *testing.T) {
 	h := newTestHandler(t, modeEnforce, st, nil)
 	checkC32(t, serve(h, "GET", "/tv3/current-service", map[string]string{"Authorization": tok}), 200)
 
+	// desde 15/10 (Joel) o 200 nao e recusa de credencial: sai tambem em warn
 	h = newTestHandler(t, modeWarn, st, nil)
 	rec := serve(h, "GET", "/tv3/current-service", map[string]string{"Authorization": tok})
-	if rec.Code != 200 || rec.Header().Get(warnHeader) != "200" {
-		t.Fatalf("warn com redis fora: status %d aviso %q", rec.Code, rec.Header().Get(warnHeader))
+	checkC32(t, rec, 200)
+	if rec.Header().Get(warnHeader) != "" {
+		t.Fatalf("warn com redis fora: aviso %q, esperado o erro sem aviso", rec.Header().Get(warnHeader))
 	}
 }
 
@@ -582,7 +728,8 @@ func TestConfigInvalida(t *testing.T) {
 	if _, err := loadConfig(testExtra(), env(ok)); err != nil {
 		t.Fatalf("config valida rejeitada: %v", err)
 	}
-	if c, _ := loadConfig(testExtra(), env(ok)); c.Mode != modeWarn || c.Issuer != "GenericIssuer" || c.RedisAddr != "redis:6379" {
+	// padrao enforce desde 15/10 (Joel); warn so explicito
+	if c, _ := loadConfig(testExtra(), env(ok)); c.Mode != modeEnforce || c.Issuer != "GenericIssuer" || c.RedisAddr != "redis:6379" {
 		t.Fatalf("padroes errados: %+v", c)
 	}
 	bad := []map[string]string{
@@ -625,15 +772,15 @@ func TestConfigInvalida(t *testing.T) {
 		"expose nao lista": with("cors_expose_headers", "X-A"),
 		"expose ruim":      with("cors_expose_headers", []interface{}{"X-A", " "}),
 		// APIs respondidas pela borda
-		"edge desconhecido": map[string]interface{}{"surface": "x", "routes": oneRoute(map[string]interface{}{"method": "GET", "path": "/a", "edge": "proxy"})},
-		"edge nao texto":    map[string]interface{}{"surface": "x", "routes": oneRoute(map[string]interface{}{"method": "GET", "path": "/a", "edge": true})},
-		"C.6.8 sem scid":    with("current_service_context_id", nil),
-		"api-info sem apis": with("apis", nil),
-		"apis nao lista":    with("apis", "tv3ws-api-info"),
-		"api sem versao":    with("apis", []interface{}{map[string]interface{}{"id": "tv3ws-api-info"}}),
-		"api versao ruim":   with("apis", []interface{}{map[string]interface{}{"id": "tv3ws-api-info", "version": "2"}}),
-		"api id sem nome":   with("apis", []interface{}{map[string]interface{}{"id": "tv3ws", "version": "2.0"}}),
-		"api subsistema":    with("apis", []interface{}{map[string]interface{}{"id": "dtv-api-info", "version": "2.0"}}),
+		"edge desconhecido":            map[string]interface{}{"surface": "x", "routes": oneRoute(map[string]interface{}{"method": "GET", "path": "/a", "edge": "proxy"})},
+		"edge nao texto":               map[string]interface{}{"surface": "x", "routes": oneRoute(map[string]interface{}{"method": "GET", "path": "/a", "edge": true})},
+		"constante de scid (saiu, A6)": with("current_service_context_id", tSCID),
+		"api-info sem apis":            with("apis", nil),
+		"apis nao lista":               with("apis", "tv3ws-api-info"),
+		"api sem versao":               with("apis", []interface{}{map[string]interface{}{"id": "tv3ws-api-info"}}),
+		"api versao ruim":              with("apis", []interface{}{map[string]interface{}{"id": "tv3ws-api-info", "version": "2"}}),
+		"api id sem nome":              with("apis", []interface{}{map[string]interface{}{"id": "tv3ws", "version": "2.0"}}),
+		"api subsistema":               with("apis", []interface{}{map[string]interface{}{"id": "dtv-api-info", "version": "2.0"}}),
 		"api duplicada": with("apis", []interface{}{
 			map[string]interface{}{"id": "tv3ws-api-info", "version": "2.0"},
 			map[string]interface{}{"id": "tv3ws-api-info", "version": "2.0"},
@@ -671,7 +818,7 @@ func TestConfigInvalida(t *testing.T) {
 	}
 	// sem rota respondida pela borda, nem scid nem apis sao exigidos
 	c, err = loadConfig(map[string]interface{}{"surface": "x", "routes": oneRoute(map[string]interface{}{"method": "GET", "path": "/a"})}, env(ok))
-	if err != nil || c.ServiceContextID != "" || len(c.APIs.list) != 0 {
+	if err != nil || len(c.APIs.list) != 0 {
 		t.Fatalf("config sem rotas da borda: %v %+v", err, c)
 	}
 	// edge e apis chegam a rota e ao catalogo, na ordem dada
@@ -685,8 +832,8 @@ func TestConfigInvalida(t *testing.T) {
 	if rt, _ := c.Routes.match("GET", "/tv3/current-service"); rt == nil || rt.Edge != "" {
 		t.Errorf("GET /tv3/current-service nao eh da borda: %+v", rt)
 	}
-	if len(c.APIs.list) != 6 || c.APIs.list[0].ID != "tv3ws-application-authorization" || c.ServiceContextID != tSCID {
-		t.Errorf("catalogo/scid: %+v %q", c.APIs.list, c.ServiceContextID)
+	if len(c.APIs.list) != 6 || c.APIs.list[0].ID != "tv3ws-application-authorization" {
+		t.Errorf("catalogo: %+v", c.APIs.list)
 	}
 }
 
@@ -722,7 +869,7 @@ func TestGateway5xxVira200(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		w.Write([]byte("<html>Service Unavailable</html>"))
 	})
-	tok := map[string]string{"Authorization": accessFor(t, "cli-1", classNonLocal)}
+	tok := map[string]string{"Authorization": accessFor(t, "cli-1", classAutonomous)}
 	for _, mode := range []string{modeWarn, modeEnforce} {
 		for _, c := range []struct {
 			name   string
@@ -994,5 +1141,25 @@ func TestBordaComBackendLentoOuForaDoAr(t *testing.T) {
 				t.Errorf("%s %s: description %q (tempo minimo %d ms)", mode, c.name, body.Description, c.minMS)
 			}
 		}
+	}
+}
+
+// Complemento do Joel (15/10), 3.4: a borda repassa ao servico o Host original
+// do cliente em X-TV30-Host (o KrakenD troca o Host pelo do backend), e apaga
+// o que vier do cliente. O /manifest do tv3ws monta o Server-BaseURL com ele.
+func TestHostOriginalRepassado(t *testing.T) {
+	var got string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get(internalHostHeader)
+		w.WriteHeader(200)
+	})
+	h := newTestHandler(t, modeEnforce, baseStore(), next)
+	req := httptest.NewRequest("GET", "/manifest", nil)
+	req.Host = "192.168.0.23:44642"
+	req.Header.Set(internalHostHeader, "forjado.example:1")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 || got != "192.168.0.23:44642" {
+		t.Fatalf("status %d, %s=%q", rec.Code, internalHostHeader, got)
 	}
 }

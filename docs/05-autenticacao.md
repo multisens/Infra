@@ -1,6 +1,6 @@
 # Autenticação e validação de credenciais (TV 3.0)
 
-> **Estado do código em 2026-10-12:** tv3ws + plugin `tv30-auth` da borda, depois das decisões da reunião de 05/10 com o Joel (D-0510-1 a D-0510-4 nesta página), de duas decisões do Luís em 10/10, a P1.3 (um nome de host por app de emissora) e a P1.9 (superfícies com rotas distintas), e das decisões do Luís em 11/10 que tocam esta página: a E6 (a borda exige o cliente em `clients:authorized`), a A4 (`POST /tv3/{serviceContextId}/users` fora da tabela de rotas), a B2 (`SSDP_ADVERTISE_HOST` obrigatório com o anúncio ligado) e a manutenção da E1, da E3 e da F-2 (C.6.7.8 e C.6.7.9 como estavam), e das decisões do Luís em 12/10 que tocam esta página: a 44643 fixa no host também na bridge, a C.6.15.5 só para o cliente local e, à tarde, as rotas 2.1 `GET` e `DELETE /tv3/remote-device/device/{handle}` também só para o cliente local. Inclui as correções de 12/10, à tarde, de defeitos achados pela auditoria: o pop-up do QR code e do PIN na tela até o fim do pareamento, parâmetro vazio contado como ausente em `/tv3/authorize` e `/tv3/token`, o desafio de uso único e as comparações de segredo em tempo constante.
+> **Estado do código em 2026-10-19:** tv3ws, plugin `tv30-auth` da borda e anunciante SSDP (Simple Service Discovery Protocol, a descoberta da C.3.4). Inclui as respostas do Joel de 15/10 que tocam esta página: `enforce` como padrão, com só 104, 107 e 108 seguindo o modo; TLS (Transport Layer Security) na 44643 (A7); o 106 por superfície (F-1) e ao não local por HTTP (E7); o 106 ao associado em `/tv3/authorize`, `/tv3/token` e `GET /tv3/bind-context` (A8); o `serviceContextId` igual ao `globalServiceId` do serviço (A6); o bind-token conferido no contexto da rota (H1); o 300 sem serviço (H2); a versão negociada na borda (D1, D2 e D4); e o anunciante fora do Docker, com o host detectado (B1 e B2 revista).
 >
 > A versão anterior deste documento não correspondia ao código:
 > - classificava o cliente pelo IP;
@@ -15,9 +15,9 @@ A classe é decidida **uma vez**, na autorização (`GET /tv3/authorize`, em `tv
 
 | Classe (claim `class`) | Como é reconhecida | Credenciais nas APIs |
 |---|---|---|
-| `non-local` | `pm` (`qrcode` ou `kex`) presente no `/authorize` | access token; bind-token nas APIs protegidas. Fora de `/authorize` e do primeiro `/token`, a norma exige HTTPS (C.4.1.6, erro 106). No testbed, só o `/token` aplica isso hoje (renovação por HTTP dá 106); nas demais APIs, ninguém aplica desde a D-0510-1, porque a borda não tem TLS (L3). |
+| `non-local` | `pm` (`qrcode` ou `kex`) presente no `/authorize` | access token; bind-token nas APIs protegidas. Fora de `/authorize` e do primeiro `/token`, a norma exige HTTPS (C.4.1.6, erro 106): na 44642 (HTTP), a borda responde 106 ao access token dessa classe fora de `/tv3/authorize` e `/tv3/token` (E7, Joel 15/10), e o tv3ws dá 106 à renovação do token por HTTP. |
 | `local-autonomous` | sem `pm`, e `Origin` fora de `origins:associated` | access token; bind-token nas APIs protegidas |
-| `local-associated` | `Origin` presente no hash `origins:associated`, que o AoP grava (origem própria da app → id do serviço corrente: o valor de `aop/currentService`, o mesmo de `session:current-service-id`, ou `current-service` sem serviço) | nenhuma no próprio contexto (C.4.1.1) |
+| `local-associated` | `Origin` presente no hash `origins:associated`, que o AoP grava ao lançar a app (origem própria da app → `globalServiceId` do serviço corrente, A6; sem serviço corrente, a origem não é gravada) | nenhuma no próprio contexto de serviço (C.4.1.1); fora dele, bind-token válido daquele contexto (H1) |
 
 O reconhecimento do local associado pelo `Origin` é a lacuna L1. **Decidido pelo Luís em 03/10: fica como está, com o risco aceito.** Não houve mudança de comportamento. Os limites conhecidos:
 - **Risco aceito:** fora do navegador, o `Origin` pode ser forjado, e um `Origin` forjado presente em `origins:associated` passa como associado;
@@ -30,8 +30,8 @@ O reconhecimento do local associado pelo `Origin` é a lacuna L1. **Decidido pel
 
 1. O tv3ws publica um pop-up sim/não na TV pelo tópico `aop/display/layers/popup/yesno/message`, com timeout de 10 s (`client-identification/service.ts`).
 2. Só a resposta `"true"` no tópico `.../yesno/response` autoriza: o cliente entra em `clients:authorized` (D-0510-4, ver abaixo) e ganha o registro `client:{id}`. A AoP publica `"false"` quando o espectador recusa e também quando o pop-up expira. Nesse caso, ou sem resposta em 10 s, o cliente vai para `clients:blocked` e a resposta é **102**. Até 02/10/2026, qualquer resposta não vazia autorizava, porque `Boolean("false") === true`.
-3. **Local** (associado ou autônomo): a resposta é `{"refreshToken": ...}`.
-4. **`clientid` já usado:** 101, para qualquer classe e sem pop-up, tanto para o cliente já autorizado quanto para o recusado (`clients:blocked`). As duas metades têm origens diferentes:
+3. **Local autônomo:** a resposta é `{"refreshToken": ...}`. O associado recebe 106, sem pop-up (A8, Joel 15/10; Tabela C.3, "If invoked from an associated local client"). Até 15/10, ele também recebia refresh token.
+4. **`clientid` já usado:** 101, para o autônomo e o não local, sem pop-up, tanto para o cliente já autorizado quanto para o recusado (`clients:blocked`). As duas metades têm origens diferentes:
    - o 101 para o cliente já autorizado é decisão do Luís em 03/10 (D-L2; Tabela C.3, "if clientid has been used before", e C.6.1.4.4);
    - o 101 para o recusado segue a nota da Tabela C.3 ("any attempt to authorize immediately returns error 101, without displaying the authorization dialog", p. 233 do PDF). Era uma leitura da D-L2 feita na implementação e foi **confirmada na reunião de 05/10** (`docs/decisoes-pendentes.md` da raiz, *Confirmados na reunião de 05/10*).
 
@@ -47,15 +47,16 @@ Erros possíveis no `/authorize`:
 
 | Código | Situação |
 |---|---|
+| 106 | Desde 15/10 (A8): `Origin` em `origins:associated`. Vem antes dos demais. A borda recusa antes, nos dois modos (abaixo). |
 | 105 | Falta `clientid`, `display-name` ou `key` (no `kex`). Desde 12/10 (correção), parâmetro vazio ou só com espaços conta como ausente (`queryParam`, em `client-identification/controller.ts`; Tabela C.3, p. 215; p. 233 do PDF). Antes, `clientid=` vazio autorizava o `clientid` `""`, `display-name=` vazio passava, e `key=` vazio no `kex` dava 404 `{"error":200}`. |
-| 101 | `pm` não suportado, ou `clientid` já usado (autorizado ou bloqueado), para qualquer classe. Desde 12/10, `pm=` vazio vale como ausente, e o cliente se classifica local (antes, 101). |
+| 101 | `pm` não suportado, ou `clientid` já usado (autorizado ou bloqueado), para o autônomo e o não local. Desde 12/10, `pm=` vazio vale como ausente, e o cliente se classifica local (antes, 101). |
 | 102 | O espectador recusou no pop-up (ou o pop-up expirou). |
 | 103 | Desde 12/10, à noite (decisão do Luís; G2): a camada gráfica está ocupada pelo sim/não de outro pedido, ou pelo QR code ou o PIN de um pareamento (C.4.2.3; Tabela C.3, "When the TV 3.0 receiver is unable to display the authorization pop-up"). Vale também para o mesmo `clientid`. Vem depois do 105 e do 101, antes do pop-up. |
 
 ### `GET /tv3/token?clientid=<uuid>&(challenge-response=<...>|refresh-token=<...>)` (Tabela C.4)
 
 - **Resposta:** `{"accessToken", "tokenType": "Bearer", "expiresIn", "refreshToken"}`. O refresh token é rotacionado a cada chamada.
-- **Primeiro acesso do não local** (por HTTP, com `challenge-response`): a resposta vem cifrada (`application/octet-stream`) e inclui `serverCert`.
+- **Primeiro acesso do não local** (por HTTP, com `challenge-response`): a resposta vem cifrada (`application/octet-stream`) e inclui `serverCert`: o certificado do receptor, o mesmo da 44643 (A7; `tv3ws/src/tls.ts`).
 - **Com os dois parâmetros,** vale o `refresh-token`. Desde 12/10 (correção), parâmetro vazio ou só com espaços conta como ausente (Tabela C.4, 105, p. 217; p. 235 do PDF), e um dos dois ramos sempre roda. Antes, `refresh-token=` ou `challenge-response=` vazio não caía em nenhum ramo e a credencial saía sem conferência nenhuma: o cliente autorizado recebia accessToken e refresh token novos (o legítimo passava a dar 101), e o não local, por HTTP, pulava o pareamento e a exigência de HTTPS.
 - **O desafio vale uma vez** (correção de 12/10). No `challenge-response` conferido, o tv3ws tira do cliente o material do pareamento (challenge, chave simétrica e par ECDH) no mesmo trecho síncrono da conferência (`takePairingMaterial`, em `tv3ws/src/modules/auth-manager/client.ts`), e dois `/tv3/token` simultâneos com a mesma resposta não passam os dois. A Tabela C.4 permite descartar a chave depois do primeiro acesso ("In subsequent accesses, the use of the symmetric encryption key is no longer necessary and it can be discarded", p. 217-218; p. 235-236 do PDF). Se a emissão falhar depois da conferência, o material volta ao cliente e a tentativa segue aberta. Antes, a mesma resposta ao desafio emitia credencial de novo a cada chamada (e, por HTTPS, em claro), rotacionando o refresh token do cliente legítimo. O material do pareamento vive só na memória do tv3ws: um reinício o perde.
 - **Comparações em tempo constante** (correção de 12/10): o refresh token e a resposta ao desafio são comparados com `crypto.timingSafeEqual` sobre os bytes (`safeEqual`, em `tv3ws/src/util/encryption.ts`), e tamanhos diferentes são falha. A resposta decifrada é comparada em bytes com o SHA-256 guardado; antes, os dois lados passavam por `.toString()` UTF-8, e bytes que não formam UTF-8 válido viravam U+FFFD (duas respostas diferentes podiam passar como iguais). `refresh-token` repetido na URL (lista) não vale (101). O formato do que o cliente manda não mudou.
@@ -66,7 +67,7 @@ Erros possíveis no `/token`:
 |---|---|
 | 105 | Falta `clientid`, ou faltam os dois: `challenge-response` e `refresh-token`. Vazio ou só com espaços conta como ausente (desde 12/10). |
 | 102 | Cliente fora de `clients:authorized` (nunca autorizado, ou bloqueado depois); `challenge-response` errado, inclusive o que decifra para um tamanho diferente do hash e, desde 12/10, o que não decifra (tamanho ou *padding* inválido no AES-128-ECB, ou o parâmetro repetido na URL), que antes dava 404 `{"error":200}` por exceção; e, desde 12/10, `challenge-response` sem desafio pendente: repetido depois do sucesso, de cliente local ou depois de um reinício do tv3ws (Tabela C.4: "If the challenge-response value is not validated by the TV 3.0 receiver as correct"). |
-| 106 | Cliente não local com `refresh-token` por HTTP. |
+| 106 | Cliente não local com `refresh-token` por HTTP; desde 15/10 (A8), também o cliente registrado como associado. |
 | 101 | `refresh-token` que não pertence ao cliente. |
 | 200 | Falha da plataforma (Redis fora do ar, por exemplo) e exceção no tratamento: 404 `{"error":200}` pelo `errorHandler`. |
 
@@ -88,19 +89,19 @@ sequenceDiagram
     participant T as tv3ws
     participant TV as TV (AoP)
 
-    C->>E: GET /tv3/authorize?clientid&display-name&pm=qrcode
+    C->>E: GET /tv3/authorize?clientid&display-name&pm=qrcode (HTTP :44642)
     E->>T: (auth=none, classe != associado)
     T->>TV: MQTT popup/yesno/message
     TV-->>T: popup/yesno/response "true"
     T->>TV: MQTT popup/qrcode
     T-->>C: 200 {challenge}
-    C->>E: GET /tv3/token?clientid&challenge-response
+    C->>E: GET /tv3/token?clientid&challenge-response (HTTP :44642)
     E->>T: (auth=none)
     T-->>C: 200 (cifrado) {accessToken, refreshToken, serverCert}
     T->>TV: MQTT popup/qrcode {"close":true} (fim do pareamento)
-    C->>E: GET /tv3/current-service/users/current-user<br/>Authorization: Bearer + bind-token
-    E->>E: rota -> classe -> token -> bind-token
-    E->>T: repassa (se valido, ou em warn)
+    C->>E: GET /tv3/current-service/users/current-user (HTTPS :44643)<br/>Authorization: Bearer + bind-token
+    E->>E: rota -> superfície -> classe -> token -> serviço -> bind-token -> versão
+    E->>T: repassa (se válido)
     T-->>C: 200 / 404 + corpo C.3.2
 ```
 
@@ -108,31 +109,46 @@ sequenceDiagram
 
 **Decisão de 28/09 (D1):** toda a validação de credenciais fica na borda, num plugin Go do KrakenD carregado nas duas superfícies do `edgegateway`. O tv3ws só implementa as APIs.
 
-**Reunião de 05/10 com o Joel (D-0510-1): o tv3ws fica "anônimo"**, só recebe e responde. Até ali, ele ainda tinha duas validações próprias, ativas nos dois modos: o middleware `authorization.ts` (107 a token presente e inválido) e o 106 por protocolo em `basic.ts` (cliente não local por HTTP). As duas saíram. Sob `/tv3`, o tv3ws só negocia a versão (`Accept-Version`) e emite a credencial (`/tv3/authorize`, `/tv3/token`). O 106 por protocolo não foi para a borda, que não tem TLS (L3): hoje ninguém o aplica fora do `/tv3/token`.
+**Reunião de 05/10 com o Joel (D-0510-1): o tv3ws fica "anônimo"**, só recebe e responde. Até ali, ele ainda tinha duas validações próprias, ativas nos dois modos: o middleware `authorization.ts` (107 a token presente e inválido) e o 106 por protocolo em `basic.ts` (cliente não local por HTTP). As duas saíram. Sob `/tv3`, o tv3ws só emite a credencial (`/tv3/authorize`, `/tv3/token`). Desde 15/10, o 106 por protocolo voltou, na borda (E7, abaixo), e o tv3ws não negocia mais a versão: produz a resposta na versão que a borda decidiu (D2; `tv3ws/src/middleware/basic.ts`).
 
-Os comportamentos provisórios das lacunas (L2, L4, L5) e o reconhecimento do associado pelo `Origin` (L1, decidido em 03/10 com o risco aceito) valem nos **dois** modos: em `warn` só registram e marcam `X-TV30-Auth-Warn`; em `enforce` bloqueiam ou liberam. Em `enforce`, um `Origin` forjado fora do navegador, presente em `origins:associated`, dispensa as credenciais (L1). É o risco aceito.
+Só as recusas de credencial seguem o modo: 104, 107 e 108 (`followsMode`, em `plugin/handler.go`; regra do Joel em 15/10). 100, 101, 106, 300 e 200 saem nos dois modos. O reconhecimento do associado pelo `Origin` (L1, decidido em 03/10 com o risco aceito) vale nos dois: um `Origin` forjado fora do navegador, presente em `origins:associated`, dispensa o access token e, no contexto de serviço daquela origem, o bind-token.
 
 Toda resposta da borda leva `Access-Control-Allow-Origin: *` (C.4.1.9.2), também sem `Origin` na requisição. O `OPTIONS` que não é preflight, num caminho declarado, recebe 200 com `Access-Control-Allow-Origin`, `Access-Control-Allow-Methods` e `Access-Control-Allow-Headers` (C.4.1.9.3). O preflight (`OPTIONS` com `Access-Control-Request-Method`) recebe o mesmo, mais `Access-Control-Max-Age`, em qualquer caminho e com a lista pedida em qualquer ordem: desde 12/10 (decisão do Luís, opção b) quem o responde é o plugin, e não mais o módulo CORS do KrakenD, que recusava a lista fora de ordem.
 
 ```mermaid
 flowchart TD
-    R["Requisição (exceto OPTIONS: o preflight recebe<br/>200 + cabeçalhos CORS do plugin em qualquer caminho;<br/>o OPTIONS sem preflight, num caminho declarado)"] --> M{"método+caminho declarado<br/>para esta superfície?<br/>(routes.json; P1.9)"}
-    M -->|não| E100["404 {error:100}<br/>(nos dois modos)"]
-    M -->|sim| CL["classe: claim class do token válido<br/>ou Origin ∈ origins:associated"]
-    CL --> K{"classe permitida<br/>na rota?"}
+    R["Requisição (exceto OPTIONS: o preflight recebe<br/>200 + cabeçalhos CORS do plugin em qualquer caminho;<br/>o OPTIONS sem preflight, num caminho declarado)"] --> M{"método+caminho<br/>declarado? (routes.json)"}
+    M -->|não| E100["100"]
+    M -->|sim| S{"surface_error nesta<br/>superfície? (F-1)"}
+    S -->|sim| E106S["106"]
+    S -->|não| CL["classe: claim class do token válido<br/>ou Origin ∈ origins:associated"]
+    CL --> K{"classe permitida na rota?<br/>(Origin associado em rota sem o<br/>associado: 106 também com token, A8)"}
     K -->|não| E106["106"]
-    K -->|sim| A{"associado ou<br/>auth=none?"}
-    A -->|sim| OK["repassa ao tv3ws, ou responde<br/>na borda (rota com edge)"]
-    A -->|não| T{"access token válido, sub fora de<br/>clients:blocked e em clients:authorized? (E6)"}
+    K -->|sim| NL{"44642 e token non-local<br/>fora de /authorize e /token? (E7)"}
+    NL -->|sim| E106H["106"]
+    NL -->|não| A{"associado<br/>pelo Origin?"}
+    A -->|sim| SV
+    A -->|não| N{"auth=none?"}
+    N -->|sim| V
+    N -->|não| T{"access token válido, sub fora de<br/>clients:blocked e em clients:authorized? (E6)"}
     T -->|não| E107["107"]
-    T -->|sim| B{"auth=token+bind?"}
-    B -->|não| OK
-    B -->|sim| BT{"bind-token presente?"}
+    T -->|sim| SV{"no_service e nenhum<br/>serviço selecionado? (H2)"}
+    SV -->|sim| E300["300"]
+    SV -->|não| B{"auth=token+bind?"}
+    B -->|não| V
+    B -->|sim| CTX{"associado no próprio<br/>contexto de serviço? (H1)"}
+    CTX -->|sim| V
+    CTX -->|não| BT{"bind-token presente?"}
     BT -->|não| E104["104"]
-    BT -->|sim| BV{"assinado por chave do<br/>SERVIÇO CORRENTE<br/>e dentro do prazo?"}
+    BT -->|sim| BV{"assinado por chave do CONTEXTO DA ROTA<br/>e dentro do prazo?<br/>(sem serviço: 108)"}
     BV -->|não| E108["108"]
-    BV -->|sim| OK
+    BV -->|sim| V{"versão pedida servida<br/>pela rota? (D4)"}
+    V -->|"fora de X.Y"| E101["101"]
+    V -->|não| E100V["100"]
+    V -->|sim| OK["repassa ao tv3ws com X-TV30-API-Version<br/>e X-TV30-Host, ou responde na borda<br/>(rota com edge)"]
 ```
+
+Todo erro sai como 404 + `{error, description}` (C.3.2). Em `warn`, o 104, o 107 e o 108 só marcam `X-TV30-Auth-Warn` e a requisição segue. Falha do Redis em qualquer passo: 200, nos dois modos. O token de classe `local-associated` dispensaria o bind-token, mas o tv3ws não emite mais essa classe (A8).
 
 ### Política por rota
 
@@ -145,24 +161,30 @@ A política está em `edgegateway/routes.json`, nos campos `auth` (`none`, `toke
 | `POST` e `DELETE /tv3/bind-context` (respondidas pela borda) | none | associado |
 | `GET /tv3/bind-context` (respondida pela borda) | token | autônomo, não local |
 | `GET /tv3/api-info` e `GET /tv3/api-info/{apiId}` (respondidas pela borda) | token | todas |
-| APIs de usuários (C.6.14), `apps/{appid}/files` (C.6.4), `POST sensory-effect-renderers/{id}` (C.6.16.3) | token+bind | todas |
-| `GET /tv3/remote-device/devices/{classId}` (C.6.15.5, desde 12/10); `GET` e `DELETE /tv3/remote-device/device/{handle}` (2.1, desde 12/10, à tarde) | token | associado, autônomo |
+| APIs de usuários (C.6.14), `apps/{appid}/files` (C.6.4.7), `POST sensory-effect-renderers/{id}` (C.6.16.3) | token+bind | todas |
+| `GET /tv3/remote-device/devices/{classId}` (C.6.15.5); `GET` e `DELETE /tv3/remote-device/device/{handle}` (versão 100.0) | token | associado, autônomo |
 | demais | token | todas |
 
-`POST /tv3/{serviceContextId}/users`, variante do testbed fora da norma (que só define `POST /tv3/current-service/users`, C.6.14.1), saiu da tabela em 11/10 (A4, decisão do Luís): a borda responde 100 a ela, com qualquer scid. Até ali, estava como `token+bind`.
+**Sem serviço selecionado (H2, Joel 15/10).** As rotas `token+bind` da C.6.4.7 e da C.6.14.1 à C.6.14.6 levam `no_service: 300`: sem serviço de TV digital (DTV) selecionado, respondem 300, antes do bind-token, a todo cliente, inclusive o associado. A C.6.16.3, cuja tabela não lista o 300, segue o bind-token e dá 108.
 
-`GET /tv3/remote-device/devices/{classId}` (C.6.15.5) é só do cliente local desde 12/10 (decisão do Luís): a Tabela C.78 (p. 339; p. 357 do PDF) diz "This API allows a local client application". Até ali, admitia todas as classes.
+`POST /tv3/{serviceContextId}/users`, variante do testbed fora da norma (que só define `POST /tv3/current-service/users`, C.6.14.1), saiu da tabela em 11/10 (A4, decisão do Luís): a borda responde 100 a ela, com qualquer scid.
 
-`GET` e `DELETE /tv3/remote-device/device/{handle}`, as rotas da versão 2.1 (C.6.15.6 e C.6.15.7 da proposta 2.1 do Luís ao Fórum, fora da Tabela C.2 e sem campo `api`), seguem a C.6.15.5 desde a segunda decisão do Luís em 12/10. O próprio tv3ws as descreve como de uso do cliente local (`tv3ws/src/api/multi-device/index.ts`: "This API allows a local client application to establish communication with a remote device"). Até ali, não tinham `classes`: pela política, um não local com access token e um *handle* conhecido abria o ponto de entrada local daquele aparelho, inclusive pela 44643 (lido no código, não medido).
+`GET /tv3/remote-device/devices/{classId}` (C.6.15.5) é só do cliente local desde 12/10 (decisão do Luís): a Tabela C.78 (p. 339; p. 357 do PDF) diz "This API allows a local client application". O não local recebe 106 (F-1, Joel 15/10, correção proposta na Issue 47 do Fórum; a Tabela C.78 lista 107, que fica para o access token ausente, inválido ou expirado).
+
+`GET` e `DELETE /tv3/remote-device/device/{handle}` são rotas de proposta do testbed, fora da Tabela C.2 e sem campo `api`. Seguem a C.6.15.5 (só o cliente local) e só existem na versão 100.0 (D1, Joel 15/10; até 15/10, "2.1"): sem `Accept-Version: 100.0`, a borda responde 100.
 
 A tabela completa está em `edgegateway/plugin/README.md`.
 
-**Superfície de cada rota (P1.9, decisão do Luís em 10/10).** As `classes` também decidem em que superfície a rota existe (`edgegateway/generate.js`, `SURFACE_RULES`): a externa (44643) só tem as rotas que admitem `non-local`, e a interna (44642) tem todas. Pela tabela acima, ficam fora da externa `POST` e `DELETE /tv3/bind-context`, desde 12/10 `GET /tv3/remote-device/devices/{classId}` e, desde a tarde de 12/10, `GET` e `DELETE /tv3/remote-device/device/{handle}`; lá elas dão 100 na etapa de rota, antes da classe, como qualquer caminho não declarado. A externa tem 21 rotas, e a interna, 26. Na 44642, o não associado continua recebendo 106 nas duas da C.6.8, e o não local, 106 na C.6.15.5 e nas duas rotas 2.1 (em `warn`, só o aviso). A Tabela C.78 lista 107 para o não local na C.6.15.5, e a C.4.1.8, 106 para o não local numa API de uso exclusivo do cliente local: o código exato fica com o Joel (PENDENTE, abaixo).
+**Superfícies (F-1 e E7, Joel 15/10; revisam a P1.9 do Luís, de 10/10).** As duas superfícies têm as 26 rotas do `routes.json`. O `generate.js` (`SURFACE_RULES`) deriva das `classes` e da seção de cada rota o que muda entre elas:
+- **externa (44643, HTTPS):** as rotas de uso exclusivo do cliente local (`classes` sem `non-local`: `POST` e `DELETE /tv3/bind-context`, a C.6.15.5 e as duas rotas por *handle*) e a C.6.1.2 (`/tv3/authorize`, só por HTTP) levam `surface_error: 106` e respondem 106 a qualquer requisição, antes da classe (C.4.1.8);
+- **interna (44642, HTTP):** o access token de classe `non-local` fora de `/tv3/authorize` e `/tv3/token` recebe 106 (C.4.1.6; `nonlocal_https_only` e `nonlocal_http` no bloco do plugin).
+
+Até 15/10, a externa não tinha as rotas exclusivas do local, que davam 100 lá. Duas superfícies são decisão do projeto: a norma (C.3.4) só define o `Server-BaseURL` (HTTP, 44642) e o `Server-SecureBaseURL` (HTTPS, porta livre).
 
 ### Bind-token (C.4.1.3, C.4.1.4, C.6.8)
 
 - **Quem emite:** o receptor **não emite** bind-token. Quem emite é a emissora (A.4.9, C.6.15.4).
-- **Registro da chave:** o local associado registra `{alg, key}` em `POST /tv3/bind-context`. Desde a reunião de 05/10 com o Joel (D-0510-2, que resolveu o A3), quem responde é a própria borda (`edgegateway/plugin/bindcontext.go`), e não mais o tv3ws, com o mesmo contrato. A chave vai para a LIST `bind-context:{serviceId}`, onde `serviceId` é o valor de `session:current-service-id` no momento do registro. O registro e a validação usam a mesma função de leitura de chave (`plugin/keys.go`).
+- **Registro da chave:** o local associado registra `{alg, key}` em `POST /tv3/bind-context`. Desde a reunião de 05/10 com o Joel (D-0510-2, que resolveu o A3), quem responde é a própria borda (`edgegateway/plugin/bindcontext.go`), e não mais o tv3ws, com o mesmo contrato. A chave vai para a LIST `bind-context:{serviceId}`, onde `serviceId` é o valor de `session:current-service-id` no momento do registro: o `globalServiceId` do serviço corrente (A6, Joel 15/10), devolvido em `serviceContextId`. Sem serviço corrente, 300. O registro e a validação usam a mesma função de leitura de chave (`plugin/keys.go`).
 - **Consulta:** `GET /tv3/bind-context`, com o bind-token no cabeçalho `bind-token` (C.6.8.3), também na borda. Ela procura entre as chaves de **todos** os serviços (`SCAN bind-context:*`) e lista os que validam o token.
 - **Revogação:** `DELETE /tv3/bind-context`, com o cabeçalho `key`, também na borda.
 - **Validação na borda,** em quatro frentes e nesta ordem:
@@ -173,28 +195,22 @@ A tabela completa está em `edgegateway/plugin/README.md`.
 - **Regras da assinatura:**
   - Algoritmos aceitos: HS256, HS512, RS256 e RS512 (C.4.1.4.8). `none` é sempre inválido.
   - O token tem de ter o mesmo `alg` da chave registrada.
-  - Basta que **qualquer** chave registrada para o **serviço corrente** valide. O token de uma emissora não vale no contexto de outra (isolamento, D4).
+  - Basta que **qualquer** chave registrada para o **contexto da rota** valide: o `{serviceContextId}` do caminho ou, em `current-service` e nas rotas sem o parâmetro, o serviço corrente (`pathContext`, em `plugin/handler.go`). O token de uma emissora não vale no contexto de outra (isolamento, D4).
+  - Qualquer `{serviceContextId}` explícito é aceito. O 304 das Tabelas C.71 e C.74 (serviço fora do Application Catalog) não é emitido: nenhum módulo publica o catálogo (`aop/services`). Até 15/10, o `{serviceContextId}` era uma constante igual para todo serviço (L2).
 
 ### Modo e erros
 
-- **`AUTH_ENFORCE=warn`** (padrão): nenhuma falha de credencial é bloqueada; o 100 (rota não declarada) e o 200 (panic do roteador) valem nos dois modos. A borda loga `[tv30-auth] WARN code=...` e acrescenta `X-TV30-Auth-Warn: <código>` à resposta. O motivo é que clientes como o Guaraná ainda não obtêm token.
-- **`AUTH_ENFORCE=enforce`:** bloqueia com status 404 e corpo `{"error": <n>, "description": "..."}` (C.3.2), com `Access-Control-Allow-Origin: *`.
-- **Redis fora:** na decisão de credencial, em `warn` passa, e em `enforce` responde `{error: 200}`. Na C.6.8, que a borda responde, a falha do Redis dá `{error: 200}` nos dois modos.
-- **APIs respondidas pela borda** (C.6.8, C.6.7.8 e C.6.7.9): os erros da própria API (101, 104, 105, 108, 300 e os da negociação de versão) saem nos dois modos, porque não são decisão de credencial. O contrato completo está em `edgegateway/plugin/README.md`, seção *APIs respondidas pela borda*.
+- **`AUTH_ENFORCE=enforce`** (padrão desde 15/10, Joel; vazio também vale `enforce`): bloqueia com status 404 e corpo `{"error": <n>, "description": "..."}` (C.3.2), com `Access-Control-Allow-Origin: *`. Valor inválido derruba a borda (`plugin/config.go`).
+- **`AUTH_ENFORCE=warn`:** opção explícita e transitória (por exemplo, para o Guaraná, até ele obter token). Só o 104, o 107 e o 108 deixam de bloquear: a borda loga `[tv30-auth] WARN code=...` e acrescenta `X-TV30-Auth-Warn: <código>` à resposta. Até 15/10, `warn` era o padrão.
+- **Redis fora:** `{error: 200}`, nos dois modos, na decisão de credencial e nas APIs que a borda responde. Até 15/10, em `warn`, a decisão de credencial deixava passar.
+- **APIs respondidas pela borda** (C.6.8, C.6.7.8 e C.6.7.9): os erros da própria API (101, 104, 105, 108 e 300) saem nos dois modos, porque não são decisão de credencial. O contrato completo está em `edgegateway/plugin/README.md`, seção *APIs respondidas pela borda*.
+- **Versão (C.3.6; D1, D2 e D4, Joel 15/10):** a borda negocia em toda rota declarada, depois da decisão de credencial, pelas `versions` da rota no `routes.json` (ausente = 2.0). Sem `Accept-Version`, vale a 2.0; fora do formato X.Y, 101; versão que a rota não serve, 100; os dois nos dois modos. A versão decidida vai ao serviço no cabeçalho interno `X-TV30-API-Version`, e o `Host` original, em `X-TV30-Host`; a borda apaga os valores que vierem do cliente. A C.6.15.5 serve 2.0 e 100.0; as rotas por *handle*, só 100.0 (a antiga "2.1", D1). A C.6.7.8 informa a mais recente que a rota serve (E2): 100.0 na C.6.15.5, 2.0 nas demais.
 
 ### PENDENTE (Joel)
 
-Os comportamentos provisórios estão marcados no código e listados em `edgegateway/plugin/README.md`. A L1 (reconhecer o associado pelo `Origin`) saiu desta lista: foi decidida pelo Luís em 03/10, com o risco aceito (seção *Classes de cliente*).
-- **L2:** `{serviceContextId}` constante no tv3ws;
-- **L3:** sem TLS na borda, e portanto sem 106 por protocolo (o tv3ws, que o aplicava, deixou de aplicar com a D-0510-1);
-- **L4:** 106 ao associado em `/authorize` e `/token` só em `enforce`;
-- **L5:** relógio do host em vez do System Time Fragment;
-- **L7:** liberação de recursos ao revogar uma chave;
-- **H1:** associado em contexto de outra emissora: a borda não confere, para o associado, o `{serviceContextId}` do caminho (C.4.1.1);
-- **H2:** sem serviço corrente, 108 nas rotas `token+bind`, onde a maioria das tabelas prevê 300;
-- **C.6.7.8 e C.6.7.9** (rodada de 05/10): a versão de cada API é 2.0 em todas (a remote-device aceita 2.1, e não foi decidido se aparece assim; E2). Os outros dois pontos foram mantidos pelo Luís em 11/10: id da Tabela C.2 que o testbed não implementa dá 101 (E1), e, sem `subsystem`, a C.6.7.9 lista todas as APIs (E3). No código, estão marcados `DECIDIDO (Luis, 11/10; E1)` e `DECIDIDO (Luis, 11/10; E3)` (`edgegateway/plugin/apiinfo.go`);
-- **100 ou 106 na 44643 com TLS** (P1.9, ligado à L3): a C.4.1.8 (p. 206-207; p. 224-225 do PDF) manda responder 106 ao não local que chama por HTTPS uma API exclusiva do cliente local, e `POST`/`DELETE /tv3/bind-context` dão 100 na 44643. Enquanto ela for HTTP, a C.4.1.8 não se aplica ao pé da letra; a mesma seção diz que a C.6.1.2 (`/tv3/authorize`) só se acessa por HTTP, e a regra a mantém na 44643, porque ela admite o não local. Desde 12/10 (decisão do Luís), entra neste ponto (F-1: item 1 do P1.9 na seção F de `docs/decisoes-pendentes.md` da raiz) o código da C.6.15.5 para o não local: a borda dá 100 na 44643 e 106 na 44642, e a Tabela C.78 (p. 339; p. 357 do PDF) lista 107 ("If invoked from a non-local client"). As rotas 2.1 de `/device/{handle}` recebem o mesmo desde a tarde de 12/10; se o código delas entra na F-1 também está com o Joel (o texto da proposta 2.1 não está no repositório);
-- **Lista de APIs por superfície** (P1.9): a externa lista 17 APIs, sem as duas da C.6.8 restritas ao associado e, desde 12/10, sem a C.6.15.5, só do cliente local (as três dão 101 lá). As rotas 2.1 não têm campo `api` e não mudam a lista. A Tabela C.46 (p. 301 do PDF) fala em "all APIs of a given category", sem superfície. **Decidido pelo Luís em 11/10 (F-2): cada superfície lista só as APIs que oferece**, como já estava; no código, `DECIDIDO (Luis, 11/10; F-2)` (`edgegateway/generate.js`, `pluginConfig`).
+Os comportamentos provisórios estão marcados no código e listados em `edgegateway/plugin/README.md`, seção *Decidido e pendente*. As respostas do Joel de 15/10 tiraram desta lista a L2 (A6), a L3 (A7), a L4 (A8), a H1, a H2, o código da 44643 e da C.6.15.5 para o não local (F-1: 106), a versão na C.6.7.8 (E2) e a lista de APIs por superfície (F-2 revista: as duas listam as 20 APIs, pela Tabela C.46, "all APIs of a given category"; a restrição aparece pelo 106 no uso). A L1 foi decidida pelo Luís em 03/10, com o risco aceito, e a E1 e a E3 mantidas por ele em 11/10 (`DECIDIDO` em `plugin/apiinfo.go`).
+- **L5:** relógio do host em vez do System Time Fragment (`plugin/jwt.go`);
+- **L7:** liberação de recursos ao revogar uma chave (C.4.4); adiada (A10), marcada `PENDENTE (Joel)` em `plugin/bindcontext.go`.
 
 Também aberto pela rodada de 05/10, sem marcador no código da borda: o que a futura tela da C.4.2.2 faz no desbloqueio (E5 de `docs/decisoes-pendentes.md` da raiz). A E6, exigir `clients:authorized` na borda, foi decidida pelo Luís em 11/10: exigir (seção *Emissão do access token*, acima).
 
@@ -202,49 +218,47 @@ Abertos pelas correções de 12/10 no pareamento (tv3ws; seção *Achados de 12/
 - **o desafio errado deve encerrar a tentativa de pareamento?** Hoje o 102 do desafio errado deixa a tentativa aberta: o material do pareamento fica no cliente, o mesmo challenge pode ser respondido de novo e o pop-up só sai no sucesso ou pela trava de 120 s. A Tabela C.4 só diz que o 102 significa "the pairing was not successfully concluded". Marcado `PENDENTE (Joel)` em `tv3ws/src/api/client-identification/service.ts`;
 - **o challenge não expira** (G2). O challenge pendente vale até o sucesso ou até o tv3ws reiniciar, sem prazo; a trava de 120 s fecha o pop-up e libera a camada, mas não o invalida. A outra parte da G2, o pedido novo com a camada ocupada, o Luís decidiu em 12/10, à noite: 103 (acima). O aviso da C.6.14.5 (`aop/display/layers/popup/info`, G9) espera numa fila só dele ([08](08-mqtt-map.md)).
 
-**Redis sem senha e publicado no host (6379): decidido pelo Luís em 03/10.** A conexão com o banco fica como está, sem senha; só a interface administrativa (redis-commander) passou a exigir login. O risco continua: quem alcança a porta grava chaves de bind ou origens associadas e contorna a borda em `enforce` (ver `KNOWN-ISSUES.md` da raiz).
+**Redis sem senha (D-L1, Luís, 03/10) e, desde 15/10, publicado só em `127.0.0.1` (A1, Joel).** A conexão com o banco fica sem senha e sem ACL (lista de controle de acesso do Redis); só a interface administrativa (redis-commander) exige login. Quem alcança a 6379 grava chaves de bind ou origens associadas e contorna a borda; desde a A1, só um processo da própria máquina a alcança (`redis/docker-compose.yml`).
 
 ## Descoberta SSDP
 
-**Código:** `edgegateway/ssdp/` (o anunciante da borda, em Go, só com a biblioteca padrão: `main.go` com o laço de anúncio, a política de falha e o byebye; `config.go` com o host e as portas anunciados; `iface.go` com a interface do anúncio; `ssdp.go` com as mensagens; testes em `ssdp_test.go` e, com rede falsa, em `main_test.go`), `edgegateway/entrypoint.sh` (sobe e vigia o anunciante) e `tv3ws/src/manifest.ts` (`GET /manifest`, registrado no app Express do tv3ws), com o host e as portas do `tv3ws/src/ssdp-config.ts`. O tv3ws rodando sozinho no host (dev-host) ainda anuncia com `tv3ws/src/ssdp-server.ts` e `tv3ws/src/ssdp-interface.ts`, com a biblioteca `@lvcabral/node-ssdp`.
+**Código:** `edgegateway/ssdp/` (o anunciante, em Go, só com a biblioteca padrão: `main.go` com o laço de anúncio, a política de falha e o byebye; `config.go` com o host e as portas anunciados; `iface.go` com a interface do anúncio; `ssdp.go` com as mensagens; testes em `ssdp_test.go` e, com rede falsa, em `main_test.go`), os comandos `./tv30` e `tv30.ps1` da raiz do TV30 (compilam, sobem e encerram o anunciante) e `tv3ws/src/manifest.ts` (`GET /manifest`), com as portas de `tv3ws/src/ssdp-config.ts`. O tv3ws não anuncia mais: o `ssdp-server.ts` saiu em 15/10.
 
-**Onde roda (L6, opção A; decidido pelo Luís em 09/10):** o anúncio sai da **borda**. O anunciante é o binário `/usr/local/bin/ssdp-announcer` da imagem `tv30-edgegateway`, compilado no estágio `ssdp` do `edgegateway/Dockerfile` depois de `go vet` e `go test`. O `entrypoint.sh` só o sobe com `SSDP_ENABLED=true` (padrão desligado). Quem liga é o override `docker-compose.ssdp.yml` da raiz do TV30, que põe a borda em `network_mode: host`, com `EDGE_VARIANT=host` (backends `http://127.0.0.1:44652` e `https://127.0.0.1:44653`, em `edgegateway/routes.json`) e `REDIS_HOST=127.0.0.1`, e publica a 44652/44653 do tv3ws só em `127.0.0.1`. O tv3ws da bridge recebe `SSDP_ENABLED: "false"` e não anuncia. Fora do compose, `SSDP_ENABLED` vale ligado, e o tv3ws rodando sozinho no host anuncia por conta própria. A opção A substituiu a opção B (decidida em 04/10, informado pelo Luís): o container `tv3ws-ssdp`, com a imagem do tv3ws em rede do host, e a borda e o tv3ws na `ginga_net`. A descoberta só é suportada em Linux nativo com Docker Engine (decisão do Joel, informada pelo Luís em 04/10). A norma não diz onde o anunciante roda (C.3.4) nem em que plataforma; as duas coisas são decisões do projeto.
+**Onde roda (complemento do Joel de 15/10, B1 e B2):** o anunciante roda **nativo no host, fora do Docker**, em Linux, macOS e Windows. Dentro do Docker, o multicast só sai em Linux nativo; no Mac e no Windows, o container fica na VM do Docker. O `./tv30 up` (no Windows, `.\tv30.ps1 up`) sobe o compose e depois o anunciante. Ele o compila de `infra/edgegateway/ssdp` quando o código muda, com `go vet` e `go test` antes (Go do host, ou um container `golang:1.22.7-alpine3.19`), e o guarda em `.tv30/bin`. O `./tv30 down` o encerra antes do compose, para sair o `ssdp:byebye`. Com `SSDP_ENABLED=false`, o anunciante não sobe; `docker compose up -d` sozinho sobe o testbed sem descoberta. A borda fica sempre na bridge, e a imagem dela não tem anunciante. De 09/10 a 15/10 (L6, opção A), ele era processo da borda, em rede do host, pelo override `docker-compose.ssdp.yml`, só em Linux nativo; o override saiu. O anunciante só divulga onde está o `/manifest` e responde a buscas: não guarda estado nem valida credencial. A norma não diz onde o anunciante roda (C.3.4); é decisão do projeto.
 
-- **Anúncio:** em UDP 1900, a cada 10 s, o serviço `urn:schemas-sbtvd-org:service:TV3.0WebServices:1` e o UDN, com o mesmo formato do anunciante anterior (`USN` `<UDN>::<URN>`). A resposta ao M-SEARCH sai com `CACHE-CONTROL: max-age=1800`, igual ao NOTIFY (até a opção B, `max-age=4`). Sai só pela interface IPv4 que tem o IP do host anunciado. Se o host não for um IP da máquina, sai pela interface da rota padrão, com aviso no log. `SSDP_INTERFACE` força a interface. Sem nenhuma interface possível, o anunciante espera a rede (ver *Falha do anúncio*, abaixo).
+- **Anúncio:** em UDP 1900, a cada 10 s, o serviço `urn:schemas-sbtvd-org:service:TV3.0WebServices:1` e o UDN (`USN` `<UDN>::<URN>`). A resposta ao M-SEARCH sai com `CACHE-CONTROL: max-age=1800`, igual ao NOTIFY. Sai por uma interface IPv4 só: a de `SSDP_INTERFACE`, se definida; senão a que tem o IP do host anunciado; senão a da rota padrão (`edgegateway/ssdp/iface.go`).
 - **`LOCATION`:** `http://<host>:44642/manifest`, a superfície interna da **borda** (D10). Não aponta para a porta interna do tv3ws.
-- **Como o `<host>` é escolhido:** na borda, desde 11/10 (B2, decisão do Luís), é o `SSDP_ADVERTISE_HOST`, obrigatório com o anúncio ligado; ausente, vazio ou sem host é erro de configuração (`edgegateway/ssdp/config.go`), e o `preflight` da raiz do TV30 já para a subida sem ele. O `SERVER_URL` e o IP local deixaram de ser fonte do host do anúncio. No tv3ws, a regra do `/manifest` não mudou: `SSDP_ADVERTISE_HOST`, senão `SERVER_URL`, senão o IP local (`tv3ws/src/ssdp-config.ts`). Até 11/10, a borda seguia a mesma cadeia do tv3ws, escrita em Go e em TypeScript, sem teste cruzado entre as duas. No compose da raiz, com o override, a borda e o tv3ws leem o `SSDP_ADVERTISE_HOST` dos mesmos arquivos de ambiente: `tv3ws/.env` e depois o `.env` da raiz, que prevalece. Como ele é obrigatório, o `LOCATION` e o `Server-BaseURL` do `/manifest` saem do mesmo host. Com a opção B, isso foi medido em 04/10 (`docs/ssdp-verificacao.md` da raiz, teste 16), e a ordem `tv3ws/.env` → `.env` da raiz foi conferida com `docker compose config`; com a opção A, foi medido em 09/10 (testes 34 e 41: o `/manifest` devolve o mesmo host do `LOCATION`). Com o tv3ws rodando no host, fora do compose, isso não é garantido (`docs/dev-local.md` da raiz).
-- **Portas:** as anunciadas são as da borda, 44642 e 44643. `EDGE_HTTP_PORT` e `EDGE_HTTPS_PORT` mudam só o que é anunciado (no `LOCATION` e no `/manifest`), e não as portas em que o KrakenD escuta, fixas em `edgegateway/routes.json` (`surfaces.*.port`). Com o override, a borda está em rede do host, e as duas são as do host. Na bridge, desde 12/10 (decisão do Luís), a 44643 sai fixa na mesma porta do host por padrão (`EDGE_EXT_PUBLISH=44643:44643`, em `docker-compose.yml` desta pasta), porque o `Server-SecureBaseURL` do `/manifest` anuncia `<host>:44643` e o tv3ws não sabe a porta que o Docker escolheria. De 11/10 (C1) a 12/10, ela saía numa porta de host escolhida pelo Docker, que o `/manifest` não anunciava; `EDGE_EXT_PUBLISH=44643` (só o número) ainda faz isso. Outra porta de host fixa pede o mesmo número no `EDGE_HTTPS_PORT`.
+- **Como o `<host>` é escolhido (B2 revista pelo Joel em 15/10):** é **detectado**: o IPv4 da interface por onde o anúncio sai. Ele acompanha a troca de rede: se a interface da rota padrão ou o IPv4 mudam, o anunciante manda o byebye do endereço antigo e anuncia de novo com o novo. O `SSDP_ADVERTISE_HOST` é sobreposição opcional: definido, vale ele, fixo; definido sem host, é erro de configuração (`edgegateway/ssdp/config.go`). De 11/10 a 15/10 (B2 do Luís), ele era obrigatório. O `./tv30` lê as variáveis no `tv3ws/.env` e depois no `.env` da raiz; o shell prevalece.
+- **Host do `/manifest`:** o `Host` original da requisição, que a borda repassa em `X-TV30-Host`, para sair no mesmo host do `LOCATION` (complemento do Joel, 3.4). O `SSDP_ADVERTISE_HOST`, definido, prevalece, como no anunciante. Sem o cabeçalho (requisição que não passou pela borda), vale o `Host` da própria requisição; sem nenhum dos dois, o `SERVER_URL` e depois o IP local (`manifestHost`, em `tv3ws/src/manifest.ts`).
+- **Portas:** as anunciadas são as da borda, 44642 e 44643. `EDGE_HTTP_PORT` e `EDGE_HTTPS_PORT` mudam só o que é anunciado (no `LOCATION` e no `/manifest`), e não as portas em que o KrakenD escuta, fixas em `edgegateway/routes.json` (`surfaces.*.port`). A 44643 sai fixa na mesma porta do host por padrão (`EDGE_EXT_PUBLISH=44643:44643`, em `docker-compose.yml` desta pasta; decisão do Luís em 12/10), porque o `/manifest` anuncia `<host>:44643` e o tv3ws não sabe a porta que o Docker escolheria. `EDGE_EXT_PUBLISH=44643` (só o número) dá uma porta de host livre, que o `/manifest` não anuncia. Outra porta de host fixa pede o mesmo número no `EDGE_HTTPS_PORT`.
 
 `GET /manifest` (rota `auth=none` na borda) responde 200; o corpo não carrega informação (o Express manda o texto `OK`). A informação vai nos cabeçalhos:
 - `Server-BaseURL` (`<host>:44642`);
-- `Server-SecureBaseURL` (`<host>:44643`). **Atenção:** a 44643 da borda ainda é HTTP puro (L3), então esse endereço "seguro" não aceita `https://`. PENDENTE (Joel): o que anunciar aqui até a decisão da L3 (a porta da borda, como hoje, ou o HTTPS do próprio tv3ws, que não é publicado no host);
+- `Server-SecureBaseURL` (`<host>:44643`), com TLS desde 15/10 (A7): o cliente monta `https://`, e o certificado é o autoassinado do receptor, que o não local recebe no pareamento (`serverCert`);
 - `Server-PairingMethods` (`qrcode,kex`);
 - `Device-BrandName`, `Device-Model` e `Device-FriendlyName`.
 
 Desde 11/10 (B3, decisão do Luís), o `/manifest` também manda `Access-Control-Expose-Headers` com os seis nomes (`tv3ws/src/manifest.ts`), para o navegador entregá-los a um script de outra origem. Pela borda, o plugin acrescenta outra linha do mesmo cabeçalho (`Content-Length`, `X-TV30-Auth-Warn`, do `cors.expose_headers` do `routes.json`; até 12/10, era o módulo CORS do KrakenD), sem apagar a do tv3ws.
 
-**Falha do anúncio.** O morre-inteiro foi decidido pelo Luís em 09/10 e revisto por ele em 10/10: "derrubar a borda só em erro de configuração e tolerar a falta de rede com novas tentativas". O `entrypoint.sh` vigia o anunciante junto com os dois KrakenD e o httpd da documentação: se ele sai, a **borda inteira cai, com todas as APIs**, e o `restart: unless-stopped` a traz de volta. Na opção B, só o `tv3ws-ssdp` caía. O que a decisão de 10/10 mudou é quando o anunciante sai (`edgegateway/ssdp/main.go`):
-- **Erro de configuração: sai com 1** e o log `[ssdp] FALHA em ...` (D9). São o `SSDP_ADVERTISE_HOST` ausente, vazio ou sem host (desde 11/10, B2), a porta inválida em `EDGE_HTTP_PORT`/`EDGE_HTTPS_PORT`, `SSDP_INTERFACE` com um nome que não existe na máquina (ou a de loopback), conferida na partida, o bind da 1900 recusado por um socket sem `SO_REUSEADDR` (`EADDRINUSE`) e qualquer erro que não seja de rede.
-- **Falta de rede: não sai.** São nenhuma interface com IPv4, nenhuma rota padrão, a interface de `SSDP_INTERFACE` sem IPv4 e o erro de rede ao abrir os sockets, ao enviar ou ao ler (`ENETUNREACH`, `EHOSTUNREACH`, `ENETDOWN`, `EHOSTDOWN`, `EADDRNOTAVAIL` e `ENODEV`, ou qualquer erro de socket depois que o IPv4 escolhido saiu da interface). O anunciante fecha os sockets, e não anuncia nem responde a buscas. Registra um `[ssdp] AVISO sem rede ...` ao entrar no estado e um `[ssdp] rede de volta ...` ao sair, sem repetir a cada tentativa, e tenta de novo com espera crescente (1, 2, 4, 8, 16 e 30 s, e daí a cada 30 s), escolhendo de novo a interface e o IPv4 de origem. O host do `LOCATION` é o `SSDP_ADVERTISE_HOST`, conferido uma vez, na partida, e não muda com a rede (B2, decidida pelo Luís em 11/10); se o IPv4 configurado não estiver mais em nenhuma interface, o anúncio sai pela da rota padrão, com aviso. Até 11/10, sem `SSDP_ADVERTISE_HOST` nem `SERVER_URL`, o host vinha do IP local e era recalculado a cada tentativa. Os avisos do anúncio só se repetem quando mudam.
-- No tv3ws rodando sozinho com `SSDP_ENABLED` ligado (dev-host), nada mudou: qualquer falha do anúncio encerra o processo inteiro (`tv3ws/src/ssdp-server.ts`).
+**Falha do anúncio** (C8, decisão do Luís em 10/10, mantida pelo Joel em 15/10: "só erro de configuração encerra; a falta de rede é tolerada com novas tentativas"; `edgegateway/ssdp/main.go`). Fora do Docker, a saída do anunciante não derruba mais a borda. Se ele sai logo na subida, o `./tv30 up` mostra as últimas linhas do log (`.tv30/ssdp.log`).
+- **Erro de configuração: sai com 1** e o log `[ssdp] FALHA em ...` (D9). São o `SSDP_ADVERTISE_HOST` definido sem host, a porta inválida em `EDGE_HTTP_PORT`/`EDGE_HTTPS_PORT`, `SSDP_INTERFACE` com um nome que não existe na máquina (ou a de loopback), conferida na partida, o bind da 1900 recusado por um socket sem `SO_REUSEADDR` (`EADDRINUSE`) e qualquer erro que não seja de rede.
+- **Falta de rede: não sai.** São nenhuma interface com IPv4, nenhuma rota padrão, a interface de `SSDP_INTERFACE` sem IPv4 e o erro de rede ao abrir os sockets ou ao enviar. O anunciante fecha os sockets, e não anuncia nem responde a buscas. Registra um `[ssdp] AVISO sem rede ...` ao entrar no estado e um `[ssdp] rede de volta ...` ao sair, sem repetir a cada tentativa, e tenta de novo com espera crescente (1, 2, 4, 8, 16 e 30 s, e daí a cada 30 s), escolhendo de novo a interface e o IPv4 de origem.
 
-No SIGTERM, o `entrypoint.sh` para o anunciante primeiro, e ele envia `ssdp:byebye` (sem rede, sai sem byebye, porque não há socket). Ao começar a anunciar, registra-se `[ssdp] AVISO` quando o host anunciado é de loopback, quando `EDGE_HTTP_PORT` difere de 44642 (a C.3.4 fixa 44642 no `Server-BaseURL`) e, enquanto a L3 estiver aberta, que o `Server-SecureBaseURL` aponta para porta sem TLS.
+**Parada:** SIGTERM, SIGINT ou o arquivo de `SSDP_STOP_FILE`, que o `./tv30 down` cria (no Windows não há SIGTERM para processo em segundo plano). Nos três casos sai o `ssdp:byebye`; sem rede, o anunciante sai sem byebye, porque não há socket. Ao começar a anunciar, registra `[ssdp] AVISO` quando o `SSDP_ADVERTISE_HOST` é de loopback e quando `EDGE_HTTP_PORT` difere de 44642 (a C.3.4 fixa 44642 no `Server-BaseURL`).
 
 ```mermaid
 sequenceDiagram
     participant C as Dispositivo na rede local
-    participant S as edgegateway / ssdp-announcer (rede do host, UDP 1900)
-    participant E as edgegateway / KrakenD :44642 (rede do host)
-    participant T as tv3ws (API em 127.0.0.1:44652)
+    participant S as anunciante SSDP (nativo no host, UDP 1900)
+    participant E as edgegateway :44642 (bridge, porta publicada)
+    participant T as tv3ws :44652 (ginga_net)
 
     C->>S: M-SEARCH * HTTP/1.1<br/>ST: urn:schemas-sbtvd-org:service:TV3.0WebServices:1
-    S-->>C: 200 OK<br/>LOCATION: http://<host>:44642/manifest
-    C->>E: GET /manifest
-    E->>T: repassa (auth=none, variante host)
+    S-->>C: 200 OK<br/>LOCATION: http://<IPv4 detectado>:44642/manifest
+    C->>E: GET /manifest (Host: <IPv4 detectado>:44642)
+    E->>T: repassa (auth=none), com X-TV30-Host
     T-->>C: 200 + Server-BaseURL, Server-SecureBaseURL,<br/>Server-PairingMethods, Device-*
-    Note over C: segue para GET /tv3/authorize na borda
+    Note over C: segue para GET /tv3/authorize na borda (44642)
 ```
 
-**L6, decidida em 04/10 (opção B, informado pelo Luís) e re-decidida pelo Luís em 09/10 (opção A).** Medido em 02/10 (`docs/ssdp-verificacao.md` na raiz do TV30), com o arranjo anterior às duas: o NOTIFY do tv3ws aparecia na `eth0` do container e na bridge, e **não saía** da `eth0` da VM do WSL. Com a opção B, a descoberta por outro dispositivo da LAN foi validada num Linux nativo em 09/10 (testes 28 a 32). Com a opção A, também, no mesmo dia (testes 40 a 43, com um notebook no mesmo Wi-Fi).
-
-**B2, decidida pelo Luís em 11/10:** com o anúncio ligado, o `SSDP_ADVERTISE_HOST` é obrigatório (acima). Até 11/10, o padrão do compose era `localhost` (`SERVER_URL`), e com esse valor o `LOCATION` e o `Server-BaseURL` só funcionavam na própria máquina (o boot avisava). As opções eram cair no IP local quando o `SERVER_URL` fosse loopback ou exigir o `SSDP_ADVERTISE_HOST`; ficou a segunda. Consequência: o `LOCATION` não acompanha troca de rede. Sem o anúncio, o `/manifest` do tv3ws ainda cai no `SERVER_URL`.
+**L6 e B2, em resumo.** O anúncio saiu do tv3ws para um container `tv3ws-ssdp` em rede do host (opção B, 04/10), depois para a borda em rede do host (opção A, 09/10) e, desde 15/10, roda nativo no host. Medido em 02/10 (`docs/ssdp-verificacao.md` da raiz do TV30): o NOTIFY de um container na bridge não saía da VM do WSL (Windows Subsystem for Linux). O host do anúncio seguiu a cadeia `SSDP_ADVERTISE_HOST` > `SERVER_URL` > IP local até 11/10, veio do `SSDP_ADVERTISE_HOST` obrigatório de 11/10 a 15/10 e, desde então, é detectado.
