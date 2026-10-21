@@ -1,6 +1,6 @@
 # Pipeline MQTT: validação de esquema
 
-> **Revisto em 2026-10-10 contra o código e conferido de novo em 2026-10-12, também depois das correções da tarde** (leitura do payload inteiro e mensagem e tópico de `errors/<client_id>`; `infra/mqtt-broker/plugin/src/`, `plugin/config/schemas.json`, `infra/Dockerfile` e `infra/entrypoint.sh` do broker). Até a revisão de 10/10, este documento descrevia um pipeline de segurança com três camadas (ACL por `client_id` no formato `user_<userId>`, consentimento por `serviceId` e esquema), um módulo `authorize.c` e a carga de ACL e consentimento no Redis pelo `migrate_to_redis.py` na partida. Nada disso existe mais: o controle de acesso a tópicos foi removido por decisão de desenho (comentário em `infra/mqtt-broker/plugin/src/mosquitto_plugin.c`), o plugin não consulta o Redis e só valida esquema e mede latência.
+> O plugin não consulta o Redis nem decide acesso por cliente: só valida esquema e mede latência (`infra/mqtt-broker/plugin/src/mosquitto_plugin.c`). Mensageria e broker são decisões deste projeto; a ABNT NBR 25608 não define a comunicação interna do receptor.
 
 O plugin C intercepta toda mensagem publicada no broker antes de entregá-la aos assinantes. Ele usa o evento `MOSQ_EVT_ACL_CHECK` do Mosquitto só para isso: valida o PUBLISH (`MOSQ_ACL_WRITE`) e deixa passar todo o resto (assinatura e entrega), sem decidir acesso por cliente.
 

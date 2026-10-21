@@ -6,10 +6,10 @@ Validação de payload MQTT por schema JSON, executada dentro do plugin C do bro
 
 ## Quando o validador roda
 
-Configurado em `plugin/src/mosquitto_plugin.c` (callback `callback_acl_check`). O antigo filtro que restringia a validação a `sensor/*` saiu (P4); o que vale hoje:
+Configurado em `plugin/src/mosquitto_plugin.c` (callback `callback_acl_check`):
 
 ```c
-// Valida so PUBLISH; ... qualquer topico com esquema declarado e validado
+// ... Valida so PUBLISH; topico sem esquema passa.
 if (ed->access != MOSQ_ACL_WRITE || strncmp(ed->topic, "$SYS/", 5) == 0) {
     return MOSQ_ERR_SUCCESS;
 }
@@ -31,7 +31,7 @@ Ou seja: **todo PUBLISH com payload num tópico com schema declarado é validado
 
 Arquivo único: `infra/mqtt-broker/plugin/config/schemas.json`.
 
-No build do container, é copiado para `/mosquitto/config/schemas.json` (`infra/mqtt-broker/infra/Dockerfile`, linha 65). O plugin lê esse caminho na inicialização (`mosquitto_plugin.c:252`):
+No build do container, é copiado para `/mosquitto/config/schemas.json` (`COPY` do `infra/mqtt-broker/infra/Dockerfile`). O plugin lê esse caminho na inicialização (`mosquitto_plugin_init`, em `mosquitto_plugin.c`):
 
 ```c
 load_schemas_from_file("/mosquitto/config/schemas.json");
@@ -48,9 +48,9 @@ Estrutura do arquivo: **objeto raiz** onde cada chave é um **tópico** (exato o
 
 > **Casamento** (`get_schema_for_topic` e `topic_matches`, em `mosquitto_plugin.c`): primeiro a chave igual ao tópico; senão, a primeira chave com `+` ou `#` que casa, na ordem do arquivo. `tlm/sls/+/esg` vale para `tlm/sls/<serviceId>/esg`.
 >
-> **Leitura do payload** (desde 12/10; `json_payload_parse`, em `plugin/src/json_payload.c`, regra em `plugin/include/json_payload.h`): o payload é lido **inteiro, pelo comprimento**, e só vale como JSON se for exatamente um texto JSON da RFC 8259 (seção 2): espaço em branco, um valor, espaço em branco, com espaço em branco = espaço, tab, LF ou CR. O json-c roda no modo estrito. Viram `INVALID_JSON`: sobra depois do valor (`{"value":1}lixo`, dois valores seguidos), NUL em qualquer posição (`{"value":1}\0lixo`), comentário (`{"value":1}/*x*/`, `//x`), aspas simples, vírgula sobrando, `TRUE`, zero à esquerda e `\f` ou `\v` em volta do valor. Até 12/10, o plugin usava `json_tokener_parse`, que lê até o primeiro NUL e ignora o que vem depois do primeiro valor: `{"value":1}lixo` e `{"value":1}\0lixo` passavam e eram entregues inteiros.
+> **Leitura do payload** (`json_payload_parse`, em `plugin/src/json_payload.c`, regra em `plugin/include/json_payload.h`): o payload é lido **inteiro, pelo comprimento**, e só vale como JSON se for exatamente um texto JSON da RFC 8259 (seção 2): espaço em branco, um valor, espaço em branco, com espaço em branco = espaço, tab, LF ou CR. O json-c roda no modo estrito. Viram `INVALID_JSON`: sobra depois do valor (`{"value":1}lixo`, dois valores seguidos), NUL em qualquer posição (`{"value":1}\0lixo`), comentário (`{"value":1}/*x*/`, `//x`), aspas simples, vírgula sobrando, `TRUE`, zero à esquerda e `\f` ou `\v` em volta do valor.
 >
-> **Payload texto puro:** se o payload não é um texto JSON e o schema declara `"type": "string"`, o payload **inteiro** é validado como string (uuid, caminho, nome de tela, os casos de `aop/currentUser` e `aop/currentService`), desde que não tenha NUL (com NUL, `INVALID_JSON`). O literal `null` também cai aqui (o json-c o representa por `NULL`). Payload que é um texto JSON vale como o valor dele: `"abc"`, com aspas, é a string `abc`, e `42` é número, recusado por `type: string`. Até 12/10, um texto puro que começava como JSON era lido só no começo: o UUID que começa com dígito (`3f2a1b9c-...`) virava o número do começo e era recusado com `Expected type 'string', got 'int'` (defeito presente desde a F-3, 11/10, quando o id do perfil passou a UUID).
+> **Payload texto puro:** se o payload não é um texto JSON e o schema declara `"type": "string"`, o payload **inteiro** é validado como string (uuid, caminho, nome de tela, os casos de `aop/currentUser` e `aop/currentService`), desde que não tenha NUL (com NUL, `INVALID_JSON`). O literal `null` também cai aqui (o json-c o representa por `NULL`). Payload que é um texto JSON vale como o valor dele: `"abc"`, com aspas, é a string `abc`, e `42` é número, recusado por `type: string`.
 
 ---
 
@@ -117,12 +117,11 @@ Acrescenta uma chave nova com o tópico exato e seu schema. Mantém vírgulas e 
 
 O schema é copiado pra dentro da imagem em build-time, então `docker compose restart` **não basta** — precisa rebuild:
 
-Pelo compose da raiz do TV30, que inclui o `infra/docker-compose.yml` (subir o da `infra/` isolado cria outro projeto, com o mesmo nome de container):
+Pelo compose da raiz do TV30, que inclui o `infra/docker-compose.yml` (subir o da `infra/` isolado cria outro projeto, com o mesmo nome de container). Na raiz do TV30:
 
 ```bash
-wsl -- bash -c "cd /mnt/d/Proj_CEFET/TV30 && \
-    docker compose --profile mqtt build mosquitto && \
-    docker compose --profile mqtt up -d mosquitto"
+docker compose --profile mqtt build mosquitto
+docker compose --profile mqtt up -d mosquitto
 ```
 
 > O plugin só lê o arquivo na própria inicialização (`mosquitto_plugin_init`, em `mosquitto_plugin.c`), ou seja, na partida do broker. Copiar o arquivo para dentro do container (`docker cp`) e reiniciá-lo funciona só até o container ser recriado, porque a imagem continua com a cópia antiga. Use o build.
@@ -130,7 +129,7 @@ wsl -- bash -c "cd /mnt/d/Proj_CEFET/TV30 && \
 ### 3 · Verificar nos logs
 
 ```bash
-wsl -- docker logs mqtt-broker 2>&1 | grep -E "Schemas? loaded"
+docker logs mqtt-broker 2>&1 | grep -E "Schemas? loaded"
 ```
 
 Saída esperada (uma linha por tópico do arquivo; abreviada aqui):
@@ -171,7 +170,7 @@ errors/my-test-client {"timestamp":"2026-05-05T10:00:00","topic":"sensor/garage/
   "client_id":"my-test-client","payload":"{\"ppm\":99999,\"timestamp\":\"now\",\"sensor_id\":\"abc\"}"}
 ```
 
-O `details` vem de `schema_validator.c` (`validate_properties` prefixa `Property '<nome>': `; `validate_maximum` formata os números com `%.2f`). O `payload` sai escapado, como string JSON (ver *Comportamento de erro*). Até 12/10 ele entrava sem escape, e com aspas no payload, como aqui, a mensagem em `errors/` não era JSON válido.
+O `details` vem de `schema_validator.c` (`validate_properties` prefixa `Property '<nome>': `; `validate_maximum` formata os números com `%.2f`). O `payload` sai escapado, como string JSON (ver *Comportamento de erro*).
 
 ---
 
@@ -195,17 +194,15 @@ Quando a validação falha, o plugin:
 }
 ```
 
-O `timestamp` sai em UTC no formato `AAAA-MM-DDTHH:MM:SS`, sem fuso. Desde 12/10 a mensagem é montada por `error_json_build` (`plugin/src/error_json.c`, regra em `plugin/include/error_json.h`; chamada em `publish_error`, `mosquitto_plugin.c`, linhas 63–87) e é **sempre JSON válido e UTF-8 válido**:
+O `timestamp` sai em UTC no formato `AAAA-MM-DDTHH:MM:SS`, sem fuso. A mensagem é montada por `error_json_build` (`plugin/src/error_json.c`, regra em `plugin/include/error_json.h`; chamada em `publish_error`, em `mosquitto_plugin.c`) e é **sempre JSON válido e UTF-8 válido**:
 - aspas, barra invertida e U+0000 a U+001F saem escapados (RFC 8259, seção 7);
 - byte que não forma UTF-8 válido vira U+FFFD, escrito `�` (o texto JSON tem de ser UTF-8, seção 8.1; o payload MQTT é binário);
 - o payload entra pelo comprimento, então um NUL no meio dele sai como `\u0000`;
 - a mensagem tem no máximo 2047 bytes (`ERROR_JSON_CAP - 1`). Cada campo de texto além do payload tem um teto, em bytes já escapados (`timestamp` 32, `topic` 512, `error_type` 64, `details` 768, `client_id` 256), e o payload fica com o resto. O campo que não cabe é cortado só entre unidades inteiras (um caractere UTF-8 ou um escape completo), e a mensagem ganha `"truncated":true`, que só aparece quando houve corte. Os tetos são decisão de implementação, sem base na norma.
 
-Até 12/10, a mensagem era montada com `snprintf` num buffer de 2048 bytes: o `topic`, o `details`, o `client_id` e o `payload` entravam sem escape, então um payload com aspas, barra invertida ou caractere de controle produzia JSON inválido, e uma mensagem de 2048 bytes ou mais não era publicada (e o buffer vazava).
+**Tópico** (`error_json_topic`, no mesmo arquivo): `errors/<nome>`, com até 255 bytes. No `<nome>`, tirado do `client_id`, cada `+`, `#`, `/` e cada controle (U+0000 a U+001F, U+007F a U+009F) vira `_`, e o byte que não forma UTF-8 válido também; o corte, se o tópico passar de 255 bytes, é só entre caracteres inteiros. `client_id` vazio vira `_`. O mosquitto já recusa no CONNECT o `client_id` com UTF-8 inválido ou controle, então, na prática, só `+`, `#` e `/` são trocados. A troca pode juntar dois clientes no mesmo tópico (`a+b` e `a_b`); o campo `client_id` da mensagem leva o original.
 
-**Tópico** (desde 12/10; `error_json_topic`, no mesmo arquivo): `errors/<nome>`, com até 255 bytes. No `<nome>`, tirado do `client_id`, cada `+`, `#`, `/` e cada controle (U+0000 a U+001F, U+007F a U+009F) vira `_`, e o byte que não forma UTF-8 válido também; o corte, se o tópico passar de 255 bytes, é só entre caracteres inteiros. `client_id` vazio vira `_`. O mosquitto já recusa no CONNECT o `client_id` com UTF-8 inválido ou controle, então, na prática, só `+`, `#` e `/` são trocados. A troca pode juntar dois clientes no mesmo tópico (`a+b` e `a_b`); o campo `client_id` da mensagem leva o original. Até 12/10, o tópico era `snprintf("errors/%s")` em 256 bytes: o corte podia partir um caractere UTF-8 (tópico com UTF-8 inválido, que derruba o assinante libmosquitto que o recebe), e um `client_id` com `+` ou `#` dava um nome com curinga, que nenhum assinante consegue pedir.
-
-> Tópicos `errors/*` e `PluginResponseTime*` são **ignorados pelo callback** (early-return em `mosquitto_plugin.c:189-196`) pra evitar loop infinito.
+> Tópicos `errors/*` e `PluginResponseTime*` são **ignorados pelo callback** (retorno antecipado em `callback_acl_check`, `mosquitto_plugin.c`) pra evitar loop infinito.
 
 ---
 
@@ -218,7 +215,7 @@ Até 12/10, a mensagem era montada com `snprintf` num buffer de 2048 bytes: o `t
 - **`format` (date-time, email, uri, etc.) é ignorado**. Pra validar formatos, usa `pattern` com regex.
 - **Combinadores `oneOf`/`anyOf`/`allOf`/`not` não existem.** Cada propriedade tem um único schema.
 - **Mudanças no schema exigem rebuild da imagem**, não só restart. O JSON é copiado em build-time pelo Dockerfile.
-- **O que o json-c estrito ainda aceita** (`plugin/include/json_payload.h`; fora do escopo da correção de 12/10): `NaN`, `Infinity`, número terminado em ponto (`1.`), caractere de controle cru dentro de string e UTF-8 inválido dentro de string.
+- **O que o json-c estrito ainda aceita** (`plugin/include/json_payload.h`): `NaN`, `Infinity`, número terminado em ponto (`1.`), caractere de controle cru dentro de string e UTF-8 inválido dentro de string.
 - **Payload texto puro com NUL** num tópico `type: string` vira `INVALID_JSON`: `minLength`, `maxLength` e `pattern` leem C string e parariam no NUL.
 - **`errors/<client_id>` pode juntar clientes:** a troca de `+`, `#` e `/` por `_` dá o mesmo tópico para `a+b` e `a_b`; o campo `client_id` da mensagem leva o original.
 
@@ -229,15 +226,15 @@ Até 12/10, a mensagem era montada com `snprintf` num buffer de 2048 bytes: o `t
 ```
 Cliente publica em sensor/X/Y
     ↓
-callback_acl_check (mosquitto_plugin.c:184)
+callback_acl_check (mosquitto_plugin.c)
     ↓ (é WRITE, fora de errors/, PluginResponseTime*, PublisherResponseTime* e $SYS/, com payload?)
-validate_message (mosquitto_plugin.c:150)
+validate_message (mosquitto_plugin.c)
     ↓ get_schema_for_topic("sensor/X/Y") (exato, depois + e #)
     ↓ não tem schema → MOSQ_ERR_SUCCESS (passa)
     ↓ tem schema → json_payload_parse (json_payload.c: payload inteiro, exatamente um texto JSON, modo estrito)
         ↓ não é texto JSON e schema type=string, sem NUL → o payload inteiro vira string
         ↓ JSON inválido → publish_error("INVALID_JSON") + DENIED
-        ↓ JSON válido → validate_with_schema (schema_validator.c:396)
+        ↓ JSON válido → validate_json_schema (schema_validator.c)
             ↓ falha → publish_error("SCHEMA_VALIDATION_FAILED") + DENIED
             ↓ passa → MOSQ_ERR_SUCCESS
 publish_error → error_json_build (mensagem) + error_json_topic (tópico), em error_json.c
@@ -251,10 +248,10 @@ publish_error → error_json_build (mensagem) + error_json_topic (tópico), em e
 |---|---|
 | Adicionar nova keyword (ex.: `format`) | `plugin/src/schema_validator.c` — criar `validate_<keyword>()` e chamar em `validate_with_schema` |
 | Validar um tópico novo | só `plugin/config/schemas.json` (sem filtro de prefixo no código) |
-| Mudar os tópicos que nunca são validados (`errors/`, teste de latência, `$SYS/`) | `plugin/src/mosquitto_plugin.c:184-240` (`callback_acl_check`) |
-| Mudar a leitura do payload (o que conta como texto JSON) | `plugin/src/json_payload.c` (`json_payload_parse`), regra em `plugin/include/json_payload.h`; o texto puro dos tópicos `type: string`, em `validate_message` (`mosquitto_plugin.c:150-182`) |
-| Mudar formato do JSON publicado em `errors/*` ou o tópico | `plugin/src/error_json.c` (`error_json_build`, `error_json_topic`), tetos e regras em `plugin/include/error_json.h`; a chamada, em `plugin/src/mosquitto_plugin.c:63-87` (`publish_error`) |
-| Mudar o casamento de tópico (exato, depois `+`/`#`) | `plugin/src/mosquitto_plugin.c:89-128` (`topic_matches`, `get_schema_for_topic`) |
+| Mudar os tópicos que nunca são validados (`errors/`, teste de latência, `$SYS/`) | `plugin/src/mosquitto_plugin.c` (`callback_acl_check`) |
+| Mudar a leitura do payload (o que conta como texto JSON) | `plugin/src/json_payload.c` (`json_payload_parse`), regra em `plugin/include/json_payload.h`; o texto puro dos tópicos `type: string`, em `validate_message` (`mosquitto_plugin.c`) |
+| Mudar formato do JSON publicado em `errors/*` ou o tópico | `plugin/src/error_json.c` (`error_json_build`, `error_json_topic`), tetos e regras em `plugin/include/error_json.h`; a chamada, em `plugin/src/mosquitto_plugin.c` (`publish_error`) |
+| Mudar o casamento de tópico (exato, depois `+`/`#`) | `plugin/src/mosquitto_plugin.c` (`topic_matches`, `get_schema_for_topic`) |
 
 Qualquer mudança em C exige rebuild da imagem (mesma sequência da seção "Rebuild e restart" acima).
 
@@ -262,7 +259,7 @@ Qualquer mudança em C exige rebuild da imagem (mesma sequência da seção "Reb
 
 ## Testes do plugin
 
-Desde 12/10, dois testes de unidade em C rodam **no build da imagem**, antes de compilar o plugin (`infra/mqtt-broker/infra/Dockerfile`): se um deles falha, a imagem não sai.
+Dois testes de unidade em C rodam **no build da imagem**, antes de compilar o plugin (`infra/mqtt-broker/infra/Dockerfile`): se um deles falha, a imagem não sai.
 - `plugin/tests/test_error_json.c`: a mensagem e o tópico de `errors/` e o escape do `error_json_string`; cada mensagem que ele gera é conferida de novo pelo `json` do Python 3 da imagem.
 - `plugin/tests/test_json_payload.c`: o veredito de `json_payload_parse` em cada caso, conferido de novo pelo `json` do Python (`plugin/tests/check_json_payload.py`).
 
@@ -273,4 +270,4 @@ bash infra/mqtt-broker/plugin/tests/test_errors_json.sh       # errors/: JSON, t
 bash infra/mqtt-broker/plugin/tests/test_all_validations.sh   # uma publicação válida e 19 violações do sensor/comprehensive/test
 ```
 
-O `test_errors_json.sh` roda o `plugin/tests/errors_json_driver.py` num segundo container da mesma imagem. Os dois aceitam `IMG=<imagem> NOBUILD=1` (usa uma imagem já construída) e `KEEP_IMG=1` (não remove a imagem construída). Até 12/10, o `test_all_validations.sh` chamava o container `mosquitto-plugin` (nome antigo) e esperava o erro em `errors/validation`.
+O `test_errors_json.sh` roda o `plugin/tests/errors_json_driver.py` num segundo container da mesma imagem. Os dois aceitam `IMG=<imagem> NOBUILD=1` (usa uma imagem já construída) e `KEEP_IMG=1` (não remove a imagem construída).

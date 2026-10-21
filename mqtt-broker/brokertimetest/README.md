@@ -2,8 +2,6 @@
 
 Aplicação Node.js para medir o tempo de resposta do broker MQTT com vários clientes em paralelo. Ela usa o teste de latência do plugin C do broker (`plugin/src/response_time_tester.c`): o cliente publica em `PublisherResponseTime<clientId>/iteration<N>`, e o plugin responde em `PluginResponseTime<id>/iteration<N>`.
 
-> Conferido no código em 2026-10-12 (`server.js`, `public/index.html`, `headless-run.js`). Até esta data, este README descrevia uma interface interativa por linha de comando, que o `server.js` não tem.
-
 ## Instalação
 
 ```bash
@@ -36,7 +34,7 @@ Com prefixo `sensor` e 10 clientes, os clientes se chamam `sensor1` a `sensor10`
 MQTT_HOST=<broker> node headless-run.js
 ```
 
-O `headless-run.js` roda a mesma lógica da página em quatro cenários (10, 20, 50 e 100 clientes, 10 iterações cada) e imprime uma linha por cenário e o JSON da rodada (linha `RESULT_JSON`, com média, mínimo, p50, p95 e máximo). O `headless-compare.js` compara a entrega com e sem plugin. A medição de 21/08/2026 e os comandos para reproduzi-la estão em `RESULTADOS_2026-08-21.md` (registro).
+O `headless-run.js` roda a mesma lógica da página em quatro cenários (10, 20, 50 e 100 clientes, 10 iterações cada) e imprime uma linha por cenário e o JSON da rodada (linha `RESULT_JSON`, com média, mínimo, p50, p95 e máximo). O `headless-compare.js` compara a entrega com e sem plugin.
 
 ## Estrutura de Tópicos
 
