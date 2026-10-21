@@ -7,13 +7,9 @@ import (
 	"time"
 )
 
-// P4 (decisao do Luis em 10/10): CONTRATO entre o redisStore da borda e as
-// funcoes do Redis de verdade. So roda com TV30_REDIS_TESTE=host:porta de um
-// Redis com a biblioteca tv30 carregada — infra/redis/test/run.sh contrato
-// sobe um descartavel e chama este teste; sem a variavel (go test do build da
-// imagem), pula. Prova: o formato que a borda grava passa no esquema; entrada
-// fora do esquema volta como recusa (schemaRefusal) sem gravar; a API C.6.8
-// inteira (POST, GET por bind-token, DELETE) funciona sobre as funcoes.
+// Contrato entre o redisStore e as funcoes do Redis de verdade. So roda com
+// TV30_REDIS_TESTE=host:porta de um Redis com a biblioteca tv30 carregada
+// (infra/redis/test/run.sh contrato sobe um descartavel); sem ela, pula.
 func TestContratoFuncoes(t *testing.T) {
 	addr := os.Getenv("TV30_REDIS_TESTE")
 	if addr == "" {
@@ -49,9 +45,8 @@ func TestContratoFuncoes(t *testing.T) {
 		t.Fatalf("remocao repetida: %d %v", n, err)
 	}
 
-	// E6 (decisao do Luis em 11/10): a borda le clients:authorized e
-	// clients:blocked como as funcoes do tv3ws os gravam (autorizar, bloquear,
-	// incluir de novo no boot)
+	// a borda le clients:authorized e clients:blocked como as funcoes do tv3ws
+	// os gravam (autorizar, bloquear, incluir de novo no boot)
 	const cid = "contrato-go-cliente"
 	must0 := func(nome string, args ...string) {
 		t.Helper()
@@ -105,7 +100,7 @@ func TestContratoFuncoes(t *testing.T) {
 	must("tv30_sessao_servico_id", sid)
 	must("tv30_origem_registra", tAssoc, sid)
 	// o GET da C.6.8.3 pede access token: o cliente dele (cli-1, bindGet) tem
-	// de estar em clients:authorized (E6), como o tv3ws o deixa ao autorizar
+	// de estar em clients:authorized, como o tv3ws o deixa ao autorizar
 	must("tv30_cliente_autoriza", "cli-1", "class", "local-autonomous", "refreshToken", "rt")
 	defer func() {
 		s.c.fcall(true, "tv30_origem_remove", tAssoc)
@@ -115,7 +110,7 @@ func TestContratoFuncoes(t *testing.T) {
 	}()
 	h := newTestHandler(t, modeEnforce, nil, nil)
 	h.store = s
-	okReg := `{"serviceContextId":"` + sid + `"}` // A6: o globalServiceId corrente
+	okReg := `{"serviceContextId":"` + sid + `"}` // o globalServiceId corrente
 	wantOK(t, "POST", postBind(t, h, regBody("HS512", "segredo-contrato")), okReg)
 	wantOK(t, "POST repetido", postBind(t, h, regBody("HS512", "segredo-contrato")), okReg)
 	if l, _ := s.BindKeys(sid); len(l) != 1 || !strings.HasPrefix(l[0], `{"alg":"HS512","key":"segredo-contrato","registeredAt":`) {

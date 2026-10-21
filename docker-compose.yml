@@ -1,9 +1,5 @@
-# docker-compose.yml — infra do TV30
-#
-# NAO se sobe sozinho: este arquivo e incluido pelo docker-compose.yml da RAIZ
-# do TV30, e o edgegateway depende do servico preflight, que so existe la
-# (sozinho, o compose responde 'depends on undefined service "preflight"').
-# Uso, na raiz do TV30:
+# Infra do TV30, incluida pelo docker-compose.yml da raiz (que define o preflight
+# e o tls-init de que o edgegateway depende); sozinho nao sobe. Na raiz do TV30:
 #   docker compose up -d                                         # stack inteira (COMPOSE_PROFILES do .env)
 #   docker compose --profile mqtt build edgegateway redis mosquitto  # so as imagens da infra
 
@@ -11,70 +7,51 @@ include:
   - path: ./redis/docker-compose.yml
 
 services:
-  # A BORDA num container so (fase 2): superficies externa (44643) e
-  # interna (44642, fixa da norma C.3.4) + documentacao (8085), tudo
-  # gerado no build a partir da tabela unica de rotas (edgegateway/
-  # routes.json — M4). Morre-inteiro: qualquer processo interno caindo
-  # derruba o container.
+  # Borda num container so: superficies externa (44643) e interna (44642, C.3.4)
+  # e documentacao (8085), geradas no build de edgegateway/routes.json. Se um
+  # processo interno cai, o container cai.
   edgegateway:
     image: ${DOCKERHUB_NS:-tv30}/tv30-edgegateway:${IMAGE_TAG:-latest}
     build:
       context: ./edgegateway
     container_name: edgegateway
     environment:
-      # linux = backends via DNS da rede (tv3ws); windows = host.docker.internal
-      # (a variante windows tambem serve pro cenario de DESENVOLVIMENTO em
-      # Linux: infra em containers + servico rodando no host via npm — ver
-      # docs/dev-local.md na raiz do TV30)
+      # linux = backends pelo DNS da rede; windows = host.docker.internal (serve
+      # tambem ao dev-host em Linux, com o servico rodando no host)
       EDGE_VARIANT: ${EDGE_VARIANT:-linux}
-      # Validacao de credenciais na borda (plugin tv30-auth, item 9 — ver
-      # edgegateway/plugin/README.md). O access token eh emitido pelo tv3ws:
-      # JWT_SECRET/JWT_ISSUER tem que ser OS MESMOS dele (mesmo padrao de dev
-      # do compose raiz). Na variante windows (dev-host) a borda continua
-      # lendo o Redis do container (redis) — correto: e o mesmo Redis.
+      # JWT_SECRET/JWT_ISSUER tem de ser os do tv3ws, que emite o access token.
+      # REDIS_HOST fica redis tambem na variante windows: o Redis e o do container.
       JWT_SECRET: ${JWT_SECRET:-tv30-dev-secret-nao-usar-em-producao}
       JWT_ISSUER: ${JWT_ISSUER:-GenericIssuer}
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      # enforce (padrao desde 15/10, Joel) = bloqueia com 404 + corpo C.3.2;
-      # warn = opcao explicita e transitoria (ex.: o Guarana, ate obter o
-      # token): as recusas de credencial (104, 107, 108) so logam e marcam
-      # X-TV30-Auth-Warn; 100, 106, 300 e 200 saem nos dois modos. Valor
-      # invalido derruba o container.
+      # enforce = recusa com 404 e corpo C.3.2; warn (transitorio) = as recusas de
+      # credencial (104, 107, 108) so logam e marcam X-TV30-Auth-Warn. 100, 106,
+      # 300 e 200 saem nos dois modos. Valor invalido derruba o container.
       AUTH_ENFORCE: ${AUTH_ENFORCE:-enforce}
     extra_hosts:
-      # habilita host.docker.internal em Linux (necessario pro cenario de
-      # desenvolvimento com backend no host; inocuo no deploy padrao)
+      # host.docker.internal em Linux, para o dev-host (inocuo no deploy padrao)
       - "host.docker.internal:host-gateway"
-    # Portas: 44642 FIXA (norma, C.3.4). A 44643 tambem e FIXA por padrao na
-    # bridge (decisao do Luis em 12/10, revendo a C1 de 11/10): o /manifest do
-    # tv3ws anuncia o Server-SecureBaseURL em <host>:44643 (EDGE_HTTPS_PORT,
-    # padrao 44643) e nao sabe a porta de host que o Docker escolheria.
-    # EDGE_EXT_PUBLISH e o valor que vai em `ports`: `host:container` fixa
-    # (padrao 44643:44643; outra porta de host pede o mesmo numero no
-    # EDGE_HTTPS_PORT do tv3ws, senao o /manifest anuncia a errada); so o
-    # numero (EDGE_EXT_PUBLISH=44643) = porta do container com porta de host
-    # livre escolhida pelo Docker, descoberta com
-    # `docker compose port edgegateway 44643`, que o /manifest NAO anuncia.
-    # De 11/10 (C1, opcao b) a 12/10 o padrao era so o numero.
+    # 44643 fixa por padrao: o /manifest do tv3ws anuncia <host>:EDGE_HTTPS_PORT e
+    # nao conhece a porta que o Docker escolheria. Outra porta de host pede o mesmo
+    # numero no EDGE_HTTPS_PORT do tv3ws; so o numero (EDGE_EXT_PUBLISH=44643)
+    # deixa o Docker escolher, e o /manifest nao a anuncia.
     ports:
-      - "44642:44642"   # superficie interna — porta FIXA da norma
-      - "${EDGE_EXT_PUBLISH:-44643:44643}"   # superficie externa: porta de host FIXA por padrao (Luis, 12/10)
-      - "8085"          # docs: porta de host dinamica (V10)
+      - "44642:44642"   # superficie interna, porta fixa da norma (C.3.4)
+      - "${EDGE_EXT_PUBLISH:-44643:44643}"   # superficie externa
+      - "8085"          # docs: porta de host dinamica
     depends_on:
-      # o preflight (compose raiz) BLOQUEIA a subida se a 44642 estiver
-      # ocupada por processo nativo (porta fixa da norma).
+      # o preflight (compose raiz) barra a subida se a 44642 estiver ocupada
       preflight:
         condition: service_completed_successfully
-      # o plugin consulta o Redis (clientes bloqueados, origens associadas,
-      # servico corrente, chaves de bind-context): so sobe com ele semeado.
+      # o plugin le o Redis (clientes bloqueados, origens, servico corrente, bind-context)
       redis:
         condition: service_healthy
-      # A7 (Joel, 15/10): o certificado do receptor (compose raiz, tls-init)
+      # certificado do receptor (compose raiz)
       tls-init:
         condition: service_completed_successfully
     volumes:
-      # TLS da 44643 terminado aqui (generate.js, bloco tls da externa)
+      # TLS da 44643, terminado na borda
       - ../.tv30/tls:/etc/tv30/tls:ro
     networks:
       - ginga_net
@@ -89,25 +66,16 @@ services:
     profiles:
       - mqtt
     ports:
-      - "1883:1883"   # MQTT: porta FIXA (C1)
-      # C1 (decisao do Luis em 11/10): o MQTT por WebSocket (9001 do
-      # container) sai numa porta de host ALEATORIA por padrao — descobrir com
-      # `docker compose port mosquitto 9001`. MQTT_WS_PUBLISH e o valor que vai
-      # em `ports`: so o numero (padrao 9001) = porta do container com porta de
-      # host aleatoria; `host:container` fixa (ex.: MQTT_WS_PUBLISH=9003:9001).
-      # Substitui o MQTT_WS_PORT neste publish (ate 11/10,
-      # "${MQTT_WS_PORT:-9001}:9001", porta de host fixa). A pagina da TV nao
-      # conecta mais nesta porta: o AoP atende o MQTT por WebSocket na propria
-      # porta, no caminho /mqtt, e repassa para a 9001 INTERNA do mosquitto
-      # (MQTT_WS_PORT do servico aop, no compose da raiz). No dev-host, com o
-      # AoP no host, ele usa a porta publicada (MQTT_WS_PORT = `docker compose
-      # port mosquitto 9001`).
+      - "1883:1883"   # MQTT: porta fixa
+      # MQTT por WebSocket: porta de host aleatoria por padrao (`docker compose
+      # port mosquitto 9001`); MQTT_WS_PUBLISH=9003:9001 a fixa. A pagina da TV
+      # usa o /mqtt do AoP, que repassa para a 9001 interna; no dev-host o AoP
+      # usa a porta publicada.
       - "${MQTT_WS_PUBLISH:-9001}"
     volumes:
       - mosquitto_data:/mosquitto/data
       - mosquitto_logs:/mosquitto/log
-    # O broker nao consulta o Redis (controle de acesso a topicos removido
-    # por decisao de desenho) — sem env de Redis e sem barreira sobre a carga.
+    # o broker nao consulta o Redis: sem env de Redis nem depends_on
     networks:
       - ginga_net
     restart: unless-stopped

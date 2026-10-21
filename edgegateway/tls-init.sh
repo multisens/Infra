@@ -1,19 +1,8 @@
 #!/bin/sh
-# tls-init — certificado X.509 autoassinado do receptor (A7, Joel 15/10).
-#
-# Roda uma vez por subida (servico tls-init do compose da raiz, com a imagem
-# da borda) e so gera o certificado na PRIMEIRA: se key.pem e cert.pem ja
-# existem em $TLS_DIR, nao faz nada. Fica em .tv30/tls na raiz do TV30 (fora
-# do git), montado na borda (que termina o TLS da 44643, a Server-SecureBaseURL)
-# e no tv3ws (HTTPS da 44653, serverCert do pareamento e wss:// dos pontos de
-# entrada). C.4.1.1: "it is valid for TV 3.0 WebServices to set up its HTTPS
-# server using a certificate self-signed by the platform [...] there is no
-# dependence on third-party certification authorities". O cliente nao local
-# confia nele porque o recebe no pareamento (Tabela C.4, serverCert).
-#
-# Os dois arquivos ficam com o dono do diretorio (o usuario que rodou o
-# ./tv30 up, que o cria antes): o tv3ws rodando no host (dev-host) consegue
-# le-los. A chave e 0600.
+# tls-init: certificado autoassinado do receptor (a C.4.1.1 o admite), gerado
+# so se ainda nao existe em $TLS_DIR; usado pela borda (44643) e pelo tv3ws. O
+# cliente nao local confia nele porque o recebe no pareamento (Tabela C.4).
+# Os arquivos ficam com o dono do diretorio: o tv3ws no host (dev-host) os le.
 set -eu
 DIR=${TLS_DIR:-/tls}
 mkdir -p "$DIR"

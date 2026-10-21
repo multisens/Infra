@@ -1,32 +1,6 @@
-// tv30-auth — plugin http-server do KrakenD (edgegateway): validacao de
-// credenciais na BORDA (item 9; decisao da reuniao de 28/09, D1: o tv3ws so
-// implementa as APIs; quem decide se a requisicao chega nele e este plugin).
-// Reuniao de 05/10 com o Joel: TODA a validacao de credencial fica aqui e o
-// tv3ws fica "anonimo" (D-0510-1; a retirada do middleware de credencial do
-// tv3ws eh feita no proprio tv3ws), e a borda passa a RESPONDER algumas APIs
-// em vez de repassa-las (edge.go): C.6.8 bind-context (D-0510-2) e
-// C.6.7.8/C.6.7.9 api-info (D-0510-3).
-//
-// CORS todo aqui (C.4.1.9; opcao b do Luis, 12/10): Access-Control-Allow-
-// Origin: * em toda resposta, e o preflight (OPTIONS com Access-Control-
-// Request-Method) respondido pelo plugin em qualquer caminho. O resto passa
-// pela decisao de handler.go (evaluate), nesta ordem: rota (100), superficie
-// (106, F-1), associado nas rotas que nao o admitem (106, A8), classe (106),
-// nao local por HTTP (106, E7), access token (107), servico selecionado
-// (300, H2), bind-token do contexto da rota (104/108; A6, H1) e versao
-// (100/101, D2). Ver README.md.
-//
-// Liberada a requisicao, a rota com "edge" no routes.json eh respondida aqui
-// (edge.go); as demais vao ao roteador, com a versao decidida em
-// X-TV30-API-Version e o Host original em X-TV30-Host.
-//
-// Modo (AUTH_ENFORCE): enforce (padrao desde 15/10) responde 404 + corpo
-// C.3.2; warn, opcao transitoria, so avisa nas recusas de credencial (104,
-// 107, 108): log "[tv30-auth] WARN ..." e cabecalho X-TV30-Auth-Warn. Os
-// demais (100, 101, 106, 300 e 200, inclusive o 5xx do KrakenD trocado por
-// 200) valem nos dois modos (followsMode, handler.go; Joel, 15/10).
-//
-// SOMENTE biblioteca padrao (ver go.mod).
+// tv30-auth: plugin http-server do KrakenD que decide, na borda, credencial,
+// tipo de cliente e versao de cada requisicao (handler.go), responde as APIs
+// da propria borda (edge.go) e repassa as demais ao roteador. Ver README.md.
 package main
 
 import (
@@ -55,10 +29,8 @@ func (r registerer) RegisterHandlers(f func(
 func (r registerer) registerHandlers(_ context.Context, extra map[string]interface{}, next http.Handler) (http.Handler, error) {
 	cfg, err := loadConfig(extra[string(r)], os.Getenv)
 	if err != nil {
-		// Morre-inteiro (D9): quando o registro devolve erro, o KrakenD so
-		// registra um aviso e segue SEM o plugin — a borda ficaria no ar sem
-		// validacao nenhuma, em silencio. Encerrar o processo faz o
-		// entrypoint derrubar o container inteiro (e o log diz por que).
+		// Com erro no registro o KrakenD so avisa e segue sem o plugin, e a
+		// borda ficaria sem validacao; encerrar derruba o container inteiro.
 		logf("FATAL configuracao invalida: %v", err)
 		os.Exit(1)
 	}

@@ -1,13 +1,9 @@
 {
   "$comentario": [
-    "Esquema das chaves do Redis do testbed TV30 (P4: decisao do Luis em 10/10, 'Funcoes + auditoria').",
-    "Os esquemas sao declarados AQUI: a biblioteca de funcoes do Redis (funcoes.lua) recebe este",
-    "arquivo embutido (biblioteca.sh monta a biblioteca; o entrypoint.sh a carrega com FUNCTION LOAD",
-    "REPLACE a cada partida) e os testes (infra/redis/test) o leem. Mude a regra AQUI; a funcao e a",
-    "auditoria passam a aplicar a regra nova na proxima partida do container redis.",
+    "Esquema das chaves do Redis do testbed TV30. A biblioteca de funcoes (funcoes.lua) o recebe embutido",
+    "(biblioteca.sh) e os testes (infra/redis/test) o leem: a regra muda aqui e vale na proxima partida do redis.",
     "Redis, funcoes e este esquema sao decisoes de implementacao do testbed, nao da ABNT NBR 25608;",
-    "o campo 'fonte' de cada regra diz de onde ela veio (secao da norma, schemas.json do broker ou codigo).",
-    "Documentacao para quem chega: docs/modelo-redis.md e infra/redis/README.md."
+    "o campo 'fonte' de cada regra diz de onde ela veio (secao da norma, schemas.json do broker ou codigo)."
   ],
   "versao": "4",
   "biblioteca": "tv30",
@@ -18,7 +14,7 @@
   "definicoes": {
     "idPerfil": {
       "tipo": "uuid",
-      "fonte": "Tabela 7: id 'UUID string', required. F-3 (decisao do Luis em 11/10): UUID no formato textual da IETF RFC 9562 (8-4-4-4-12 digitos hexadecimais, como c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10), em minusculas, sem compatibilidade com os ids antigos (user_<epoch-ms> do AoP, c3167a18-5dc5 da carga). UUID estrito (decisao do Luis em 12/10, versao 3 deste esquema): versao de 1 a 8 (1o digito do 3o grupo) e variante da RFC 9562 (1o digito do 4o grupo em 8, 9, a ou b); o UUID nulo (todo 0) e o maximo (todo f) nao servem de id de perfil. Ate 12/10 (versao 2) versao e variante nao eram conferidas. Sem ':' por construcao: a chave user:{id}:consent nao se confunde com um perfil. Ate 11/10 (versao 1 deste esquema): texto de 1 a 64 caracteres, sem ':'"
+      "fonte": "Tabela 7: id 'UUID string', required. UUID no formato textual da IETF RFC 9562 (8-4-4-4-12 digitos hexadecimais), em minusculas, com versao de 1 a 8 (1o digito do 3o grupo) e variante da RFC 9562 (1o digito do 4o grupo em 8, 9, a ou b); o nulo e o maximo nao servem de id de perfil. Sem ':' por construcao: user:{id}:consent nao se confunde com um perfil"
     },
     "idServico": {
       "tipo": "texto", "min": 1, "max": 256,
@@ -58,8 +54,8 @@
       "dono": "tv3ws",
       "descricao": "Servico corrente com os campos de GET /tv3/current-service (Tabela C.8), regravado inteiro pelo tv3ws a cada troca de servico; a borda le na C.6.8.3.",
       "campos": {
-        "serviceContextId": { "tipo": "texto", "min": 1, "max": 256, "obrigatorio": true, "fonte": "Tabela C.8; o globalServiceId do servico corrente (A6, Joel 15/10; ate entao, uma constante do tv3ws)" },
-        "serviceId": { "tipo": "inteiro", "min": 0, "vazio": true, "obrigatorio": true, "fonte": "Tabela C.8: serviceId inteiro; vazio quando o testbed nao o conhece (sem SLT, A6)" },
+        "serviceContextId": { "tipo": "texto", "min": 1, "max": 256, "obrigatorio": true, "fonte": "Tabela C.8; o globalServiceId do servico corrente" },
+        "serviceId": { "tipo": "inteiro", "min": 0, "vazio": true, "obrigatorio": true, "fonte": "Tabela C.8: serviceId inteiro; vazio quando o testbed nao o conhece (sem SLT)" },
         "serviceName": { "tipo": "texto", "obrigatorio": true, "fonte": "Tabela C.8; vazio quando desconhecido" },
         "transportStreamId": { "tipo": "texto", "min": 1, "obrigatorio": true, "fonte": "Tabela C.8; constante do tv3ws" },
         "originalNetworkId": { "tipo": "texto", "min": 1, "obrigatorio": true, "fonte": "Tabela C.8; constante do tv3ws" }
@@ -84,9 +80,9 @@
       "descricao": "Perfil do telespectador: atributos basicos da Tabela 7 mais lastAccess.",
       "partes": { "id": { "ref": "idPerfil" } },
       "campos": {
-        "id": { "ref": "idPerfil", "obrigatorio": true, "fonte": "Tabela 7: UUID string, required (F-3, decisao do Luis em 11/10)" },
+        "id": { "ref": "idPerfil", "obrigatorio": true, "fonte": "Tabela 7: UUID string, required" },
         "nickname": { "tipo": "texto", "min": 1, "max": 20, "obrigatorio": true, "fonte": "Tabela 7: string (up to 20 characters), required" },
-        "avatar": { "tipo": "nomeArquivo", "maxNome": 128, "extensoes": ["svg", "png", "jpg", "jpeg", "webp"], "fonte": "Tabela 7: 'Path indicating the file with the graphical representation of the viewer profile', file path, optional. G8 (decisao do Luis em 12/10, versao 4 deste esquema): o avatar e o NOME de um arquivo dentro do diretorio de miniaturas (<USER_DATA_PATH>/thumbs no AoP = USER_THUMBS no tv3ws, que o entrega pela C.6.14.6), no formato ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.(svg|png|jpg|jpeg|webp)$: sem '/' (sem diretorio), comecando por letra ou digito, extensao em minusculas; ausente = o avatar padrao de cada tela. O AoP grava <id do perfil>.svg. Restringir o caminho a um nome dentro de um diretorio e decisao do testbed; a norma so diz 'file path'. Ate 12/10 (versao 3): qualquer texto, e o AoP e a carga gravavam o SVG em linha (divergencia da Tabela 7, registrada aqui)" },
+        "avatar": { "tipo": "nomeArquivo", "maxNome": 128, "extensoes": ["svg", "png", "jpg", "jpeg", "webp"], "fonte": "Tabela 7: 'Path indicating the file with the graphical representation of the viewer profile', file path, optional. Nome de um arquivo do diretorio de miniaturas (<USER_DATA_PATH>/thumbs no AoP = USER_THUMBS no tv3ws, que o entrega pela C.6.14.6), no formato ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.(svg|png|jpg|jpeg|webp)$; ausente = o avatar padrao de cada tela. O AoP grava <id do perfil>.svg. Restringir o caminho a um nome dentro de um diretorio e decisao do testbed; a norma so diz 'file path'" },
         "parentalControl": { "ref": "booleano", "obrigatorio": true, "fonte": "Tabela 7: (true | false), required" },
         "maxContentRating": { "tipo": "enum", "valores": ["L", "10", "12", "14", "16", "18"], "obrigatorioSe": { "campo": "parentalControl", "valor": "true" }, "fonte": "Tabela 7: valores predefinidos do pais (classificacao indicativa do Brasil, os mesmos do AoP); required only if parentalControl = true" },
         "audioLanguage": { "ref": "idioma", "fonte": "Tabela 7: IETF RFC 5646, optional" },
@@ -99,7 +95,7 @@
         "audioDescription": { "ref": "booleano", "obrigatorio": true, "fonte": "Tabela 7: (true | false), required" },
         "dialogEnhancement": { "ref": "booleano", "obrigatorio": true, "fonte": "Tabela 7: (true | false), required" },
         "voiceGuidance": { "ref": "booleano", "obrigatorio": true, "fonte": "Tabela 7: (true | false), required" },
-        "lastAccess": { "tipo": "inteiro", "min": 0, "fonte": "Instante do ultimo acesso em ms, decisao de implementacao; fora da Tabela 7. Ate 15/10, criterio do despejo do sexto perfil (P3), que saiu: o sexto e recusado (Joel, 15/10)" }
+        "lastAccess": { "tipo": "inteiro", "min": 0, "fonte": "Instante do ultimo acesso em ms, decisao de implementacao; fora da Tabela 7" }
       },
       "outrosCampos": false,
       "campoIgualAParte": { "campo": "id", "parte": "id" },
@@ -119,7 +115,7 @@
       "familia": "user:{id}:broadcaster-attrs:{scid}",
       "chave": "user:{id}:broadcaster-attrs:{scid}",
       "tipo": "hash",
-      "dono": "tv3ws e AoP (dois escritores, E4: Joel em 15/10, Principios e criterios 5.3)",
+      "dono": "tv3ws e AoP (dois escritores)",
       "escritores": [
         { "componente": "tv3ws", "operacao": "grava e apaga atributos de emissora (C.6.14.5)", "funcao": "tv30_atributos_emissora" },
         { "componente": "AoP", "operacao": "remove a familia inteira junto com o perfil, na mesma funcao que remove o perfil (atomico)", "funcao": "tv30_perfil_remove" }
@@ -136,7 +132,7 @@
         "descricao": "Atributos basicos que a C.6.14.5 proibe redefinir no contexto da emissora; o tv3ws responde 101 antes de chegar aqui."
       },
       "maxBytes": 20971520,
-      "maxBytesFonte": "P3 / 10.3.3",
+      "maxBytesFonte": "10.3.3",
       "maxBytesDescricao": "Ate 20 MB de dados privados por perfil e contexto de servico, medidos como o tv3ws mede: soma dos bytes dos nomes e valores.",
       "funcoes": ["tv30_atributos_emissora", "tv30_perfil_remove"]
     },
@@ -148,7 +144,7 @@
       "descricao": "Cliente autorizado (C.6.1): classe e credenciais emitidas. Fica tambem depois de um bloqueio.",
       "partes": { "id": { "ref": "idCliente" } },
       "campos": {
-        "class": { "tipo": "enum", "valores": ["local-associated", "local-autonomous", "non-local"], "obrigatorio": true, "fonte": "P1: classes de cliente do testbed (C.4.1)" },
+        "class": { "tipo": "enum", "valores": ["local-associated", "local-autonomous", "non-local"], "obrigatorio": true, "fonte": "classes de cliente do testbed (C.4.1)" },
         "refreshToken": { "tipo": "texto", "min": 1, "obrigatorio": true, "fonte": "C.6.1.2/C.6.1.3" },
         "accessToken": { "tipo": "texto", "min": 1, "fonte": "C.6.1.3; ausente ate o primeiro /tv3/token" }
       },
@@ -160,7 +156,7 @@
       "chave": "clients:authorized",
       "tipo": "set",
       "dono": "tv3ws",
-      "descricao": "Clientes autorizados pelo espectador (D-0510-4). Disjunto de clients:blocked.",
+      "descricao": "Clientes autorizados pelo espectador. Disjunto de clients:blocked.",
       "membros": { "ref": "idCliente" },
       "funcoes": ["tv30_cliente_autoriza", "tv30_cliente_bloqueia", "tv30_cliente_inclui_autorizado"]
     },
@@ -178,9 +174,9 @@
       "chave": "origins:associated",
       "tipo": "hash",
       "dono": "AoP",
-      "descricao": "Origem propria de cada aplicacao de emissora lancada (P1.3) -> globalServiceId do servico que lancou a app (A6; o proprio contexto da H1). Sem servico corrente, o AoP nao registra (ate 15/10 gravava 'current-service'). Limpo no boot do AoP.",
+      "descricao": "Origem propria de cada aplicacao de emissora lancada -> globalServiceId do servico que lancou a app. Sem servico corrente, o AoP nao registra. Limpo no boot do AoP.",
       "outrosCampos": {
-        "nome": { "tipo": "origem", "fonte": "P1.3 (Luis, 10/10): a origem como o navegador a manda no Origin (RFC 6454): esquema http/https e host em minusculas, porta so se nao for a padrao" },
+        "nome": { "tipo": "origem", "fonte": "a origem como o navegador a manda no Origin (RFC 6454):esquema http/https e host em minusculas, porta so se nao for a padrao" },
         "valor": { "ref": "idServico" }
       },
       "funcoes": ["tv30_origem_registra", "tv30_origem_remove", "tv30_origens_limpa"]
@@ -209,7 +205,7 @@
     {
       "id": "perfil-indexado",
       "descricao": "Todo membro de users:index tem o hash user:{id}, e todo hash user:{id} tem o id em users:index.",
-      "fonte": "Decisao do Luis em 10/10 (P4): user:<id> e users:index juntos"
+      "fonte": "Decisao de implementacao: user:{id} e users:index andam juntos"
     },
     {
       "id": "perfil-dependentes",
@@ -219,7 +215,7 @@
     {
       "id": "clientes-disjuntos",
       "descricao": "Nenhum id esta ao mesmo tempo em clients:authorized e clients:blocked.",
-      "fonte": "D-0510-4 (reuniao de 05/10 com o Joel)"
+      "fonte": "Decisao de implementacao: o cliente esta autorizado ou bloqueado, nunca os dois"
     },
     {
       "id": "autorizado-tem-registro",
@@ -234,13 +230,13 @@
     { "nome": "tv30_sessao_servico", "argumentos": "<campo> <valor> [<campo> <valor> ...]", "efeito": "regrava inteiro o hash session:current-service (DEL + HSET)", "retorno": "1", "chamadores": ["tv3ws (core.ts, troca de servico)"] },
     { "nome": "tv30_perfil_grava", "argumentos": "<id> <n> <servico 1> ... <servico n> <campo> <valor> [...]", "efeito": "SADD users:index; regrava user:{id} (DEL + HSET); acrescenta os n servicos a user:{id}:consent", "retorno": "1", "chamadores": ["AoP (criacao de perfil)", "carga inicial (emit_seed.py)", "migrate_to_redis.py (depuracao manual)"] },
     { "nome": "tv30_perfil_ultimo_acesso", "argumentos": "<id> <instante em ms>", "efeito": "HSET user:{id} lastAccess, so se o id estiver em users:index", "retorno": "1 se gravou, 0 se o perfil nao existe", "chamadores": ["AoP (troca de usuario corrente)"] },
-    { "nome": "tv30_perfil_remove", "argumentos": "<id>", "efeito": "SREM users:index; DEL user:{id}, user:{id}:consent e todo user:{id}:broadcaster-attrs:*", "retorno": "numero de chaves e membros removidos", "chamadores": ["AoP (remocao do perfil; sem chamador desde 15/10, quando o despejo P3 saiu)"] },
+    { "nome": "tv30_perfil_remove", "argumentos": "<id>", "efeito": "SREM users:index; DEL user:{id}, user:{id}:consent e todo user:{id}:broadcaster-attrs:*", "retorno": "numero de chaves e membros removidos", "chamadores": ["AoP (adaptador perfilRemove; nenhum codigo o chama)"] },
     { "nome": "tv30_atributos_emissora", "argumentos": "<id> <scid> <campo> <valor> [...] (valor vazio remove o campo)", "efeito": "HDEL/HSET user:{id}:broadcaster-attrs:{scid}, com o teto de 20 MB conferido no resultado", "retorno": "numero de campos alterados", "chamadores": ["tv3ws (C.6.14.5)"] },
     { "nome": "tv30_cliente_grava", "argumentos": "<id> <campo> <valor> [...]", "efeito": "HSET client:{id} (acrescenta ou troca campos)", "retorno": "1", "chamadores": ["tv3ws (rotacao do refresh token, emissao do access token)"] },
     { "nome": "tv30_cliente_autoriza", "argumentos": "<id> <campo> <valor> [...]", "efeito": "HSET client:{id}; SREM clients:blocked; SADD clients:authorized", "retorno": "1", "chamadores": ["tv3ws (C.6.1.2, pop-up aceito)"] },
     { "nome": "tv30_cliente_bloqueia", "argumentos": "<id>", "efeito": "SREM clients:authorized; SADD clients:blocked", "retorno": "1", "chamadores": ["tv3ws (C.6.1.2, pop-up recusado)"] },
     { "nome": "tv30_cliente_inclui_autorizado", "argumentos": "<id>", "efeito": "SADD clients:authorized, se o id nao estiver em clients:blocked", "retorno": "1 se incluiu, 0 se nao", "chamadores": ["tv3ws (boot: clientes anteriores ao conjunto)"] },
-    { "nome": "tv30_origem_registra", "argumentos": "<origem> <id do servico>", "efeito": "HSET origins:associated", "retorno": "1", "chamadores": ["AoP (lancamento de aplicacao, P1.3)"] },
+    { "nome": "tv30_origem_registra", "argumentos": "<origem> <id do servico>", "efeito": "HSET origins:associated", "retorno": "1", "chamadores": ["AoP (lancamento de aplicacao)"] },
     { "nome": "tv30_origem_remove", "argumentos": "<origem>", "efeito": "HDEL origins:associated", "retorno": "1 se removeu, 0 se nao havia", "chamadores": ["AoP (encerramento ou troca de aplicacao)"] },
     { "nome": "tv30_origens_limpa", "argumentos": "(nenhum)", "efeito": "DEL origins:associated", "retorno": "1 se havia, 0 se nao", "chamadores": ["AoP (boot)"] },
     { "nome": "tv30_bind_registra", "argumentos": "<id do servico> <entrada JSON>", "efeito": "RPUSH bind-context:{serviceId}", "retorno": "tamanho da lista", "chamadores": ["borda (C.6.8.2)"] },
@@ -250,7 +246,7 @@
   ],
 
   "foraDoAlcance": [
-    { "chave": "remote-devices:index", "dono": "tv3ws", "motivo": "Espelho dos dispositivos remotos conectados (WebSockets vivos), limpo no boot e lido so pelo proprio tv3ws; nao entrou no alcance da decisao de 10/10. Escrita direta em tv3ws/src/modules/remotedevice-manager/manager.ts." },
+    { "chave": "remote-devices:index", "dono": "tv3ws", "motivo": "Espelho dos dispositivos remotos conectados (WebSockets vivos), limpo no boot e lido so pelo proprio tv3ws. Escrita direta em tv3ws/src/modules/remotedevice-manager/manager.ts." },
     { "chave": "remote-devices:class:{classe}", "dono": "tv3ws", "motivo": "Idem (mesmo espelho)." },
     { "chave": "remote-device:{handle}", "dono": "tv3ws", "motivo": "Idem (mesmo espelho)." },
     { "chave": "seed:done", "dono": "entrypoint do container redis", "motivo": "Marca de controle da carga inicial (o healthcheck a le); nao e estado do testbed." },

@@ -1,19 +1,8 @@
 #!/bin/bash
-# Bateria das validacoes do esquema sensor/comprehensive/test
-# (plugin/config/schemas.json): uma publicacao valida e 19 violacoes, uma por
-# palavra-chave que o schema_validator.c implementa.
-#
-# Atualizado em 12/10 (revisao do plugin): antes rodava com docker exec no
-# container mosquitto-plugin (nome antigo; o da stack e mqtt-broker), esperava
-# o erro em errors/validation (o plugin publica em errors/<client_id>) e so
-# imprimia o que chegava. Agora, como test_errors_json.sh, constroi a imagem
-# do broker com tag PROPRIA, sobe um broker DESCARTAVEL numa rede propria, sem
-# portas publicadas, e confere cada caso: a publicacao valida e entregue ao
-# assinante e nao gera erro; cada violacao nao e entregue e gera exatamente
-# uma mensagem em errors/test-client, JSON valido, com error_type
-# SCHEMA_VALIDATION_FAILED e o details esperado. Nao toca a stack (nem o
-# container mqtt-broker). No fim remove o container, a rede e a imagem que
-# construiu.
+# Bateria do esquema sensor/comprehensive/test: uma publicacao valida e 19
+# violacoes, uma por palavra-chave do schema_validator.c; cada violacao nao e
+# entregue e gera uma mensagem em errors/test-client com o details esperado.
+# Imagem e broker descartaveis, como em test_errors_json.sh; nao toca a stack.
 #
 #   bash infra/mqtt-broker/plugin/tests/test_all_validations.sh
 #   IMG=<imagem> NOBUILD=1 bash ...   usa uma imagem ja construida (e nao a remove)

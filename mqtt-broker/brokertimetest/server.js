@@ -42,7 +42,6 @@ async function runTest(config, ws) {
   const clients = [];
 
   try {
-    // Criar clientes
     for (let c = 1; c <= numClients; c++) {
       const clientId = `${clientPrefix}${c}`;
       const client = mqtt.connect(brokerUrl, { clientId });
@@ -85,7 +84,6 @@ async function runTest(config, ws) {
 
     await new Promise(resolve => setTimeout(resolve, 500));
 
-    // Publicar mensagens
     for (let i = 1; i <= numIterations; i++) {
       for (const { client, clientId, sentTimestamps } of clients) {
         const topic = `PublisherResponseTime${clientId}/iteration${i}`;
@@ -104,7 +102,6 @@ async function runTest(config, ws) {
 
     await new Promise(resolve => setTimeout(resolve, 2000));
 
-    // Estatísticas
     if (results.length > 0) {
       const latencies = results.map(r => r.latency);
       const avg = latencies.reduce((a, b) => a + b, 0) / latencies.length;
@@ -117,7 +114,6 @@ async function runTest(config, ws) {
       }));
     }
 
-    // Desconectar
     for (const { client } of clients) {
       client.end();
     }

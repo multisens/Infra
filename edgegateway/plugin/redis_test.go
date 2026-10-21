@@ -27,7 +27,7 @@ type fakeRedis struct {
 	// responder (resposta perdida)
 	dropNext bool
 	// recusa: resposta de erro das funcoes tv30 (como a de dado fora do
-	// esquema, P4); vazio = executa
+	// esquema); vazio = executa
 	recusa string
 }
 
@@ -173,7 +173,7 @@ func (f *fakeRedis) exec(a []string) string {
 			out += bulk(e)
 		}
 		return out
-	case "FCALL": // P4: so as funcoes tv30_bind_* (o EFEITO, sem o esquema), numkeys 0
+	case "FCALL": // so as funcoes tv30_bind_* (o efeito, sem o esquema), numkeys 0
 		if len(a) != 5 || a[2] != "0" {
 			return "-ERR FCALL do duble: esperado FCALL <funcao> 0 <serviceId> <entrada>\r\n"
 		}
@@ -230,9 +230,9 @@ func (f *fakeRedis) exec(a []string) string {
 	return "-ERR unknown command\r\n"
 }
 
-// Comandos da C.6.8 respondida pela borda: as funcoes tv30_bind_registra e
-// tv30_bind_remove (FCALL; antes RPUSH e LREM), SCAN (varias paginas),
-// HGETALL; LRANGE de chave de outro tipo eh erro do servidor.
+// Comandos da C.6.8 respondida pela borda: FCALL de tv30_bind_registra e
+// tv30_bind_remove, SCAN (varias paginas), HGETALL; LRANGE de chave de outro
+// tipo eh erro do servidor.
 func TestRedisComandosC68(t *testing.T) {
 	f := startFakeRedis(t)
 	f.with(func() {
@@ -315,9 +315,9 @@ func TestRedisRPUSHNaoRepete(t *testing.T) {
 	}
 }
 
-// P4 (Luis, 10/10): recusa da funcao (dado fora do esquema) volta como erro
-// do servidor com prefixo TV30ESQUEMA, reconhecido por schemaRefusal; a
-// conexao segue boa e a recusa nao e repetida.
+// Recusa da funcao (dado fora do esquema) volta como erro do servidor com
+// prefixo TV30ESQUEMA, reconhecido por schemaRefusal; a conexao segue boa e a
+// recusa nao e repetida.
 func TestRedisRecusaDoEsquema(t *testing.T) {
 	f := startFakeRedis(t)
 	s := &redisStore{c: newRedisClient(f.ln.Addr().String(), time.Second)}
@@ -365,14 +365,14 @@ func TestRedisComandos(t *testing.T) {
 	if b, err := s.IsBlocked("cli-ok"); err != nil || b {
 		t.Fatalf("SISMEMBER livre: %v %v", b, err)
 	}
-	// E6: SISMEMBER clients:authorized
+	// SISMEMBER clients:authorized
 	if b, err := s.IsAuthorized("cli-ok"); err != nil || !b {
 		t.Fatalf("SISMEMBER autorizado: %v %v", b, err)
 	}
 	if b, err := s.IsAuthorized("cli-bloq"); err != nil || b {
 		t.Fatalf("SISMEMBER fora do conjunto: %v %v", b, err)
 	}
-	// H1 (Joel, 15/10): o valor da origem e o servico que lancou a app
+	// o valor da origem e o servico que lancou a app
 	if svc, ok, err := s.AssociatedOrigin(tAssoc); err != nil || !ok || svc != tSvc {
 		t.Fatalf("HGET: %q %v %v", svc, ok, err)
 	}

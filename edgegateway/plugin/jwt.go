@@ -190,10 +190,8 @@ type accessClaims struct {
 	Class string
 }
 
-// verifyAccessToken (D2: assinatura + expiracao, sem ignoreExpiration).
-// O access token eh emitido pelo PROPRIO tv3ws em HS256 com JWT_SECRET; o
-// alg do cabecalho tem que ser HS256 (o tv3ws hoje confia no alg do proprio
-// token — aqui ele eh fixo).
+// verifyAccessToken: o access token e emitido pelo tv3ws em HS256 com
+// JWT_SECRET. O alg e fixo aqui, e nao o que o cabecalho do token declara.
 func verifyAccessToken(authorization string, secret []byte, issuer string, now time.Time) (*accessClaims, error) {
 	scheme, tok, ok := strings.Cut(strings.TrimSpace(authorization), " ")
 	if !ok || !strings.EqualFold(scheme, "Bearer") {
@@ -209,8 +207,7 @@ func verifyAccessToken(authorization string, secret []byte, issuer string, now t
 	if !t.verifySignature(algHS256, secret) {
 		return nil, errors.New("assinatura do access token invalida")
 	}
-	// exp obrigatorio: sem ele o token nunca expiraria (D2). O tv3ws
-	// sempre emite exp.
+	// exp obrigatorio: sem ele o token nunca expiraria (o tv3ws sempre o emite)
 	if err := t.checkTime(now, true, false); err != nil {
 		return nil, err
 	}
@@ -233,14 +230,9 @@ type bindKey struct {
 }
 
 // verifyBindToken aplica as 4 frentes da C.4.1.4, nesta ordem: formato JWT,
-// assinatura (qualquer chave registrada do servico corrente com o MESMO alg
-// valida — C.4.1.3, lista rotacionavel), nbf/exp, iat.
-//
-// DECIDIDO (Joel, 15/10; A9, a lacuna L5): relogio do host, sem tolerancia
-// de defasagem. A norma compara nbf/exp/iat com o relogio do System Time
-// Fragment (C.4.1.3); a emissora simulada e o receptor rodam na mesma
-// maquina. Se o simulador vier a emitir o STF, a borda passa a comparar com
-// ele.
+// assinatura (qualquer chave registrada do servico com o mesmo alg valida;
+// C.4.1.3), nbf/exp, iat. Relogio do host, sem tolerancia: a norma compara com
+// o System Time Fragment (C.4.1.3), e a emissora simulada roda na mesma maquina.
 func verifyBindToken(tok string, keys []bindKey, now time.Time) error {
 	t, err := parseJWT(strings.TrimSpace(tok))
 	if err != nil {

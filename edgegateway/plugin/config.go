@@ -13,8 +13,8 @@ const (
 	modeWarn    = "warn"
 	modeEnforce = "enforce"
 
-	// mesmo padrao de desenvolvimento do tv3ws no compose raiz — so serve
-	// para o aviso no log, nunca como valor assumido.
+	// padrao de desenvolvimento do compose: so para o aviso no log, nunca
+	// como valor assumido
 	devSecret = "tv30-dev-secret-nao-usar-em-producao"
 
 	defaultIssuer       = "GenericIssuer" // igual ao tv3ws (auth-manager/manager.ts)
@@ -26,39 +26,27 @@ const (
 type config struct {
 	Surface string
 	Mode    string
-	// NonLocalHTTPSOnly: superficie HTTP (a interna, Server-BaseURL). Nela o
-	// nao local identificado pelo access token so usa as rotas NonLocalHTTP
-	// (C.6.1.2 e C.6.1.3); nas demais recebe 106 (C.4.1.6; E7, Joel 15/10:
-	// vale ja, sem esperar o TLS da 44643, e tambem em warn).
+	// NonLocalHTTPSOnly: superficie HTTP (Server-BaseURL), onde o nao local so
+	// usa as rotas NonLocalHTTP e recebe 106 nas demais (C.4.1.6).
 	NonLocalHTTPSOnly bool
-	// AllVersions: as versoes servidas por alguma rota, em ordem crescente;
-	// LatestVersion, a ultima — o API-Version do erro 100 ("the latest
-	// version supported by the server", C.3.6.6). D4 (Joel, 15/10).
+	// AllVersions: versoes servidas por alguma rota, em ordem crescente;
+	// LatestVersion vai no API-Version do erro 100 (C.3.6.6).
 	AllVersions   []string
 	LatestVersion string
 	Secret        []byte
 	Issuer        string
 	Routes        *routeTable
-	// APIs implementadas (id da Tabela C.2 + versao), na ordem da tabela,
-	// para as APIs C.6.7.8/C.6.7.9 (apiinfo.go). Vem de routes.json.
+	// APIs implementadas, na ordem da Tabela C.2 (C.6.7.8/C.6.7.9, apiinfo.go)
 	APIs         *apiCatalog
 	RedisAddr    string
 	RedisTimeout time.Duration
-	// Access-Control-Allow-Headers de todo OPTIONS que o plugin responde
-	// (C.4.1.9.3), preflight ou nao; vem de cors.allow_headers do routes.json.
-	CORSAllowHeaders string
-	// Access-Control-Expose-Headers de toda resposta ("" = sem o cabecalho);
-	// vem de cors.expose_headers do routes.json. Ate 12/10 era o modulo CORS
-	// do KrakenD que o mandava.
-	CORSExposeHeaders string
-	// Access-Control-Max-Age do preflight, em segundos ("" = sem o
-	// cabecalho); vem de cors.max_age do routes.json (ex.: "12h" => "43200"),
-	// o mesmo valor que o modulo CORS do KrakenD devolvia ate 12/10.
-	CORSMaxAge string
+	// cabecalhos CORS (C.4.1.9), de cors.* do routes.json; "" = sem o cabecalho
+	CORSAllowHeaders  string // Access-Control-Allow-Headers de todo OPTIONS
+	CORSExposeHeaders string // Access-Control-Expose-Headers de toda resposta
+	CORSMaxAge        string // Access-Control-Max-Age do preflight, em segundos
 }
 
-// Padrao da C.4.1.9.3 mais o cabecalho key do DELETE /tv3/bind-context
-// (C.6.8.4) — o mesmo cors.allow_headers do routes.json.
+// Padrao da C.4.1.9.3 mais o cabecalho key do DELETE /tv3/bind-context (C.6.8.4).
 const defaultCORSAllowHeaders = "Content-Type, Authorization, bind-token, Accept, Accept-Version, key"
 
 // loadConfig le o bloco "tv30-auth" do extra_config["plugin/http-server"]
@@ -77,11 +65,8 @@ func loadConfig(raw interface{}, getenv func(string) string) (*config, error) {
 		return nil, fmt.Errorf("campo surface ausente")
 	}
 
-	// A6 (Joel, 15/10): sem constante de serviceContextId — o contexto e o
-	// globalServiceId de cada servico (handler.go, pathContext). O campo
-	// current_service_context_id, se vier de um routes.json antigo, e recusado.
 	if _, present := m["current_service_context_id"]; present {
-		return nil, fmt.Errorf("current_service_context_id saiu em 15/10 (A6): o serviceContextId e o globalServiceId do servico")
+		return nil, fmt.Errorf("current_service_context_id nao eh aceito: o serviceContextId e o globalServiceId do servico")
 	}
 
 	rawRoutes, ok := m["routes"].([]interface{})
@@ -129,7 +114,6 @@ func loadConfig(raw interface{}, getenv func(string) string) (*config, error) {
 			rt.Edge = name
 		}
 		if v, present := rm["surface_error"]; present {
-			// so o 106 da C.4.1.8 existe hoje (F-1, Joel 15/10)
 			if n, ok := v.(float64); !ok || n != 106 {
 				return nil, fmt.Errorf("routes[%d].surface_error invalido: %v (so 106, C.4.1.8)", i, v)
 			}
@@ -164,7 +148,6 @@ func loadConfig(raw interface{}, getenv func(string) string) (*config, error) {
 			sort.Slice(rt.Versions, func(a, b int) bool { return compareVersions(rt.Versions[a], rt.Versions[b]) < 0 })
 		}
 		if v, present := rm["no_service"]; present {
-			// so o 300 (H2, Joel 15/10); e so faz sentido com bind-token
 			if n, ok := v.(float64); !ok || n != 300 {
 				return nil, fmt.Errorf("routes[%d].no_service invalido: %v (so 300)", i, v)
 			}
@@ -252,9 +235,7 @@ func loadConfig(raw interface{}, getenv func(string) string) (*config, error) {
 		cfg.CORSMaxAge = strconv.FormatInt(int64(d/time.Second), 10)
 	}
 
-	// Padrao enforce desde 15/10 (Joel, "Suas decisoes", modo warn): o warn
-	// fica como opcao explicita e transitoria (ex.: o Guarana, ate obter o
-	// token), ligada por AUTH_ENFORCE=warn. Ate entao o vazio valia warn.
+	// vazio = enforce; warn so explicito, para cliente que ainda nao obtem o token
 	switch mode := strings.TrimSpace(getenv("AUTH_ENFORCE")); mode {
 	case modeWarn:
 		cfg.Mode = modeWarn

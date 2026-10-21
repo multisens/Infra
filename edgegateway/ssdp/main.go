@@ -1,40 +1,6 @@
-// Anunciante SSDP do testbed (C.3.4).
-//
-// Complemento do Joel de 15/10 (B1 e B2): roda NATIVO no host, fora do
-// Docker, nos tres sistemas (Linux, macOS, Windows), subido pelo ./tv30 up
-// (tv30.ps1 no Windows) depois do compose. Dentro do Docker o multicast so sai
-// em Linux nativo (no Mac e no Windows o container fica na VM do Docker;
-// medido). Ele so divulga onde esta o /manifest e responde a buscas: nao
-// guarda estado nem valida credencial. De 09/10 a 15/10 rodava como processo
-// do container da borda, em rede do host (docker-compose.ssdp.yml, so Linux).
-//
-// Politica de falha (C8, decisao do Luis em 10/10, mantida pelo Joel em
-// 15/10): "so erro de configuracao encerra; a falta de rede e tolerada com
-// novas tentativas".
-//   - Erro de configuracao: encerra com exit 1 (o ./tv30 up mostra as
-//     ultimas linhas do log). SSDP_ADVERTISE_HOST definido sem host, porta
-//     invalida em EDGE_HTTP_PORT/EDGE_HTTPS_PORT, SSDP_INTERFACE
-//     com nome que nao existe na maquina (ou de loopback), UDP 1900 presa por
-//     socket sem SO_REUSEADDR (EADDRINUSE no bind) e todo erro que nao seja
-//     de rede.
-//   - Falta de rede: o processo fica de pe. Nenhuma interface com IPv4, sem
-//     rota padrao, a interface de SSDP_INTERFACE sem IPv4, erro de rede ao
-//     abrir os sockets ou ao enviar (netErrnos, ou a interface/IPv4 escolhidos
-//     sumiram). Fecha os sockets (nao anuncia nem responde a buscas), avisa
-//     UMA vez ao entrar no estado e outra ao sair, e tenta de novo com espera
-//     crescente (retryMin ate retryMax), escolhendo de novo a interface e o
-//     IPv4 de origem a cada tentativa.
-//
-// O LOCATION aponta para o /manifest, que continua no tv3ws, atras da propria
-// borda (44642). O host e DETECTADO — o IPv4 da interface escolhida — e
-// acompanha a troca de rede: a cada NOTIFY o anunciante confere a interface da
-// rota padrao e, se ela ou o IPv4 mudaram, encerra a sessao e anuncia de novo
-// com o IP novo (B2 revista e complemento do Joel, 15/10; medicao M4). Com
-// SSDP_ADVERTISE_HOST definido, vale ele, fixo, como de 11/10 a 15/10.
-//
-// Parada: SIGTERM ou SIGINT, ou o arquivo de SSDP_STOP_FILE aparecer (o
-// comando de descida o cria; no Windows nao ha SIGTERM para processo em
-// segundo plano). Nos dois casos sai o ssdp:byebye antes (medicao M3).
+// Anunciante SSDP do testbed (C.3.4). Roda nativo no host, fora do Docker: no
+// Mac e no Windows o multicast de um container nao sai da VM do Docker. So
+// divulga onde esta o /manifest e responde a buscas.
 package main
 
 import (
@@ -58,8 +24,6 @@ const (
 func logf(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "[ssdp] "+format+"\n", a...)
 }
-
-// --- classificacao das falhas ---
 
 // netDown marca a falta de rede: espera e tenta de novo, sem encerrar.
 type netDown struct{ err error }
@@ -94,8 +58,7 @@ func (e *stepError) Unwrap() error { return e.err }
 
 func step(what string, err error) error { return &stepError{what, err} }
 
-// --- rede (injetavel: os testes usam uma rede falsa, main_test.go) ---
-
+// network e injetavel: os testes usam uma rede falsa (main_test.go).
 type network interface {
 	Interfaces() []ifaceInfo                    // de pe, fora loopback, com IPv4
 	Lookup(name string) (exists, loopback bool) // a interface existe na maquina?
@@ -188,8 +151,6 @@ func setMulticastOut(conn *net.UDPConn, addr string, ttl int) error {
 	return serr
 }
 
-// --- laco do anuncio ---
-
 type announcer struct {
 	net      network
 	getenv   func(string) string
@@ -266,7 +227,7 @@ func (a *announcer) start(ep endpoint, forced, udn string) (*session, []string, 
 	}
 	auto := ep.Host == ""
 	if auto {
-		ep.Host = ch.Addr // B2 revista: o host do LOCATION e o IPv4 da interface
+		ep.Host = ch.Addr // host detectado: o IPv4 da interface
 	}
 	s := &session{ch: ch, ep: ep, auto: auto, forced: forced, udn: udn, conn: conn, readErr: make(chan error, 1)}
 	go a.read(s)
@@ -358,8 +319,9 @@ func (a *announcer) fatal(err error) int {
 	return 1
 }
 
-// run devolve o codigo de saida: 0 num sinal, 1 em erro de configuracao. Na
-// falta de rede nao volta.
+// run devolve o codigo de saida: 0 num sinal, 1 em erro de configuracao. A
+// falta de rede nao encerra: fecha os sockets, avisa ao entrar e ao sair do
+// estado e tenta de novo com espera crescente, escolhendo de novo a interface.
 func (a *announcer) run() int {
 	// Configuracao: conferida uma vez, antes de tudo (o ambiente nao muda).
 	ep, err := resolveEndpoint(a.getenv)
@@ -444,13 +406,13 @@ func (a *announcer) run() int {
 	}
 }
 
-// stopFile: o "sinal" do arquivo de parada (SSDP_STOP_FILE).
+// stopFile: o "sinal" do arquivo de parada (SSDP_STOP_FILE), criado pelo comando
+// de descida: no Windows nao ha SIGTERM para processo em segundo plano.
 type stopFile string
 
 func (f stopFile) String() string { return "arquivo de parada " + string(f) }
 func (stopFile) Signal()          {}
 
-// watchStopFile manda stopFile ao canal quando o arquivo aparecer.
 func watchStopFile(path string, every time.Duration, sig chan<- os.Signal, exists func(string) bool) {
 	for {
 		if exists(path) {

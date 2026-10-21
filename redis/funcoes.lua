@@ -1,42 +1,15 @@
--- Biblioteca de funcoes do Redis "tv30" (P4, decisao do Luis em 10/10:
--- "Funcoes + auditoria"). Toda escrita que o codigo do projeto faz nas
--- familias do alcance (session:*, users:index, user:*, client:*, clients:*,
--- origins:associated, bind-context:*) passa por uma funcao daqui, que confere
--- o esquema e grava de forma atomica. Esquema invalido -> erro do Redis com o
--- prefixo TV30ESQUEMA, a funcao, a chave, o campo e o motivo, e NADA gravado.
---
--- Este arquivo e so o CORPO. O infra/redis/biblioteca.sh monta a biblioteca
--- que o Redis carrega:
---   #!lua name=tv30
---   local ESQUEMA_JSON = [==[ <conteudo de infra/redis/esquema.json> ]==]
---   <este arquivo>
--- O esquema (familias, regras, invariantes) mora no esquema.json; aqui ficam o
--- interpretador das regras, as operacoes e a auditoria.
---
--- Regras de construcao (por que o codigo e assim):
--- - cjson so existe DENTRO das chamadas (na carga, o Redis recusa: "Script
---   attempted to access nonexistent global variable 'cjson'"), por isso o
---   esquema e decodificado na primeira chamada e guardado em E.
--- - O Redis NAO desfaz o que uma funcao ja gravou quando ela da erro no meio
---   (conferido no redis 7.4.11: SET seguido de SADD com WRONGTYPE deixa o SET
---   gravado). Por isso toda funcao primeiro le, monta o estado resultante e
---   confere tudo (inclusive o tipo de cada chave no Redis) e so depois grava.
--- - As funcoes sao chamadas com numkeys 0 e derivam os nomes das chaves dos
---   argumentos (flag no-cluster: o testbed usa um Redis so, sem cluster).
--- - O Redis aplica o ACL de quem chama DENTRO da funcao (achado de 10/10: o
---   default sem @write recebe "ERR ACL failure in script"); as funcoes nao
---   bloqueiam escrita direta. Escrita manual pelo redis-cli ou pelo commander
---   continua possivel, e a auditoria (tv30_auditoria) a mostra.
+-- Corpo da biblioteca "tv30" do Redis; o biblioteca.sh antepoe "#!lua name=tv30"
+-- e ESQUEMA_JSON (o esquema.json). Toda escrita do projeto nas familias do esquema
+-- passa por uma funcao daqui; dado fora do esquema -> erro TV30ESQUEMA, nada gravado.
 
-local E -- esquema decodificado e preparado (preguicoso, ver acima)
+-- cjson so existe dentro das chamadas (na carga o Redis recusa o global), por
+-- isso o esquema e decodificado na primeira chamada
+local E
 
--- Erro de esquema: levantado como tabela e convertido em resposta de erro
--- pelo registra() (qualquer outro erro sobe como o Redis o daria).
+-- erro de esquema; o registra() o converte em resposta TV30ESQUEMA
 local function falha(msg)
   error({ tv30 = msg }, 0)
 end
-
--- ------------------------------------------------------------- utilidades --
 
 local function ordenadas(t)
   local out = {}
@@ -45,15 +18,13 @@ local function ordenadas(t)
   return out
 end
 
--- caracteres (pontos de codigo UTF-8), nao bytes: a Tabela 7 fala em 20
--- caracteres no nickname
+-- pontos de codigo UTF-8, nao bytes (Tabela 7: 20 caracteres no nickname)
 local function nchars(s)
   local _, n = string.gsub(s, '[^\128-\191]', '')
   return n
 end
 
--- amostra do valor para a mensagem: curta e sem caractere de controle (a
--- resposta de erro do Redis e uma linha so)
+-- curta e sem caractere de controle: a resposta de erro do Redis e uma linha so
 local function amostra(v)
   v = tostring(v)
   if #v > 48 then v = string.sub(v, 1, 45) .. '...' end
@@ -85,7 +56,7 @@ local function conjuntoDe(lista)
   return s
 end
 
--- comando com muitos argumentos em lotes (unpack tem limite de pilha)
+-- em lotes: unpack tem limite de pilha
 local function emLotes(cmd, chave, lista)
   local passo = 400
   for i = 1, #lista, passo do
@@ -95,11 +66,8 @@ local function emLotes(cmd, chave, lista)
   end
 end
 
--- ------------------------------------------------------ preparo do esquema --
-
--- "{id}" no meio da chave casa [^:]+; a ultima parte casa o resto, a nao ser
--- que a regra dela nao admita ':' (proibe ':', ou o tipo uuid do idPerfil):
--- assim user:{id} nao engole user:{id}:consent.
+-- "{x}" no meio da chave casa [^:]+; a ultima parte casa o resto, salvo se a
+-- regra dela nao admite ':' (assim user:{id} nao engole user:{id}:consent)
 local function compila(tpl, partes)
   local pat, nomes, pos = '^', {}, 1
   while true do
@@ -118,8 +86,7 @@ local function compila(tpl, partes)
   return pat .. '$', nomes
 end
 
--- invariantes que este arquivo implementa (auditoria); o esquema.json tem de
--- declarar exatamente estas
+-- conferidas na auditoria; o esquema.json tem de declarar exatamente estas
 local INVARIANTES = {
   ['perfil-indexado'] = true,
   ['perfil-dependentes'] = true,
@@ -192,8 +159,6 @@ local function classifica(chave)
   return nil
 end
 
--- ---------------------------------------------------------------- regras --
-
 local function idiomaOk(v)
   local i = 0
   for sub in string.gmatch(v .. '-', '([^-]*)-') do
@@ -204,14 +169,7 @@ local function idiomaOk(v)
   return i > 0
 end
 
--- F-3 (decisao do Luis em 11/10): id do perfil em UUID, no formato textual da
--- RFC 9562 (8-4-4-4-12 digitos hexadecimais), em minusculas. Literal (e nao
--- string.rep): na carga da biblioteca o Redis nao expoe as bibliotecas.
--- UUID estrito (decisao do Luis em 12/10, versao 3 do esquema): alem do
--- formato, a versao (1o digito do 3o grupo) tem de ser de 1 a 8 e a variante
--- (1o digito do 4o grupo) a da RFC 9562 (8, 9, a ou b). O UUID nulo (todo 0)
--- e o maximo (todo f) ficam de fora: nao servem de id de perfil. Ate 12/10
--- (versao 2) versao e variante nao eram conferidas.
+-- Padrao literal, e nao string.rep: na carga o Redis nao expoe as bibliotecas.
 local UUID_FORMATO = '^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$'
 local UUID_NULO = '00000000-0000-0000-0000-000000000000'
 local UUID_MAXIMO = 'ffffffff-ffff-ffff-ffff-ffffffffffff'
@@ -241,18 +199,10 @@ local function motivoUuid(v)
   return nil
 end
 
--- G8 (decisao do Luis em 12/10, versao 4 do esquema): avatar = NOME de um
--- arquivo dentro do diretorio de miniaturas (<USER_DATA_PATH>/thumbs no AoP =
--- USER_THUMBS no tv3ws), no formato do contrato
---   ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(svg|png|jpg|jpeg|webp)$
--- O padrao Lua nao tem alternativa nem repeticao contada, por isso a regra e
--- conferida por partes, na ordem em que a mensagem ajuda mais: SVG em linha
--- (o formato de ate 12/10, que um volume antigo ainda tem), diretorio, a
--- extensao (o que vem depois do ULTIMO ponto: nenhuma extensao da lista tem
--- ponto, entao o corte e o mesmo da expressao), o primeiro caractere, os
--- demais e o tamanho do nome antes da extensao (regra.maxNome, 128 = 1 +
--- {0,127}). Caracteres so ASCII: depois da conferencia deles, bytes =
--- caracteres. Ate 12/10 (versao 3) o avatar era texto livre.
+-- Avatar: nome de arquivo do diretorio de miniaturas, como
+-- ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(svg|png|jpg|jpeg|webp)$. Padrao Lua nao tem
+-- alternativa nem repeticao contada: a conferencia e por partes, e a extensao e
+-- o que vem depois do ultimo ponto. So ASCII passa, entao #base conta caracteres.
 local EXEMPLO_AVATAR = 'como c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10.svg'
 
 local function motivoNomeArquivo(regra, v)
@@ -261,7 +211,7 @@ local function motivoNomeArquivo(regra, v)
       '); sem avatar, o campo fica ausente'
   end
   if string.sub(v, 1, 1) == '<' then
-    return 'SVG em linha nao serve: o avatar e o nome de um arquivo do diretorio de miniaturas (Tabela 7: file path; G8), ' ..
+    return 'SVG em linha nao serve: o avatar e o nome de um arquivo do diretorio de miniaturas (Tabela 7: file path), ' ..
       EXEMPLO_AVATAR .. ' (veio ' .. amostra(v) .. ')'
   end
   if string.find(v, '[/\\]') then
@@ -309,9 +259,8 @@ local function motivoOrigem(v)
   return nil
 end
 
--- motivo(regra, valor[, emJson]) -> nil se o valor cumpre a regra, ou o
--- motivo. emJson: valor vindo de um objeto JSON (inteiro e numero, o resto e
--- texto JSON).
+-- nil se v cumpre a regra, senao o motivo. emJson: v veio de um objeto JSON
+-- (inteiro e number; o resto, string JSON).
 local motivo
 motivo = function(regra, v, emJson)
   local t = regra.tipo
@@ -398,11 +347,9 @@ local function motivosPartes(fam, partes)
   return out
 end
 
--- Motivos de um hash. h = estado resultante (campo -> valor). escritos = nil
--- confere o registro inteiro (novo ou regravado: obrigatorios, campo igual a
--- parte da chave, teto); escritos = conjunto de campos confere so esses (campo
--- acrescentado a registro que ja existe: o que ja estava gravado fora do
--- esquema nao trava a escrita - a auditoria o mostra).
+-- h = estado resultante. escritos nil confere o registro inteiro; um conjunto
+-- confere so esses campos (o que ja estava fora do esquema nao trava a escrita;
+-- a auditoria o mostra). O teto vale sempre, no resultado.
 local function motivosHash(fam, partes, h, escritos)
   local out = {}
   local function add(m) out[#out + 1] = m end
@@ -451,8 +398,6 @@ local function motivosHash(fam, partes, h, escritos)
   return out
 end
 
--- ------------------------------------------------- apoio das operacoes --
-
 local function exige(chave, motivos)
   if #motivos > 0 then
     local extra = ''
@@ -461,7 +406,7 @@ local function exige(chave, motivos)
   end
 end
 
--- tipo da chave no Redis: ausente ou o do esquema; devolve true se existe
+-- ausente ou do tipo do esquema; true se existe
 local function exigeTipo(fam, chave)
   local t = tipoNoRedis(chave)
   if t ~= 'none' and t ~= fam.tipo then
@@ -470,7 +415,6 @@ local function exigeTipo(fam, chave)
   return t ~= 'none'
 end
 
--- partes da chave conferidas; devolve a chave
 local function chaveValida(fam, partes)
   local chave = chaveDe(fam, partes)
   exige(chave, motivosPartes(fam, partes))
@@ -485,7 +429,6 @@ local function exigeNaoVazio(v, nome)
   if v == nil or v == '' then falha(nome .. ' vazio') end
 end
 
--- pares campo valor de args[inicio..]; devolve o hash e a lista plana
 local function pares(args, inicio, uso, aceitaNenhum)
   local n = #args - inicio + 1
   if n % 2 ~= 0 or (n == 0 and not aceitaNenhum) then
@@ -505,8 +448,8 @@ local function plano(h)
   return out
 end
 
--- grava (HSET) campos num hash que pode existir: registro novo confere tudo,
--- existente so os campos escritos
+-- confere campos novos num hash que pode existir: registro novo confere tudo,
+-- existente so os escritos (nao grava)
 local function mergeHash(fam, partes, chave, novos)
   local existe = exigeTipo(fam, chave)
   local h = existe and hashDe(chave) or {}
@@ -516,11 +459,12 @@ local function mergeHash(fam, partes, chave, novos)
   exige(chave, motivosHash(fam, partes, h, escritos))
 end
 
--- ------------------------------------------------------------- operacoes --
+-- O Redis nao desfaz o que a funcao ja gravou se ela falha no meio (7.4.11): toda
+-- operacao confere tudo, inclusive o tipo de cada chave, antes da primeira escrita.
 
 local OP = {}
 
--- sessao (dono: tv3ws) -----------------------------------------------------
+-- sessao (dono: tv3ws)
 
 local function sessaoString(nomeFamilia, args, uso)
   exigeArgs(args, 1, uso)
@@ -550,7 +494,7 @@ OP.tv30_sessao_servico = function(args)
   return 1
 end
 
--- perfis (dono: AoP) --------------------------------------------------------
+-- perfis (dono: AoP)
 
 OP.tv30_perfil_grava = function(args)
   local uso = 'tv30_perfil_grava <id> <n> <servico 1..n> <campo> <valor> [...]'
@@ -631,7 +575,7 @@ OP.tv30_perfil_remove = function(args)
   return n
 end
 
--- atributos de emissora (E4, Joel 15/10: grava o tv3ws; remove o AoP, em tv30_perfil_remove) --
+-- atributos de emissora (grava o tv3ws; o AoP remove em tv30_perfil_remove)
 
 OP.tv30_atributos_emissora = function(args)
   local uso = 'tv30_atributos_emissora <id> <scid> <campo> <valor> [...] (valor vazio remove o campo)'
@@ -666,15 +610,13 @@ OP.tv30_atributos_emissora = function(args)
   end
   local motivos = motivosHash(fAttr, partes, h, escritos)
   exige(chave, motivos)
-  -- o teto vale no resultado mesmo quando so se apaga (motivosHash com
-  -- escritos so confere os gravados; o teto e conferido sempre)
   if #apagar > 0 then emLotes('HDEL', chave, apagar) end
   local flat = plano(gravar)
   if #flat > 0 then emLotes('HSET', chave, flat) end
   return #apagar + #flat / 2
 end
 
--- clientes (dono: tv3ws) ----------------------------------------------------
+-- clientes (dono: tv3ws)
 
 local function idClienteValido(id)
   local fReg = familia('client:{id}')
@@ -737,7 +679,7 @@ OP.tv30_cliente_inclui_autorizado = function(args)
   return redis.call('SADD', fAut.chave, id)
 end
 
--- origens das aplicacoes associadas (dono: AoP) ---------------------------
+-- origens das aplicacoes associadas (dono: AoP)
 
 OP.tv30_origem_registra = function(args)
   exigeArgs(args, 2, 'tv30_origem_registra <origem> <id do servico>')
@@ -761,7 +703,7 @@ OP.tv30_origens_limpa = function(args)
   return redis.call('DEL', familia('origins:associated').chave)
 end
 
--- bind-context (dono: borda) ------------------------------------------------
+-- bind-context (dono: borda)
 
 OP.tv30_bind_registra = function(args)
   exigeArgs(args, 2, 'tv30_bind_registra <id do servico> <entrada JSON>')
@@ -782,8 +724,6 @@ OP.tv30_bind_remove = function(args)
   if not exigeTipo(fam, chave) then return 0 end
   return redis.call('LREM', chave, 0, args[2])
 end
-
--- --------------------------------------------------------------- auditoria --
 
 local function membros(chave)
   if tipoNoRedis(chave) ~= 'set' then return {} end
@@ -878,10 +818,10 @@ local function auditoria()
   return out
 end
 
--- -------------------------------------------------------------- registro --
-
 local PREFIXO = 'TV30ESQUEMA'
 
+-- O Redis aplica o ACL de quem chama dentro da funcao (sem @write: "ERR ACL
+-- failure in script"): as funcoes nao impedem escrita direta, que a auditoria mostra.
 local function registra(nome, fn, flags)
   redis.register_function {
     function_name = nome,
@@ -902,10 +842,8 @@ local function registra(nome, fn, flags)
   }
 end
 
--- Na carga o Redis so expoe redis.register_function (nem ipairs nem pairs:
--- 'Script attempted to access nonexistent global variable ipairs'), por isso
--- a lista e fixa e o laco e numerico. Os testes conferem que ela casa com as
--- funcoes do esquema.json.
+-- Na carga o Redis so expoe redis.register_function (nem pairs nem ipairs): lista
+-- fixa e laco numerico. Os testes conferem que ela casa com o esquema.json.
 local ESCRITA = {
   'tv30_atributos_emissora',
   'tv30_bind_registra',

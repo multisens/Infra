@@ -7,8 +7,7 @@ import (
 	"time"
 )
 
-// Mensagens SSDP (HTTPU). Mesmo formato do anunciante anterior (node-ssdp no
-// tv3ws), para os clientes nao perceberem a troca: dois tipos anunciados (o
+// Mensagens SSDP (HTTPU), no formato do node-ssdp: dois tipos anunciados (o
 // URN do servico e o UDN do dispositivo raiz), USN "<UDN>::<URN>" e "<UDN>".
 
 const (
@@ -47,8 +46,7 @@ func notify(u usn, location string, alive bool) string {
 	return b.String()
 }
 
-// response: resposta unicast ao M-SEARCH. max-age igual ao do NOTIFY (o
-// anunciante anterior mandava max-age=4 aqui, valor do ttl da biblioteca).
+// response: resposta unicast ao M-SEARCH, com o max-age do NOTIFY.
 func response(st string, u usn, location string, now time.Time) string {
 	var b strings.Builder
 	b.WriteString("HTTP/1.1 200 OK\r\n")

@@ -8,28 +8,12 @@ import (
 	"strings"
 )
 
-// APIs de informacao de API (C.6.7.8, Tabela C.45; C.6.7.9, Tabela C.46),
-// RESPONDIDAS pela borda (decisao da reuniao de 05/10 com o Joel, D-0510-3) a
-// partir da tabela de rotas: o routes.json marca cada rota com o id da
-// Tabela C.2 e a versao, e o generate.js entrega aqui a lista ja sem
-// duplicatas e na ordem da Tabela C.2 (campo "apis" do bloco do plugin).
-//
-//   GET /tv3/api-info/<api-id>               -> {"receiverApi": {id, version}}
-//   GET /tv3/api-info[?subsystem=ncl|nclua|tv3ws] -> {"receiverApis": [{id, version}...]}
-//
-// Erros das tabelas: 101 (id invalido; subsistema desconhecido) e 107 (access
-// token do nao local/autonomo, aplicado pela politica da rota, auth=token).
-// "Security requirements" e "Restrictions" = "—": todas as classes, sem
-// bind-token (p. 300-301 do PDF da norma).
-//
-// E2 (Joel, 15/10): cada API informa uma versao so, a "latest supported
-// version" (formato com um unico "version"): a mais recente que as rotas dela
-// servem (routes.json, versions e api.version; o generate.js confere). Hoje,
-// 100.0 para a tv3ws-remotedevice-communication (C.6.15.5, D1) e 2.0 para as
-// demais. O cliente descobre se a 2.0 continua servida pedindo-a (C.3.6.4):
-// e atendido ou recebe 100.
+// APIs de informacao de API (C.6.7.8, Tabela C.47; C.6.7.9, Tabela C.48), a
+// partir do campo "apis" do bloco do plugin (ids da Tabela C.2, na ordem dela).
+// Cada API informa uma versao so, a "latest supported version": a mais recente
+// que as rotas dela servem.
 
-// Subsistemas da Tabela C.46. O testbed so implementa APIs tv3ws; ncl e
+// Subsistemas da Tabela C.48. O testbed so implementa APIs tv3ws; ncl e
 // nclua sao conhecidos (lista vazia, nao 101).
 var apiSubsystems = []string{"ncl", "nclua", "tv3ws"}
 
@@ -58,7 +42,6 @@ func knownSubsystem(s string) bool {
 	return false
 }
 
-// subsystemOf: o prefixo do id ate o primeiro hifen ("tv3ws-...").
 func subsystemOf(id string) string {
 	s, _, _ := strings.Cut(id, "-")
 	return s
@@ -95,11 +78,9 @@ func loadAPICatalog(raw interface{}) (*apiCatalog, error) {
 	return cat, nil
 }
 
-// C.6.7.8 (Tabela C.45). 101 "If <api-id> does not correspond to a valid API
-// identification string".
-// DECIDIDO (Luis, 11/10; E1): id que esta na Tabela C.2 mas que o testbed
-// nao implementa tambem da 101 — a tabela nao preve outro erro, e nao ha
-// "ultima versao suportada" de uma API que o receptor nao tem.
+// C.6.7.8: 101 "If <api-id> does not correspond to a valid API identification
+// string", tambem para id da Tabela C.2 nao implementado (a Tabela C.47 nao
+// preve outro erro, e nao ha versao de uma API que o receptor nao tem).
 func (h *authHandler) apiInfo(_ *http.Request, params map[string]string) edgeReply {
 	id := params["apiId"]
 	e, ok := h.cfg.APIs.byID[id]
@@ -111,11 +92,9 @@ func (h *authHandler) apiInfo(_ *http.Request, params map[string]string) edgeRep
 	}{e}}
 }
 
-// C.6.7.9 (Tabela C.46). Com subsystem: so as daquele subsistema;
-// desconhecido (inclusive vazio) => 101; ncl e nclua sao conhecidos e o
-// testbed nao implementa nenhuma API deles (lista vazia).
-// DECIDIDO (Luis, 11/10; E3): sem subsystem a norma nao diz o que listar (o
-// parametro eh opcional na URL); lista todas as APIs implementadas.
+// C.6.7.9: com subsystem, so as daquele subsistema (desconhecido ou vazio =>
+// 101). Sem subsystem, que a Tabela C.48 deixa opcional sem dizer o que
+// listar, lista todas.
 func (h *authHandler) apiList(r *http.Request, _ map[string]string) edgeReply {
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {

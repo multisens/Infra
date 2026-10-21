@@ -1,29 +1,9 @@
-# tv30-redis — armazenamento consolidado (fase 3 do plano): Redis + carga
-# inicial (seed gerado NO BUILD, aplicado via redis-cli --pipe — elimina o
-# pip-install em tempo de partida) + redis-commander embutido como processo
-# auxiliar de debug.
-#
-# P4 (decisao do Luis em 10/10, "Funcoes + auditoria"): a imagem leva a
-# biblioteca de funcoes do Redis (esquema.json + funcoes.lua, montados por
-# biblioteca.sh), que o entrypoint carrega a cada partida antes da carga
-# inicial; a carga tambem passa pelas funcoes. O build roda confere-imagem.sh:
-# biblioteca que nao carrega, carga fora do esquema ou auditoria com achados
-# depois da carga nao viram imagem. Ver README.md desta pasta.
-#
-# Semantica registrada: MORRE-INTEIRO para o redis-server e o commander (C2,
-# decisao do Luis em 11/10) — se QUALQUER um dos dois morrer, o container cai
-# (entrypoint.sh) e o restart do compose o traz de volta. Ate 11/10 o
-# commander era excecao consciente (decisao V8/V9: a morte dele nao derrubava
-# o banco, por ser ferramenta de inspecao). O healthcheck so fica saudavel
-# APOS a biblioteca carregar nesta partida e a carga estar aplicada (marca
-# /tmp/tv30-redis-pronto e chave seed:done), substituindo o antigo depends_on
-# service_completed_successfully.
-#
-# Build context: infra/  (precisa do template de userData e do script de
-# normalizacao compartilhado com o mqtt-broker)
+# tv30-redis: Redis com a biblioteca de funcoes tv30, carga inicial gerada no
+# build (aplicada por redis-cli --pipe) e redis-commander (debug). O build roda
+# confere-imagem.sh: biblioteca que nao carrega ou carga fora do esquema nao vira imagem.
+# Build context: infra/ (template de userData e migrate_to_redis.py do mqtt-broker)
 # syntax=docker/dockerfile:1.6
 
-# --- estagio 1: gera o seed em protocolo RESP a partir do template ---
 FROM python:3.11-alpine AS seedgen
 WORKDIR /gen
 COPY mqtt-broker/infra/migrate_to_redis.py ./migrate_to_redis.py
@@ -31,12 +11,9 @@ COPY redis/emit_seed.py ./
 COPY user-files-template/userData.json ./
 RUN python emit_seed.py userData.json /seed.resp
 
-# --- final ---
-# redis-commander com versao FIXADA: o login da UI (D-L1, entrypoint.sh)
-# depende dos nomes HTTP_USER/HTTP_PASSWORD que a 0.9.0 mapeia em
-# config/custom-environment-variables.json. Sem usuario e senha ela sobe a
-# UI aberta, sem aviso (lib/app.js, httpAuthDisabled). Versao nova so depois
-# de conferir esse mapeamento (scripts/test-consolidacao.sh prova 401/200).
+# redis-commander com versao fixada: o login da UI depende de HTTP_USER e
+# HTTP_PASSWORD, que a 0.9.0 mapeia; sem eles a UI sobe aberta, sem aviso.
+# Antes de trocar a versao, confira o mapeamento (scripts/test-consolidacao.sh).
 FROM redis:7-alpine
 RUN apk add --no-cache nodejs npm dumb-init && \
     npm install -g --omit=dev redis-commander@0.9.0 && \

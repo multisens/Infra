@@ -11,14 +11,9 @@ import (
 	"strings"
 )
 
-// APIs RESPONDIDAS pela propria borda (campo "edge" da rota no routes.json),
-// decisoes da reuniao de 05/10 com o Joel: C.6.8 (D-0510-2) e C.6.7.8/C.6.7.9
-// (D-0510-3). A requisicao passa antes pela mesma decisao de credencial das
-// demais rotas (evaluate: 100, 106, 107; em warn so avisa) e depois chega ao
-// handler daqui, sem repasse ao roteador do KrakenD. A versao ja vem
-// negociada (ServeHTTP, handler.go). O endpoint dessas rotas
-// continua gerado no KrakenD (generate.js), mas nunca eh alcancado: ele so
-// mantem o caminho registrado no roteador, como o de qualquer outra rota.
+// APIs respondidas pela propria borda (campo "edge" da rota), depois da mesma
+// decisao das demais rotas e da negociacao de versao. O endpoint delas continua
+// gerado no KrakenD so para manter o caminho no roteador; nunca e alcancado.
 
 const (
 	edgeBindRegister = "bind-context-register" // POST   /tv3/bind-context (C.6.8.2)
@@ -54,24 +49,16 @@ func edgeHandlerNames() string {
 	return strings.Join(names, ", ")
 }
 
-// Negociacao de versao (C.3.6.5) — D2 e D4 (Joel, 15/10): a BORDA negocia a
-// versao em toda rota, a partir das versoes que o routes.json declara para
-// ela (campo versions; ausente = 2.0, a "current version" da C.3.6.3), e
-// repassa a versao decidida ao servico no cabecalho interno
-// X-TV30-API-Version, que apaga o que vier do cliente. O tv3ws deixou de
-// interpretar o Accept-Version. Ate 15/10, o tv3ws negociava nas rotas dele e
-// a borda nas que ela responde, com o mesmo conjunto ['2.0', '2.1'] escrito a
-// mao nos dois lugares. Sem Accept-Version vale a 2.0; fora do formato X.Y =>
-// 101; versao que a rota nao serve => 100. O 100 e o 101 disparam nos dois
-// modos. As versoes maiores de 100 em diante sao as das propostas do testbed
-// (D1): hoje so a 100.0, o fluxo de remote-device por handle.
+// Negociacao de versao (C.3.6.5), em toda rota, contra o campo versions do
+// routes.json (ausente = 2.0, a "current version" da C.3.6.3): sem
+// Accept-Version vale a 2.0; fora do formato X.Y, 101; versao que a rota nao
+// serve, 100. Versoes de 100 em diante sao propostas do testbed (100.0:
+// remote-device por handle). A negociada vai ao servico em X-TV30-API-Version.
 const (
 	defaultVersion        = "2.0"
 	internalVersionHeader = "X-TV30-API-Version"
-	// internalHostHeader: o Host original da requisicao do cliente, que o
-	// KrakenD troca pelo do backend. O /manifest do tv3ws monta com ele o
-	// Server-BaseURL, para sair no mesmo host que o anunciante nativo detecta
-	// (complemento do Joel de 15/10, 3.4). Apaga o que vier do cliente.
+	// Host original do cliente (o KrakenD o troca pelo do backend): o /manifest
+	// monta com ele o Server-BaseURL, no mesmo host do anuncio SSDP.
 	internalHostHeader = "X-TV30-Host"
 )
 
@@ -180,10 +167,9 @@ func redisDown(err error) edgeReply {
 	return edgeReply{Code: 200, Detail: "redis indisponivel (" + err.Error() + ")"}
 }
 
-// redisWriteFailed: falha numa escrita (C.6.8.2, C.6.8.4). A recusa da
-// funcao do Redis por dado fora do esquema (P4, Luis em 10/10) e defeito da
-// borda, nao Redis fora do ar: responde como a falha de Redis (404
-// {error:200}) e o detalhe diz o que a funcao recusou (serveEdge loga).
+// redisWriteFailed: falha numa escrita (C.6.8.2, C.6.8.4). Recusa do esquema
+// pela funcao do Redis e defeito da borda, nao Redis fora do ar: tambem 404
+// {error:200}, com o motivo no detalhe.
 func redisWriteFailed(err error) edgeReply {
 	if msg, ok := schemaRefusal(err); ok {
 		return edgeReply{Code: 200, Detail: "escrita recusada pelo esquema do Redis (" + msg + ")"}
@@ -191,9 +177,8 @@ func redisWriteFailed(err error) edgeReply {
 	return redisDown(err)
 }
 
-// encodeJSON sem o escape de <, > e & do json.Marshal (o JSON.stringify do
-// tv3ws, que gravava as mesmas chaves no Redis, nao escapa) e sem a quebra
-// de linha final do Encoder.
+// encodeJSON: sem o escape de <, > e & do json.Marshal (como o JSON.stringify
+// do tv3ws) e sem a quebra de linha final do Encoder.
 func encodeJSON(v interface{}) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)

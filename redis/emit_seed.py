@@ -1,17 +1,8 @@
 #!/usr/bin/env python3
 """
-Gera, EM TEMPO DE BUILD, o seed do Redis em protocolo RESP (consumido por
-`redis-cli --pipe` no entrypoint). Reusa a normalizacao de campos do
-migrate_to_redis.py (fonte unica da regra nickname/closedCaptioning/etc.),
-eliminando a dependencia de rede na partida (antigo defeito 1).
-
-P4 (decisao do Luis em 10/10, "Funcoes + auditoria"): cada perfil vira UMA
-chamada FCALL tv30_perfil_grava (biblioteca de funcoes do Redis, ver
-infra/redis/README.md), que confere o esquema e grava users:index, user:{id}
-e user:{id}:consent juntos. Antes eram SADD/DEL/HSET/SADD avulsos. Os
-argumentos saem de perfil_fcall_args (migrate_to_redis.py), o mesmo que a
-migracao manual usa. Perfil fora do esquema e recusado pela funcao; o build
-da imagem confere a carga (confere-imagem.sh) e falha nesse caso.
+Gera no build o seed do Redis em RESP (para `redis-cli --pipe`): uma chamada
+FCALL tv30_perfil_grava por perfil, com os argumentos de perfil_fcall_args
+(migrate_to_redis.py, o mesmo da migracao manual).
 
 Uso: emit_seed.py <userData.json> <saida.resp>
 """

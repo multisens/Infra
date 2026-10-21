@@ -1,10 +1,6 @@
-// Teste ESTATICO das escritas no Redis (P4, decisao do Luis em 10/10): falha
-// se algum servico — tv3ws, aop, plugin da borda, carga inicial (e a migracao
-// manual) — emitir comando de escrita numa familia do alcance fora do
-// adaptador das funcoes. Regras em ./escritas.js. Precisa do TV30 inteiro
-// (tv3ws/ e aop/ ao lado de infra/). Roda com node puro:
-//   node --test infra/redis/test/escritas.test.js
-//   (ou bash infra/redis/test/run.sh estatico, num node:20-alpine)
+// Falha se tv3ws, aop, plugin da borda, carga inicial ou migracao manual gravar
+// numa familia do alcance fora do adaptador das funcoes (regras em ./escritas.js).
+// Precisa do TV30 inteiro: node --test infra/redis/test/escritas.test.js
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');

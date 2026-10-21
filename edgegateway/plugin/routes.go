@@ -7,15 +7,13 @@ import (
 
 // Politica por rota (routes.json, campos "auth" e "classes").
 const (
-	authNone = "none" // sem credencial (health, manifest, authorize, token, POST/DELETE bind-context)
-	// (o GET /tv3/bind-context eh "token": o bind-token dele eh argumento da
-	// propria API C.6.8.3, validado pelo handler em bindcontext.go)
+	authNone      = "none"       // sem credencial
 	authToken     = "token"      // access token
 	authTokenBind = "token+bind" // access token + bind-token ("Security requirements" = shall)
 )
 
-// Classes de cliente: EXATAMENTE os valores que o tv3ws grava no claim
-// `class` (tv3ws/src/modules/auth-manager/client.ts, ClientClass).
+// Classes de cliente: os valores que o tv3ws grava no claim `class`
+// (tv3ws/src/modules/auth-manager/client.ts, ClientClass).
 const (
 	classAssociated = "local-associated"
 	classAutonomous = "local-autonomous"
@@ -36,27 +34,18 @@ type route struct {
 	Path    string
 	Auth    string
 	Classes []string // nil = todas as classes
-	// Edge != "" => a rota eh RESPONDIDA pela propria borda (handler deste
-	// plugin com esse nome, edge.go), sem repasse ao roteador do KrakenD.
+	// Edge: handler de edge.go que responde a rota na propria borda ("" = repassa)
 	Edge string
-	// SurfaceError != 0 => nesta superficie a rota responde esse codigo a
-	// QUALQUER requisicao, sem olhar classe nem credencial e nos dois modos.
-	// F-1 (Joel, 15/10): na externa (Server-SecureBaseURL), 106 nas APIs de
-	// uso exclusivo do cliente local e na C.6.1.2, que so se acessa por HTTP
-	// (C.4.1.8). Vem do generate.js (campo surface_error), nunca do routes.json.
+	// SurfaceError: codigo que a rota responde nesta superficie a qualquer
+	// requisicao, nos dois modos (o 106 da C.4.1.8 na externa). 0 = nenhum.
 	SurfaceError int
-	// NonLocalHTTP: a rota esta entre as que o nao local usa por HTTP (C.6.1.2
-	// e C.6.1.3, C.4.1.6). So conta na superficie com NonLocalHTTPSOnly (a
-	// interna, Server-BaseURL): fora delas o nao local recebe 106 (E7).
+	// NonLocalHTTP: rota que o nao local usa por HTTP (C.6.1.2 e C.6.1.3,
+	// C.4.1.6); so conta com NonLocalHTTPSOnly.
 	NonLocalHTTP bool
-	// NoService != 0 => sem servico DTV selecionado, a rota (token+bind)
-	// responde esse codigo antes de conferir o bind-token (H2, Joel 15/10:
-	// 300 nas APIs cuja tabela o lista, "If the DTV function is not in use in
-	// the receiver"). 0 => segue o bind-token e da 108 sem chave registrada.
+	// NoService: codigo sem servico DTV selecionado, antes do bind-token (300,
+	// nas APIs cuja tabela o lista); 0 = segue o bind-token e da 108.
 	NoService int
-	// Versions: as versoes de API que a rota serve (D4, Joel 15/10: o
-	// routes.json e o registro de versoes), em ordem crescente. Vem do
-	// generate.js; ausente => so a 2.0.
+	// Versions: versoes servidas, em ordem crescente (ausente no routes.json = 2.0)
 	Versions []string
 	segs     []segment
 }

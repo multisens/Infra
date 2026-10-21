@@ -1,33 +1,6 @@
 #!/usr/bin/env python3
-# Driver do teste de integracao da mensagem de errors/<client_id> (correcao
-# de 12/10, defeito achado pela auditoria da documentacao: publish_error
-# colava os campos sem escape). Roda DENTRO de um container da propria imagem
-# do broker (python3 e os clientes mosquitto_pub/mosquitto_sub ja estao la),
-# na rede do broker descartavel; quem sobe tudo e test_errors_json.sh.
-#
-#   python3 errors_json_driver.py <host-do-broker>
-#
-# Publica payloads com aspas, barra invertida, quebra de linha, caracteres de
-# controle, NUL, UTF-8 invalido e tamanhos acima do limite, em topicos com
-# esquema, e confere cada mensagem que chega em errors/<client_id>:
-# json.loads estrito sobre o texto decodificado como UTF-8 estrito, de novo
-# por `python3 -m json.tool`, tamanho de no maximo 2047 bytes e o valor de
-# cada campo. Tambem confere que publicacao valida e a mensagem de fechamento
-# do pop-up ({"close":true} em aop/display/layers/popup/qrcode e .../pin, que
-# nao tem esquema) chegam ao assinante sem erro.
-#
-# Correcoes de 12/10 da revisao do plugin, conferidas aqui tambem:
-# - payload lido inteiro (src/json_payload.c): JSON com sobra depois do valor
-#   ({"value":1}lixo, {"value":1}\0lixo, comentario, \f, dois valores) vira
-#   INVALID_JSON e nao e entregue; espaco, tab, CR e LF em volta passam; nos
-#   topicos de texto puro, o payload inteiro e o que se valida (UUID com
-#   digito na frente passa; NUL no meio vira INVALID_JSON);
-# - resposta do teste de latencia (PublisherResponseTime -> PluginResponseTime,
-#   src/response_time_tester.c): JSON valido com aspas e barra no id;
-# - topico errors/<client_id> (error_json_topic): +, # e / do client_id viram
-#   _, e o corte em 255 bytes nao parte caractere UTF-8. Cada caso tem o seu
-#   assinante, porque um topico com UTF-8 invalido derruba o cliente que o
-#   recebe.
+# Driver de test_errors_json.sh, num container da imagem do broker, na rede do
+# broker descartavel:  python3 errors_json_driver.py <host-do-broker>
 # Saida: uma linha PASS/FAIL por conferencia e o resumo; codigo 0 so sem FAIL.
 import json
 import os
@@ -170,11 +143,10 @@ CASES = [
                              details='String length 67 is greater than maxLength 64', payload='u' * 65 + '"\\')),
     ('payload de 1800 bytes cabe inteiro', 'sensor/room1/temperature', 'tv30-t-1800',
      b'a' * 1800, dict(error_type='INVALID_JSON', payload='a' * 1800)),
-    ('payload de 2000 bytes: mensagem passaria de 2047 (antes nao saia)', 'sensor/room1/temperature', 'tv30-t-2000',
+    ('payload de 2000 bytes: mensagem passaria de 2047', 'sensor/room1/temperature', 'tv30-t-2000',
      b'a' * 2000, dict(error_type='INVALID_JSON', cut_unit='a')),
-    # o '[' na frente deixa o payload sem duvida invalido: so aspas comecariam
-    # com "" (texto vazio), que o json_tokener_parse aceitava ignorando o
-    # resto (desde a leitura do payload inteiro, 12/10, tambem e INVALID_JSON)
+    # o '[' na frente deixa o payload invalido de saida: so aspas comecariam
+    # com "" (um texto JSON) seguido de sobra
     ('3000 aspas (escape dobra o tamanho)', 'sensor/room1/temperature', 'tv30-t-aspas3000',
      b'[' + b'"' * 3000, dict(error_type='INVALID_JSON', cut_unit='"', cut_prefix='[')),
     ('1000 bytes 0x01 (escape de 6 bytes)', 'sensor/room1/temperature', 'tv30-t-ctl1000',
@@ -185,7 +157,7 @@ CASES = [
      b'nope', dict(error_type='INVALID_JSON', payload='nope', topic_cut=True)),
     ('client_id de 300 bytes', 'sensor/room1/temperature', 'c' * 300,
      b'nope', dict(error_type='INVALID_JSON', payload='nope', client_cut=True)),
-    # payload lido inteiro (12/10): sobra depois do valor e INVALID_JSON
+    # payload lido inteiro: sobra depois do valor e INVALID_JSON
     ('JSON com texto depois', 'sensor/room1/temperature', 'tv30-t-lixo',
      b'{"value":1}lixo', dict(error_type='INVALID_JSON', payload='{"value":1}lixo')),
     ('JSON com NUL e texto depois', 'sensor/room1/temperature', 'tv30-t-nul-lixo',
@@ -287,7 +259,7 @@ for name, topic, client, payload, want in CASES:
 
 # ----------------------------------------------------- teste de latencia --
 # A resposta em PluginResponseTime<id>/iteration<N> tem de ser JSON valido com
-# o id inteiro (12/10: o id entrava sem escape).
+# o id inteiro.
 for i, (name, rid, it, rtopic) in enumerate(RT_CASES):
     body = json.dumps({'testResponsetime': True, 'localtime': '2026-10-12 10:00:00.000', 'id': rid, 'iteration': it})
     rc, err = publish('PublisherResponseTimezz/iteration%d' % it, body.encode(), 'tv30-t-latencia-%d' % i)
@@ -315,7 +287,7 @@ for i, (name, rid, it, rtopic) in enumerate(RT_CASES):
 sub.terminate()
 
 # ------------------------------------------------ topico errors/<client_id> --
-# +, # e / viram _; o corte em 255 bytes nao parte caractere UTF-8 (12/10).
+# +, # e / viram _; o corte em 255 bytes nao parte caractere UTF-8.
 # Um assinante por caso: topico com UTF-8 invalido derruba o cliente que o
 # recebe (libmosquitto: MOSQ_ERR_MALFORMED_UTF8), e o caso seguinte nao
 # depende do anterior.

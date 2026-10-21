@@ -1,12 +1,7 @@
 services:
-  # Redis consolidado (fase 3): server + biblioteca de funcoes (P4) + carga
-  # inicial no entrypoint + redis-commander embutido como processo auxiliar
-  # de debug. Morre-inteiro (C2, decisao do Luis em 11/10): se o redis-server
-  # ou o commander cair, o container cai e o restart o traz de volta.
-  # Healthcheck so fica saudavel APOS a biblioteca de funcoes
-  # carregar NESTA partida e a carga estar aplicada (marca
-  # /tmp/tv30-redis-pronto, que o entrypoint cria, e chave seed:done) — quem
-  # precisa do estado semeado e das funcoes depende de service_healthy.
+  # Redis com a biblioteca de funcoes tv30, a carga inicial e o redis-commander
+  # (debug); se o redis-server ou o commander cair, o container cai. Saudavel so
+  # depois de a biblioteca carregar nesta partida e a carga estar aplicada.
   redis:
     image: ${DOCKERHUB_NS:-tv30}/tv30-redis:${IMAGE_TAG:-latest}
     build:
@@ -14,18 +9,14 @@ services:
       dockerfile: redis/Dockerfile
     container_name: redis
     ports:
-      # 6379 fixa e SO em 127.0.0.1 (A1, Joel 15/10): aberta a rede, um aparelho
-      # gravaria na lista de associados ou nas chaves de bind e contornaria a
-      # borda. Sem senha e sem ACL (D-L1): escrita direta fora das funcoes que
-      # validam fica vedada por convencao. Os servicos em container usam a
-      # ginga_net; os que rodam no host (dev-host, borda em rede do host)
-      # usam 127.0.0.1.
+      # 6379 so em 127.0.0.1: aberta a rede, um aparelho gravaria nas origens
+      # associadas ou nas chaves de bind e contornaria a borda. Sem senha nem ACL:
+      # escrita fora das funcoes fica vedada por convencao.
       - "127.0.0.1:6379:6379"
-      - "18081"       # UI do commander: porta de host DINAMICA (V10), com login
+      - "18081"       # UI do commander: porta de host dinamica, com login
     environment:
-      # D-L1 (Luis, 03/10): usuario e senha SO na UI do commander; a conexao
-      # com o banco (6379) segue sem senha. Troque no .env da raiz. Valor
-      # vazio cai no padrao (o entrypoint repete o mesmo padrao).
+      # usuario e senha so na UI do commander (a 6379 segue sem senha); valor
+      # vazio cai no padrao, o mesmo do entrypoint
       REDIS_COMMANDER_USER: ${REDIS_COMMANDER_USER:-admin}
       REDIS_COMMANDER_PASSWORD: ${REDIS_COMMANDER_PASSWORD:-tv30-redis-admin}
     volumes:

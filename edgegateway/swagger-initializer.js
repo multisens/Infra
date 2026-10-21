@@ -1,6 +1,5 @@
-// Swagger UI do edgegateway: um UI, DUAS specs no dropdown — as duas
-// superficies diferem por norma (o erro 106 decorre dessa distincao).
-// Specs geradas no build da tabela unica (M4) e servidas da mesma origem.
+// Swagger UI com as specs das duas superficies, geradas no build e servidas
+// da mesma origem.
 window.onload = function () {
   window.ui = SwaggerUIBundle({
     urls: [

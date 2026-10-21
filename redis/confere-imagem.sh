@@ -1,12 +1,7 @@
 #!/bin/sh
-# Conferencia no BUILD da imagem tv30-redis (P4, decisao do Luis em 10/10):
-# biblioteca quebrada ou carga inicial fora do esquema nao vira imagem (mesma
-# ideia do edgegateway, que roda os testes do plugin no build).
-#
-# Sobe um redis-server temporario (porta propria, sem persistencia), carrega
-# a biblioteca montada por biblioteca.sh, aplica o seed.resp (que chama
-# tv30_perfil_grava para cada perfil do userData.json) e exige: nenhum erro
-# na carga e auditoria vazia. Nada fica na imagem (sem RDB, sem AOF).
+# Conferencia no build da imagem: num redis-server temporario, carrega a
+# biblioteca, aplica o seed.resp e exige carga sem erro e auditoria vazia.
+# Nada fica na imagem (sem RDB nem AOF).
 set -eu
 P=6390
 LIB=/opt/tv30-redis

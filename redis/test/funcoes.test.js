@@ -1,27 +1,7 @@
-// Testes da biblioteca de funcoes "tv30" num Redis REAL (P4, decisao do Luis
-// em 10/10: "Funcoes + auditoria"). Rode por infra/redis/test/run.sh, que
-// sobe um redis:7-alpine descartavel, carrega a biblioteca montada por
-// infra/redis/biblioteca.sh e roda este arquivo num node:20-alpine.
-//
-// O que se prova:
-// - a biblioteca carregada tem exatamente as funcoes do esquema.json (e as
-//   somente leitura com a flag no-writes);
-// - ACEITACAO: cada operacao com dado valido grava o efeito esperado, inclusive
-//   os valores de fronteira de cada regra (ex.: 20 caracteres multibyte no
-//   nickname);
-// - RECUSA DE CADA REGRA: os casos sao GERADOS a partir do esquema.json — para
-//   cada familia, cada regra (valor, campo, membro, parte da chave, item, nome
-//   de campo) recebe valores que a violam; a funcao tem de responder erro
-//   TV30ESQUEMA com a funcao, a chave e o motivo, e o banco tem de ficar
-//   identico (nada gravado). Regra nova no esquema.json ganha caso aqui sem
-//   editar este arquivo (se o tipo de regra for conhecido);
-// - ATOMICIDADE: recusa no meio de uma operacao de varias chaves (tipo errado
-//   numa chave posterior, membro invalido no fim) nao deixa gravacao parcial;
-// - INVARIANTES nas operacoes (clientes disjuntos, perfil indexado,
-//   autorizado com registro);
-// - AUDITORIA: vazia num banco valido; aponta cada tipo de problema gravado a
-//   mao (chave sem familia, tipo errado, campo invalido, cada invariante) e
-//   volta vazia depois da limpeza; FCALL_RO aceita so as somente leitura.
+// Testes da biblioteca "tv30" num Redis real (rode por infra/redis/test/run.sh).
+// Os casos de recusa sao gerados do esquema.json: cada regra recebe valores que a
+// violam, e a funcao tem de responder TV30ESQUEMA sem gravar nada. Regra nova
+// ganha caso sem editar este arquivo, se o tipo de regra for conhecido.
 'use strict';
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
@@ -56,21 +36,15 @@ const familia = nome => {
 };
 
 // ----------------------------------------------------------------- dados --
-// ids de perfil: UUID em minusculas (F-3, decisao do Luis em 11/10)
 const P1 = '0b6e3c1a-7f2d-4e8b-9a5c-3d1f2e4a6b8c';
 const P2 = '5a9d2f4e-1c3b-4d6a-8e7f-9b0c1d2e3f4a';
 const FANTASMA = 'f0f0f0f0-0000-4000-8000-000000000001';
 const ORFAO = 'f0f0f0f0-0000-4000-8000-000000000002';
 const SEM_HASH = 'f0f0f0f0-0000-4000-8000-000000000003';
-// UUID estrito (decisao do Luis em 12/10, esquema versao 3): a versao e o 1o
-// digito do 3o grupo (indice 14) e tem de ser de 1 a 8; a variante e o 1o
-// digito do 4o grupo (indice 19) e tem de ser 8, 9, a ou b (RFC 9562)
+// versao do UUID: 1o digito do 3o grupo; variante: 1o digito do 4o grupo
 const UUID_VERSAO = 14;
 const UUID_VARIANTE = 19;
 const comDigito = (u, i, d) => u.slice(0, i) + d + u.slice(i + 1);
-// G8 (decisao do Luis em 12/10, esquema versao 4): o avatar e o nome de um
-// arquivo do diretorio de miniaturas, <id do perfil>.svg como o AoP grava.
-// Ate 12/10 (versao 3) era SVG em linha.
 const SVG_EM_LINHA = '<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100" rx="30" fill="#4d7c5b"/></svg>';
 const PERFIL = {
     id: P1, nickname: 'Viewer 1', avatar: `${P1}.svg`,
@@ -175,10 +149,9 @@ function violacoes(regra, emJson = false) {
             for (const v of ['pt_BR', 'p', '', 'pt-', 'pt--BR', 'português', '123', 'pt-abcdefghi']) out.push([v, 'RFC 5646', `"${v}"`]);
             break;
         case 'uuid': {
-            // F-3 (Luis, 11/10): formato da RFC 9562, minusculas, sem os ids antigos
             const ok = 'c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10';
             for (const [v, d] of [
-                ['', 'vazio'], ['c3167a18-5dc5', 'id antigo da carga'], ['user_1760000000000', 'id antigo do AoP'],
+                ['', 'vazio'], ['c3167a18-5dc5', 'UUID truncado'], ['user_1760000000000', 'user_<epoch-ms>'],
                 ['p1', 'curto'], [ok.slice(0, -1), 'um digito a menos'], [ok + '0', 'um digito a mais'],
                 [ok.replace(/-/g, ''), 'sem hifens'], [`{${ok}}`, 'entre chaves'], [`urn:uuid:${ok}`, 'forma URN'],
                 ['g' + ok.slice(1), 'digito nao hexadecimal'], [ok.replace(/-/g, '_'), 'separador errado'],
@@ -186,8 +159,7 @@ function violacoes(regra, emJson = false) {
             ]) out.push([v, 'RFC 9562', d]);
             out.push([ok.toUpperCase(), 'minusculas', 'maiusculas']);
             out.push(['C' + ok.slice(1), 'minusculas', 'uma maiuscula']);
-            // UUID estrito (Luis, 12/10): versao 1 a 8 e variante da RFC 9562.
-            // A mensagem diz qual parte falhou e o digito que veio.
+            // versao 1 a 8 e variante da RFC 9562; a mensagem diz a parte e o digito
             for (const d of '09f') {
                 out.push([comDigito(ok, UUID_VERSAO, d), ['versao do UUID deve ser de 1 a 8', `veio ${d} em`], `versao ${d}`]);
             }
@@ -203,11 +175,9 @@ function violacoes(regra, emJson = false) {
             break;
         }
         case 'nomeArquivo': {
-            // G8 (Luis, 12/10): nome de arquivo do diretorio de miniaturas, no
-            // formato ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(svg|png|jpg|jpeg|webp)$
             const ext = regra.extensoes[0];
             out.push(['', 'vazio', 'vazio']);
-            out.push([SVG_EM_LINHA, 'SVG em linha nao serve', 'SVG em linha (o formato ate 12/10)']);
+            out.push([SVG_EM_LINHA, 'SVG em linha nao serve', 'SVG em linha']);
             out.push(['<svg onload="alert(1)"/>', 'SVG em linha nao serve', 'SVG com script']);
             for (const v of ['thumbs/a.svg', '../a.svg', '/a.svg', '/user-files/thumbs/a.svg', 'a/../../etc/passwd.svg', 'a\\b.svg', '..\\a.svg', `a.${ext}/`]) {
                 out.push([v, ['sem diretorio', 'nao pode conter "/" nem "\\"'], `"${v}"`]);
@@ -277,23 +247,17 @@ function aceitacoes(regra) {
         }
         case 'enum': return regra.valores.slice();
         case 'idioma': return ['pt-BR', 'en', 'pt', 'zh-Hant-TW', 'x-tv30', 'i-default', 'es-419'];
-        // a carga inicial (v4, variante 9), um crypto.randomUUID() (v4, o que
-        // o AoP gera), exemplos de outras versoes (1 e 7) e, nas fronteiras do
-        // UUID estrito (Luis, 12/10), cada versao de 1 a 8 com cada variante
-        // 8, 9, a e b. Ate 12/10 os UUID nulo e maximo tambem eram aceitos
-        // (versao e variante nao eram conferidas); agora estao nas violacoes.
+        // a carga inicial (v4, variante 9), um crypto.randomUUID() (o que o AoP
+        // gera), as versoes 1 e 7 e cada versao de 1 a 8 com cada variante 8, 9, a e b
         case 'uuid': {
             const out = ['c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10', require('crypto').randomUUID(), 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6',
                 '017f22e2-79b0-7cc3-98c4-dc0c0c07398f'];
             for (const v of '12345678') for (const va of '89ab') out.push(comDigito(comDigito(P1, UUID_VERSAO, v), UUID_VARIANTE, va));
             return out;
         }
-        // G8 (Luis, 12/10): o avatar da carga, o que o AoP grava (<UUID>.svg),
-        // cada extensao da lista, um caractere so antes da extensao e o maximo
-        // (regra.maxNome), maiusculas no nome, e os pontos, "_" e "-" que a
-        // expressao do contrato aceita no meio do nome (inclusive "a..b.svg":
-        // sem "/" nao ha diretorio, entao ".." no meio do nome nao sobe de
-        // diretorio; e o que a expressao do contrato diz, conferido aqui)
+        // o avatar da carga, o que o AoP grava, cada extensao, os tamanhos de
+        // fronteira e os ".", "_" e "-" no meio do nome ("a..b.svg": sem "/", ".."
+        // nao sobe de diretorio)
         case 'nomeArquivo': return [
             'c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10.svg', `${require('crypto').randomUUID()}.svg`,
             ...regra.extensoes.map(e => `a.${e}`), 'Z.png', '0.jpg',
@@ -539,12 +503,8 @@ test('perfil: grava os tres juntos, visibilidade acumula, ultimo acesso so em pe
     assert.deepEqual(await auditoria(), []);
 });
 
-// F-3 (decisao do Luis em 11/10), sem compatibilidade: perfil com id antigo,
-// como fica num volume de antes, gravado a mao. A auditoria o aponta; gravar
-// perfil ou atributo de emissora com esse id e recusado; o ultimo acesso (so o
-// campo escrito num registro que ja existe) e a remocao (sem conferir o id)
-// ainda passam — o despejo continua limpando o volume antigo.
-test('id antigo (volume de antes da F-3): auditoria aponta, gravacao recusada, despejo remove', async () => {
+// o ultimo acesso confere so o campo escrito, e a remocao nao confere o id
+test('id que nao e UUID, gravado a mao: auditoria aponta, gravacao recusada, remocao passa', async () => {
     const velho = 'user_1760000000000';
     await r('SADD', 'users:index', velho);
     await r('HSET', `user:${velho}`, ...plano({ ...PERFIL_MIN, id: velho }));
@@ -553,22 +513,15 @@ test('id antigo (volume de antes da F-3): auditoria aponta, gravacao recusada, d
     for (const k of ['users:index', `user:${velho}`, `user:${velho}:consent`]) {
         assert.ok(achados.some(([c, , m]) => c === k && m.includes('RFC 9562')), `${k} apontado: ${JSON.stringify(achados)}`);
     }
-    await recusa('regravar o perfil antigo', 'tv30_perfil_grava', perfilArgs(velho, [], { ...PERFIL_MIN, id: velho }), ['{id} da chave: deve ser UUID']);
-    await recusa('atributo de emissora no perfil antigo', 'tv30_atributos_emissora', [velho, 'urn:s', 'cor', 'azul'], ['{id} da chave: deve ser UUID']);
+    await recusa('regravar o perfil', 'tv30_perfil_grava', perfilArgs(velho, [], { ...PERFIL_MIN, id: velho }), ['{id} da chave: deve ser UUID']);
+    await recusa('atributo de emissora no perfil', 'tv30_atributos_emissora', [velho, 'urn:s', 'cor', 'azul'], ['{id} da chave: deve ser UUID']);
     assert.equal(await fcall('tv30_perfil_ultimo_acesso', velho, '5'), 1);
     assert.equal(await fcall('tv30_perfil_remove', velho), 3);
     assert.deepEqual(await auditoria(), []);
 });
 
-// G8 (decisao do Luis em 12/10, esquema versao 4), sem migracao: perfil com o
-// avatar em SVG em linha, como fica num volume de antes (o AoP e a carga
-// gravavam assim ate 12/10). A auditoria o aponta; regravar o perfil com o SVG
-// e recusado; o ultimo acesso (so o campo escrito num registro que ja existe),
-// os atributos de emissora (outra chave) e o despejo continuam; trocar o
-// avatar pelo nome do arquivo (HSET a mao, o conserto de um volume antigo)
-// esvazia a auditoria; sem avatar (ausente = o padrao de cada tela) tambem
-// vale.
-test('avatar em SVG em linha (volume de antes da G8): auditoria aponta, regravacao recusada, o resto segue', async () => {
+// trocar o avatar pelo nome do arquivo, ou tira-lo, esvazia a auditoria
+test('avatar em SVG em linha, gravado a mao: auditoria aponta, regravacao recusada, o resto segue', async () => {
     await r('SADD', 'users:index', P1);
     await r('HSET', `user:${P1}`, ...plano({ ...PERFIL_MIN, avatar: SVG_EM_LINHA }));
     const achados = await auditoria();
@@ -587,13 +540,10 @@ test('avatar em SVG em linha (volume de antes da G8): auditoria aponta, regravac
     assert.equal(await fcall('tv30_perfil_remove', P1), 3);
 });
 
-// G8: a regra do esquema.json (tipo nomeArquivo, conferida por partes no
-// funcoes.lua) decide igual a expressao do contrato, nos valores de fronteira
-// e em valores gerados. Pega desvio entre o esquema e o contrato que os casos
-// gerados a partir do proprio esquema nao pegam (ex.: extensao tirada da
-// lista, maxNome trocado).
+// pega desvio entre o esquema e a expressao do contrato que os casos gerados do
+// proprio esquema nao pegam (extensao tirada da lista, maxNome trocado)
 const AVATAR_CONTRATO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(svg|png|jpg|jpeg|webp)$/;
-test('avatar (G8): a regra do esquema decide igual a expressao do contrato', async (t) => {
+test('avatar: a regra do esquema decide igual a expressao do contrato', async (t) => {
     const regra = resolve(familia('user:{id}').campos.avatar);
     const corpus = new Set([
         ...violacoes(regra).map(([v]) => v), ...aceitacoes(regra),
@@ -627,9 +577,6 @@ test('avatar (G8): a regra do esquema decide igual a expressao do contrato', asy
     t.diagnostic(`avatar: ${corpus.size} valores, ${aceitos} aceitos pela expressao do contrato e pela funcao`);
 });
 
-// UUID estrito (decisao do Luis em 12/10, esquema versao 3): o id da carga
-// inicial (v4, variante 9) e os do AoP (crypto.randomUUID(): v4, variante da
-// RFC 9562) continuam validos; o nulo e o maximo deixam de ser.
 test('UUID estrito: id da carga e crypto.randomUUID() do AoP aceitos; nulo e maximo recusados', async () => {
     const ids = ['c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10', ...Array.from({ length: 20 }, () => require('crypto').randomUUID())];
     for (const id of ids) {
@@ -676,8 +623,8 @@ test('clientes: autorizar e bloquear trocam o id de conjunto (disjuntos); grava 
     assert.deepEqual(await auditoria(), []);
 });
 
-test('registro existente: campo novo conferido, o resto antigo nao trava (a auditoria mostra)', async () => {
-    // gravado a mao fora do esquema (booleano "False" da carga antiga)
+test('registro existente: campo novo conferido, o resto ja gravado nao trava (a auditoria mostra)', async () => {
+    // booleano "False" gravado a mao, fora do esquema
     await fcall('tv30_perfil_grava', ...perfilArgs(P1, [], PERFIL_MIN));
     await r('HSET', `user:${P1}`, 'parentalControl', 'False');
     assert.equal(await fcall('tv30_perfil_ultimo_acesso', P1, '99'), 1);
@@ -774,8 +721,7 @@ test('auditoria: cada tipo de problema gravado a mao aparece com chave, familia 
         [['HSET', `user:${P1}`, 'parentalControl', 'False'], [`user:${P1}`, 'user:{id}', 'campo parentalControl:']],
         [['HDEL', `user:${P1}`, 'nickname'], [`user:${P1}`, 'user:{id}', 'campo nickname: obrigatorio, ausente']],
         [['HSET', `user:${P1}`, 'extra', '1'], [`user:${P1}`, 'user:{id}', 'campo "extra": nao previsto']],
-        // G8 (Luis, 12/10, esquema versao 4): avatar em SVG em linha, como fica
-        // num volume de antes, e caminho com diretorio
+        // avatar em SVG em linha e caminho com diretorio
         [['HSET', `user:${P1}`, 'avatar', SVG_EM_LINHA], [`user:${P1}`, 'user:{id}', 'campo avatar: SVG em linha nao serve']],
         [['HSET', `user:${P1}`, 'avatar', '../segredo.svg'], [`user:${P1}`, 'user:{id}', 'campo avatar: so o nome do arquivo, sem diretorio']],
         [['HSET', `user:${P1}:broadcaster-attrs:urn:s`, 'vazio', ''], [`user:${P1}:broadcaster-attrs:urn:s`, 'user:{id}:broadcaster-attrs:{scid}', 'campo "vazio": vazio']],
@@ -785,12 +731,11 @@ test('auditoria: cada tipo de problema gravado a mao aparece com chave, familia 
         [['HSET', 'origins:associated', 'http://X.example', 'urn:s'], ['origins:associated', 'origins:associated', 'nome de campo: host deve estar em minusculas']],
         [['RPUSH', 'bind-context:urn:s', '{"alg":"none","key":"k","registeredAt":1}'], ['bind-context:urn:s', 'bind-context:{serviceId}', 'item 1: membro "alg"']],
         [['SET', 'users:index', 'x'], ['users:index', 'users:index', 'no Redis e string, o esquema pede set']],
-        // F-3 (Luis, 11/10): ids no formato antigo, como ficam num volume de antes
-        // (a auditoria os mostra; sem compatibilidade)
+        // ids que nao sao UUID em minusculas
         [['SADD', 'users:index', 'user_1760000000000'], ['users:index', 'users:index', 'membro "user_1760000000000": deve ser UUID no formato da RFC 9562']],
         [['HSET', 'user:c3167a18-5dc5', 'id', 'c3167a18-5dc5'], ['user:c3167a18-5dc5', 'user:{id}', '{id} da chave: deve ser UUID']],
         [['SADD', `user:${P1.toUpperCase()}:consent`, 'urn:s'], [`user:${P1.toUpperCase()}:consent`, 'user:{id}:consent', '{id} da chave: UUID deve estar em minusculas']],
-        // UUID estrito (Luis, 12/10, esquema versao 3): nulo, versao e variante
+        // UUID nulo, versao e variante fora da RFC 9562
         [['SADD', 'users:index', '00000000-0000-0000-0000-000000000000'], ['users:index', 'users:index', 'membro "00000000-0000-0000-0000-000000000000": UUID nulo']],
         [['SADD', `user:${comDigito(P1, UUID_VERSAO, '9')}:consent`, 'urn:s'], [`user:${comDigito(P1, UUID_VERSAO, '9')}:consent`, 'user:{id}:consent', '{id} da chave: versao do UUID deve ser de 1 a 8 (1o digito do 3o grupo; veio 9']],
         [['HSET', `user:${comDigito(P1, UUID_VARIANTE, 'c')}`, 'id', comDigito(P1, UUID_VARIANTE, 'c')], [`user:${comDigito(P1, UUID_VARIANTE, 'c')}`, 'user:{id}', '{id} da chave: variante do UUID deve ser a da RFC 9562 (1o digito do 4o grupo em 8, 9, a ou b; veio c']],

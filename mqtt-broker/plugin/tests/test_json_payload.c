@@ -1,18 +1,13 @@
-// Teste de unidade de json_payload_parse (src/json_payload.c): o validador so
-// aceita payload que seja exatamente um texto JSON, lido inteiro pelo
-// comprimento (correcao de 12/10, defeito achado na revisao do plugin:
-// {"value":1}lixo e {"value":1}\0lixo passavam pela validacao).
+// Teste de json_payload_parse: so passa payload que, lido inteiro pelo
+// comprimento, seja exatamente um texto JSON.
 //
 //   (em infra/mqtt-broker/plugin)
 //   gcc -std=gnu11 -Wall -Wextra -I include tests/test_json_payload.c
 //       src/json_payload.c -ljson-c -o /tmp/test_json_payload
 //   /tmp/test_json_payload [/tmp/casos.tsv]
 //
-// Com o argumento, grava cada caso numa linha do arquivo (payload em
-// hexadecimal, veredito 0/1, 1 se e divergencia conhecida do json-c), para um
-// segundo leitor conferir o veredito contra o json do Python (o Dockerfile
-// faz isso). Sai com 0 se todas as conferencias passam. Roda no build da
-// imagem (infra/Dockerfile).
+// Com o argumento, grava cada caso (payload em hexadecimal, veredito, 1 se e
+// divergencia conhecida do json-c) para o check_json_payload.py conferir.
 #include <json-c/json.h>
 #include <stdio.h>
 #include <stdlib.h>

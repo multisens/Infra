@@ -7,18 +7,9 @@ import (
 	"strings"
 )
 
-// Endereco que a descoberta SSDP divulga (C.3.4). LOCATION e Server-BaseURL
-// (o /manifest, montado pelo tv3ws/src/ssdp-config.ts) tem de sair do mesmo
-// host. Desde o complemento do Joel de 15/10, quem anuncia e este programa,
-// nativo no host, fora do Docker, nos tres sistemas (./tv30 up; ate ali, a
-// borda em rede do host, so Linux nativo, opcao A do Luis de 09/10).
-//
-// B2 revista pelo Joel em 15/10: o host e DETECTADO — o IPv4 da interface por
-// onde o anuncio sai (iface.go), e acompanha a troca de rede (main.go). O
-// SSDP_ADVERTISE_HOST deixou de ser obrigatorio e fica como sobreposicao:
-// definido, vale ele, fixo. Definido sem host ("http://:44642") continua erro
-// de configuracao. De 11/10 a 15/10 (B2 do Luis) ele era obrigatorio. O
-// /manifest do tv3ws tem de sair com o mesmo host (complemento do Joel, 3.4).
+// Endereco que a descoberta SSDP divulga (C.3.4): LOCATION e Server-BaseURL (o
+// /manifest do tv3ws) tem de sair do mesmo host. O host e o IPv4 da interface
+// do anuncio (iface.go); SSDP_ADVERTISE_HOST, se definido, o fixa.
 
 const (
 	ssdpST              = "urn:schemas-sbtvd-org:service:TV3.0WebServices:1"
@@ -28,7 +19,7 @@ const (
 )
 
 type endpoint struct {
-	Host      string // de SSDP_ADVERTISE_HOST; "" = detectado (B2 revista)
+	Host      string // de SSDP_ADVERTISE_HOST; "" = detectado
 	HTTPPort  int
 	HTTPSPort int
 }
@@ -69,8 +60,8 @@ func parsePort(name, raw string, fallback int) (int, error) {
 }
 
 // resolveEndpoint: <host> = SSDP_ADVERTISE_HOST, se definido; vazio ou ausente
-// = detectado a cada sessao (B2 revista). Conferido uma vez, na partida: erro
-// aqui e de configuracao.
+// = detectado a cada sessao. Conferido uma vez, na partida: erro aqui e de
+// configuracao.
 func resolveEndpoint(getenv func(string) string) (endpoint, error) {
 	httpPort, err := parsePort("EDGE_HTTP_PORT", getenv("EDGE_HTTP_PORT"), defaultEdgeHTTPPort)
 	if err != nil {
@@ -103,8 +94,7 @@ func isLoopbackHost(host string) bool {
 		h == "::1" || h == "0:0:0:0:0:0:0:1"
 }
 
-// warnings: o que sera anunciado e merece aviso no boot (D9: nada em
-// silencio). Nao mudam o anuncio.
+// warnings: o que sera anunciado e merece aviso no boot. Nao mudam o anuncio.
 func warnings(e endpoint) []string {
 	var out []string
 	if e.Host != "" && isLoopbackHost(e.Host) {
@@ -117,6 +107,5 @@ func warnings(e endpoint) []string {
 		out = append(out, fmt.Sprintf("EDGE_HTTP_PORT=%d: a C.3.4 fixa %d no Server-BaseURL; "+
 			"o anuncio fica fora da norma (use so para teste).", e.HTTPPort, defaultEdgeHTTPPort))
 	}
-	// a 44643 tem TLS desde a A7 (Joel, 15/10): o aviso de porta sem TLS saiu
 	return out
 }

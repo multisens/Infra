@@ -1,14 +1,7 @@
 #!/usr/bin/env python3
-# Segundo leitor do teste de unidade de json_payload_parse (correcao de 12/10,
-# revisao do plugin): confere, caso a caso, o veredito do plugin contra o json
-# do Python, independente do json-c. Le o arquivo que
-# tests/test_json_payload.c grava (payload em hexadecimal, veredito 0/1,
-# divergencia conhecida 0/1). O json.loads do Python segue a RFC 8259 no que
-# importa aqui: so espaco, tab, LF e CR em volta do valor, nada depois dele,
-# controle cru dentro de string recusado, texto em UTF-8; NaN e Infinity sao
-# recusados com parse_constant. Caso marcado como divergencia conhecida (o
-# json-c 0.15 estrito aceita, json_payload.h registra) tem de ser recusado
-# pelo Python; os demais, o mesmo veredito. Roda no build (infra/Dockerfile).
+# Segundo leitor de tests/test_json_payload.c: confere cada veredito do plugin
+# contra o json do Python (RFC 8259; NaN e Infinity recusados por parse_constant).
+# Divergencia conhecida do json-c tem de ser recusada pelo Python; o resto, mesmo veredito.
 #
 #   python3 check_json_payload.py /tmp/casos.tsv
 import json

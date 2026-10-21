@@ -11,15 +11,10 @@ import (
 	"testing"
 )
 
-// P4 (decisao do Luis em 10/10, "Funcoes + auditoria"): teste ESTATICO — a
-// borda so grava no Redis por FCALL das funcoes da biblioteca tv30
-// (tv30_bind_registra, tv30_bind_remove; redis.go), que conferem o esquema
-// (infra/redis/esquema.json). Falha se o codigo (sem os _test.go) tiver
-// algum texto que seja nome de comando de escrita do Redis — RPUSH, LREM,
-// SET, HSET, DEL, EVAL, MULTI... Roda no build da imagem (Dockerfile), sem o
-// resto do repositorio; a mesma regra roda em infra/redis/test/escritas.js,
-// que tambem confere as funcoes chamadas contra o esquema.json.
-// Mesma lista de infra/redis/test/escritas.js (COMANDOS_ESCRITA).
+// Teste estatico: a borda so grava no Redis por FCALL das funcoes tv30, que
+// conferem o esquema. Falha se o codigo (sem os _test.go) tiver um texto que
+// seja nome de comando de escrita. Mesma lista de infra/redis/test/escritas.js,
+// repetida porque este roda no build da imagem, sem o resto do repositorio.
 var comandosEscrita = strings.Fields(`APPEND BITFIELD BITOP BLMOVE BLMPOP BLPOP BRPOP BRPOPLPUSH BZMPOP BZPOPMAX BZPOPMIN
  COPY DECR DECRBY DEL EVAL EVALSHA EVAL_RO EVALSHA_RO EXEC EXPIRE EXPIREAT FLUSHALL FLUSHDB FUNCTION GEOADD
  GETDEL GETEX GETSET HDEL HEXPIRE HINCRBY HINCRBYFLOAT HMSET HPERSIST HPEXPIRE HSET HSETNX INCR INCRBY

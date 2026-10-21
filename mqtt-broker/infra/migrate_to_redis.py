@@ -1,20 +1,13 @@
 #!/usr/bin/env python3
 """
 Migração de dados de arquivo para Redis — TV 3.0
-Popula as chaves Redis conforme o schema definido na estratégia de persistência:
+Grava, por FCALL tv30_perfil_grava (que confere o esquema), as chaves:
   - users:index                               SET  — todos os IDs de usuário
   - user:{userId}                             HASH — atributos do perfil (ABNT NBR 25608)
-  - user:{userId}:consent                     SET  — IDs de serviço com consentimento
+  - user:{userId}:consent                     SET  — serviços para os quais o perfil é visível
 
-Não roda sozinho: fica embarcado na imagem do broker só para depuração manual
-(mqtt-broker/infra/entrypoint.sh). A carga inicial de verdade é do container
-redis (infra/redis/emit_seed.py, que reaproveita normalize_user e
-perfil_fcall_args daqui).
-
-P4 (decisão do Luis em 10/10, "Funções + auditoria"): a escrita passa pela
-função tv30_perfil_grava da biblioteca de funções do Redis (infra/redis), que
-confere o esquema (infra/redis/esquema.json) e grava as três chaves juntas.
-Perfil fora do esquema é recusado com erro TV30ESQUEMA e nada é gravado.
+Embarcado na imagem do broker só para depuração manual; a carga inicial é a do
+container redis (emit_seed.py reaproveita normalize_user e perfil_fcall_args).
 """
 
 import json
@@ -42,21 +35,17 @@ def normalize_user(user: dict) -> dict:
     """
     result = {}
 
-    # Primeiro passo: converte campos legados
     for old_key, new_key in FIELD_MAP.items():
         if old_key in user and new_key not in user:
             result[new_key] = user[old_key]
 
-    # Segundo passo: aplica campos nativos (sobrescrevem legados)
     for key, val in user.items():
         if key in EXCLUDED_FIELDS:
             continue
-        # Mantém o nome original se não há mapeamento ou se é um campo novo
         target_key = key if key not in FIELD_MAP else FIELD_MAP[key]
         if target_key not in result or key == target_key:
             result[target_key] = val
 
-    # Garante que o id está no hash
     if 'id' in user:
         result['id'] = user['id']
 
@@ -65,8 +54,7 @@ def normalize_user(user: dict) -> dict:
 
 def redis_text(v) -> str:
     """Valor como texto no Redis. Booleano do JSON vira 'true'/'false', como o
-    AoP grava e o esquema exige; o str() do Python daria 'True'/'False' (era o
-    que a carga gravava até o P4)."""
+    AoP grava e o esquema exige; o str() do Python daria 'True'/'False'."""
     if isinstance(v, bool):
         return 'true' if v else 'false'
     return str(v)
@@ -76,9 +64,9 @@ def perfil_fcall_args(user: dict):
     """Argumentos de FCALL tv30_perfil_grava para um perfil do userData.json, ou
     None se o perfil não tem id. Formato da função (infra/redis/esquema.json):
       FCALL tv30_perfil_grava 0 <id> <n> <serviço 1..n> <campo> <valor> ...
-    Semântica igual à da carga antiga: users:index recebe o id, user:{id} é
-    regravado inteiro e a visibilidade (accessConsent) é ACRESCENTADA a
-    user:{id}:consent (sem apagar a concedida fora do JSON)."""
+    users:index recebe o id, user:{id} é regravado inteiro e a visibilidade
+    (accessConsent) é ACRESCENTADA a user:{id}:consent (sem apagar a concedida
+    fora do JSON)."""
     user_id = user.get('id')
     if not user_id:
         return None
@@ -89,7 +77,6 @@ def perfil_fcall_args(user: dict):
 
 
 def migrate(r, user_data_path: str) -> None:
-    # --------------------------------------------------------------- Users --
     with open(user_data_path, 'r') as f:
         raw = json.load(f)
 

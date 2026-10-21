@@ -2,8 +2,8 @@ package main
 
 import "testing"
 
-// C.6.7.8 (Tabela C.45) e C.6.7.9 (Tabela C.46), respondidas pela borda a
-// partir do catalogo "apis" (testExtra: 6 APIs, todas tv3ws, versao 2.0).
+// C.6.7.8 (Tabela C.47) e C.6.7.9 (Tabela C.48), a partir do catalogo "apis"
+// (testExtra: 6 APIs, todas tv3ws, versao 2.0).
 
 func apiGet(t *testing.T, h *authHandler, path string, hdr map[string]string) edgeResp {
 	if hdr == nil {
@@ -26,7 +26,7 @@ func TestAPIInfo(t *testing.T) {
 		`{"receiverApi":{"id":"tv3ws-current-service","version":"2.0"}}`)
 	wantOK(t, "a propria api-info", apiGet(t, h, "/tv3/api-info/tv3ws-api-info", nil),
 		`{"receiverApi":{"id":"tv3ws-api-info","version":"2.0"}}`)
-	// id da Tabela C.2 que o testbed nao implementa: 101 (provisorio)
+	// id da Tabela C.2 que o testbed nao implementa: 101
 	wantErr(t, "id da Tabela C.2 nao implementado", apiGet(t, h, "/tv3/api-info/tv3ws-geolocation-info", nil), 101)
 	wantErr(t, "id inventado", apiGet(t, h, "/tv3/api-info/nao-existe", nil), 101)
 	wantErr(t, "id com caixa trocada", apiGet(t, h, "/tv3/api-info/TV3WS-CURRENT-SERVICE", nil), 101)
@@ -69,9 +69,9 @@ func TestAPIInfoPolitica(t *testing.T) {
 				t.Errorf("%s %s: status %d %s", p, name, r.status, r.body)
 			}
 		}
-		// o nao local: 106 na superficie HTTP (E7, C.4.1.6); na externa, passa
+		// o nao local: 106 na superficie HTTP (C.4.1.6); na externa, passa
 		nl := map[string]string{"Authorization": accessFor(t, "cli-2", classNonLocal)}
-		wantErr(t, p+" token de nao local na interna (E7)", apiGet(t, h, p, nl), 106)
+		wantErr(t, p+" token de nao local na interna", apiGet(t, h, p, nl), 106)
 		if r := apiGet(t, externalHandler(t, modeEnforce, baseStore(), nil), p, nl); r.status != 200 {
 			t.Errorf("%s token de nao local na externa: status %d %s", p, r.status, r.body)
 		}

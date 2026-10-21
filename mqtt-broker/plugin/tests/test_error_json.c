@@ -1,24 +1,11 @@
-// Teste de unidade de error_json_build (src/error_json.c): a mensagem de
-// errors/<client_id> sai sempre como JSON valido (correcao de 12/10, defeito
-// achado pela auditoria da documentacao). Secoes 8 e 9 (correcoes de 12/10
-// da revisao do plugin): o topico errors/<client_id> (error_json_topic) e o
-// escape avulso de string JSON (error_json_string).
+// Teste de error_json.c: mensagem de errors/<client_id> (1 a 7), topico (8) e
+// error_json_string (9). Cada mensagem passa pelo json-c estrito, por uma
+// varredura propria (sem controle cru, UTF-8 valido) e pela comparacao campo a campo.
 //
 //   (em infra/mqtt-broker/plugin)
 //   gcc -std=gnu11 -Wall -Wextra -I include tests/test_error_json.c
 //       src/error_json.c -ljson-c -o /tmp/test_error_json
-//   /tmp/test_error_json [/tmp/mensagens.jsonl]
-//
-// Com o argumento, grava cada mensagem gerada numa linha do arquivo, para um
-// segundo leitor conferir (o Dockerfile passa o arquivo ao json do Python).
-// Sai com 0 se todas as conferencias passam. Roda no build da imagem
-// (infra/Dockerfile): escape quebrado nao vira imagem.
-//
-// Cada mensagem passa por tres conferencias: (1) o leitor do json-c em modo
-// estrito e com validacao de UTF-8, consumindo a mensagem inteira; (2) uma
-// varredura propria, independente do codigo testado: nenhum byte abaixo de
-// 0x20, UTF-8 valido, sem NUL no meio, tamanho menor que a capacidade; (3) o
-// valor decodificado de cada campo, comparado com o esperado.
+//   /tmp/test_error_json [/tmp/mensagens.jsonl]   (uma mensagem por linha, para o json do Python)
 #include <json-c/json.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -124,7 +111,7 @@ static int build(size_t cap, const char *topic, const char *type, const char *de
     return error_json_build(buf, cap, TS, topic, type, details, client, payload, plen);
 }
 
-// 1. Formato inalterado para texto simples (o que o publish_error ja gerava)
+// 1. Formato com texto simples
 static void t_formato(void) {
     int len = build(ERROR_JSON_CAP, "sensor/room1/temperature", "INVALID_JSON",
                     "Payload is not valid JSON", "cli", "abc", 3);
@@ -341,9 +328,8 @@ static void t_capacidades(void) {
     }
 }
 
-// 8. Topico errors/<client_id> (correcao de 12/10, revisao do plugin): +, #,
-// / e controles viram _, byte invalido vira _, corte so entre caracteres
-// inteiros, no maximo 255 bytes.
+// 8. Topico errors/<client_id>: +, #, / e controles viram _, byte invalido vira
+// _, corte so entre caracteres inteiros, no maximo 255 bytes.
 static char tbuf[ERROR_JSON_TOPIC_CAP + 64];
 
 // Nome de topico MQTT valido, conferido aqui de novo como o mosquitto faz
@@ -439,8 +425,7 @@ static void t_topico(void) {
     }
 }
 
-// 9. error_json_string: escape avulso de string JSON, sem corte (o id do
-// response_time_tester.c, correcao de 12/10, revisao do plugin)
+// 9. error_json_string: escape de string JSON, sem corte (o id do response_time_tester.c)
 static void expect_string(const char *s, size_t n, const char *want, const char *caso) {
     char out[256];
     memset(out, 'Z', sizeof(out));

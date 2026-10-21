@@ -67,7 +67,7 @@ func TestMatchNaoDeclarado(t *testing.T) {
 	tb := testTable(t)
 	cases := [][2]string{
 		{"GET", "/tv3/abc"},                    // panic do Gin em KNOWN-ISSUES
-		{"POST", "/tv3/users"},                 // rota que saiu (item 24)
+		{"POST", "/tv3/users"},                 // fora da tabela
 		{"DELETE", "/health"},                  // metodo nao declarado
 		{"GET", "/"},                           // raiz
 		{"GET", "/tv3/current-service/users/"}, // so a barra: nao eh {userid} vazio

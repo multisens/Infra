@@ -18,10 +18,7 @@ import (
 	"time"
 )
 
-// Testes das APIs C.6.8 respondidas pela borda. Os casos vem dos testes do
-// tv3ws que implementava a API antes da reuniao de 05/10
-// (test/broadcaster-security.test.ts e a parte de registro de
-// test/bind-token.test.ts), passando pelo ServeHTTP inteiro do plugin.
+// Testes das APIs C.6.8 respondidas pela borda, pelo ServeHTTP inteiro.
 
 const tSvcB = "urn:tv30:service:b"
 
@@ -141,11 +138,10 @@ func regBody(alg, key string) string {
 	return string(b)
 }
 
-// A6 (Joel, 15/10): o serviceContextId devolvido e o globalServiceId do
-// servico corrente (tSvc nos testes); ate 15/10, a constante do tv3ws
+// o serviceContextId devolvido e o globalServiceId do servico corrente
 var okRegister = `{"serviceContextId":"` + tSvc + `"}`
 
-// C.6.8.2 (Tabela C.47): 101 corpo fora do formato / alg nao suportado /
+// C.6.8.2 (Tabela C.49): 101 corpo fora do formato / alg nao suportado /
 // chave incompativel; 105 falta alg ou key num objeto JSON. Nada eh gravado.
 func TestRegistroCorpoInvalido(t *testing.T) {
 	ec, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -190,7 +186,7 @@ func TestRegistroCorpoInvalido(t *testing.T) {
 	if len(st.keys) != 0 {
 		t.Fatalf("corpo invalido gravou algo: %v", st.keys)
 	}
-	// detalhe do 105, como no tv3ws
+	// detalhe do 105
 	r := postBind(t, h, `{}`)
 	if d, _ := r.json["description"].(string); d != "Missing argument: alg, key" {
 		t.Errorf("description do 105: %q", d)
@@ -303,9 +299,7 @@ func TestRegistroClasseEVersao(t *testing.T) {
 		t.Errorf("sem Accept-Version: API-Version %q, esperado 2.0", v)
 	}
 
-	// warn: desde 15/10 (Joel) o 106 dispara nos dois modos — o nao associado
-	// nao registra chave nem em warn (ate entao so levava o aviso, e a borda
-	// executava a API)
+	// o 106 sai nos dois modos: o nao associado nao registra chave nem em warn
 	st = edgeStore()
 	h = newTestHandler(t, modeWarn, st, nil)
 	r = edgeCall(t, h, "POST", "/tv3/bind-context", map[string]string{"Content-Type": "application/json"}, regBody("HS256", "s"))
@@ -318,7 +312,7 @@ func TestRegistroClasseEVersao(t *testing.T) {
 	}
 }
 
-// --- C.6.8.3 (Tabela C.48) --------------------------------------------------
+// --- C.6.8.3 (Tabela C.50) --------------------------------------------------
 
 func bindGet(t *testing.T, h *authHandler, bindToken string) edgeResp {
 	hd := map[string]string{"Authorization": accessFor(t, "cli-1", classAutonomous)}
@@ -374,7 +368,7 @@ func TestBindListServicos(t *testing.T) {
 	rsTok := signJWT(t, "RS256", testRSA512(t), timeClaims(t0.Add(-5*time.Second), t0.Add(-5*time.Second), t0.Add(10*time.Minute)))
 	// corrente = b: nome e id (serviceId volta a inteiro, Tabela C.8)
 	wantOK(t, "token de b", bindGet(t, h, rsTok), `{"boundServices":[{"serviceContextId":"`+tSvcB+`","serviceName":"Canal B","serviceId":9}]}`)
-	// a nao eh o corrente: so o serviceContextId, o globalServiceId dele (A6)
+	// a nao eh o corrente: so o serviceContextId, o globalServiceId dele
 	wantOK(t, "token de a", bindGet(t, h, hsTok(t, "segredo-a", nil)), `{"boundServices":[{"serviceContextId":"`+tSvc+`"}]}`)
 
 	// serviceId nao numerico e nome vazio sao omitidos
@@ -403,16 +397,16 @@ func TestBindListPolitica(t *testing.T) {
 	if r.status != 200 {
 		t.Errorf("autonomo: status %d %s", r.status, r.body)
 	}
-	// nao local: 106 na superficie HTTP (E7); na externa, passa
+	// nao local: 106 na superficie HTTP; na externa, passa
 	nonLocal := accessFor(t, "cli-2", classNonLocal)
-	wantErr(t, "nao local na interna (E7)", edgeCall(t, h, "GET", "/tv3/bind-context", map[string]string{"Authorization": nonLocal, "bind-token": tok}, ""), 106)
+	wantErr(t, "nao local na interna", edgeCall(t, h, "GET", "/tv3/bind-context", map[string]string{"Authorization": nonLocal, "bind-token": tok}, ""), 106)
 	r = edgeCall(t, externalHandler(t, modeEnforce, twoServices(t), nil), "GET", "/tv3/bind-context", map[string]string{"Authorization": nonLocal, "bind-token": tok}, "")
 	if r.status != 200 {
 		t.Errorf("nao local na externa: status %d %s", r.status, r.body)
 	}
 }
 
-// --- C.6.8.4 (Tabela C.49) --------------------------------------------------
+// --- C.6.8.4 (Tabela C.51) --------------------------------------------------
 
 func bindDelete(t *testing.T, h *authHandler, key string) edgeResp {
 	hd := map[string]string{"Origin": tAssoc}
@@ -473,17 +467,15 @@ func TestBindRedisFora(t *testing.T) {
 		h := newTestHandler(t, mode, st, nil)
 		tok := hsTok(t, "segredo-a", nil)
 		st.err = errorString("dial tcp: connection refused")
-		// associado reconhecido pelo Origin tambem consulta o Redis: em
-		// enforce o 200 sai da decisao; em warn, da API
+		// o associado reconhecido pelo Origin tambem consulta o Redis
 		wantErr(t, mode+" POST", postBind(t, h, regBody("HS256", "s")), 200)
 		wantErr(t, mode+" GET", bindGet(t, h, tok), 200)
 		wantErr(t, mode+" DELETE", bindDelete(t, h, "s"), 200)
 	}
 }
 
-// P4 (Luis, 10/10): a funcao do Redis recusa a entrada (esquema) -> 404
-// {error:200} com o motivo no description (defeito da borda, nao "redis
-// indisponivel"), nos dois modos e nas duas escritas.
+// A funcao do Redis recusa a entrada (esquema): 404 {error:200} com o motivo
+// no description (nao "redis indisponivel"), nos dois modos e nas duas escritas.
 func TestBindRecusaDoEsquema(t *testing.T) {
 	msg := `TV30ESQUEMA tv30_bind_registra: bind-context:` + tSvc + ` entrada: membro "alg": deve ser um de HS256, HS512, RS256, RS512 (veio "none")`
 	for _, mode := range []string{modeEnforce, modeWarn} {
@@ -572,7 +564,7 @@ func TestC68ComClienteRedis(t *testing.T) {
 		f.strs[keyCurrentService] = tSvc
 		f.hashes[keyAssociated] = map[string]string{tAssoc: tSvc}
 		f.hashes[keyCurrentSvcHash] = map[string]string{"serviceName": "Canal A", "serviceId": "7"}
-		// E6 (Luis, 11/10): os clientes dos tokens do teste estao autorizados
+		// os clientes dos tokens do teste estao em clients:authorized
 		f.sets[keyAuthorized] = map[string]bool{"cli-1": true, "cli-2": true, "cli-3": true}
 	})
 	h := newTestHandler(t, modeEnforce, nil, nil)

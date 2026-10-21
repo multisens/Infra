@@ -1,28 +1,12 @@
-// Verificador ESTATICO das escritas no Redis (P4, decisao do Luis em 10/10:
-// "Funcoes + auditoria"). Garante que o codigo dos servicos nao grava direto
-// numa familia do alcance: toda escrita tem de sair pelo ADAPTADOR das
-// funcoes (tv3ws/src/redis-funcoes.ts, aop/src/redis-funcoes.js, FCALL no
-// plugin da borda e na carga inicial).
+// Verificador estatico: fora do adaptador das funcoes, nenhum codigo de servico
+// grava direto numa familia do alcance. Usado por escritas.test.js e pelos testes
+// de escrita do tv3ws e do aop. Tokenizador proprio, sem dependencia.
 //
-// Quem usa: infra/redis/test/escritas.test.js (todos os modulos de uma vez) e
-// os testes de cada modulo (tv3ws/test/redis-escritas.test.ts,
-// aop/test/redis-escritas.test.js), que rodam no npm test deles.
-//
-// Como decide (sem dependencia: tokenizador proprio, que ignora comentarios e
-// separa textos):
-// - JS/TS: acha o identificador do cliente Redis (import/require de
-//   .../redis-client) e as variaveis que guardam redis.pipeline()/multi();
-//   em cada cadeia redis.x(...).y(...) olha o nome dos metodos. Metodo de
-//   escrita (set, hset, sadd, del, ..., eval, multi, call, sendCommand) fora
-//   do adaptador e violacao. No adaptador, so call('FCALL'|'FCALL_RO', ...) e
-//   so com nome de funcao declarado no esquema.json. Arquivo com escrita
-//   direta PERMITIDA (familia fora do alcance, ver foraDoAlcance no
-//   esquema.json) nao pode citar chave do alcance em texto nenhum.
-//   "new Redis(" so no proprio redis-client (um segundo cliente furaria o
-//   adaptador).
-// - Go e Python: nenhum texto do codigo pode ser o nome de um comando de
-//   escrita do Redis (o unico comando que grava e FCALL); em Python, nenhum
-//   metodo de escrita do redis-py (sadd, hset, delete, ...) e chamado.
+// JS/TS: metodo de escrita do cliente Redis fora do adaptador e violacao; no
+// adaptador, so call('FCALL'|'FCALL_RO') com funcao do esquema.json. "new Redis("
+// so no redis-client (um segundo cliente furaria o adaptador). Go e Python:
+// nenhum texto do codigo e comando de escrita do Redis (nem, em Python, metodo
+// de escrita do redis-py).
 'use strict';
 const fs = require('fs');
 const path = require('path');

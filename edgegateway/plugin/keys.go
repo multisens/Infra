@@ -13,8 +13,8 @@ import (
 	"unicode"
 )
 
-// Codificacao da chave registrada pela emissora (C.6.8.2). A norma eh
-// SILENTE sobre o formato; decisao de implementacao do testbed:
+// Codificacao da chave registrada pela emissora (C.6.8.2). A norma nao define
+// o formato; o testbed aceita:
 //   - HS256/HS512: a chave eh o segredo, bytes UTF-8 da string recebida;
 //   - RS256/RS512: PEM (PUBLIC KEY, RSA PUBLIC KEY, RSA PRIVATE KEY, PRIVATE
 //     KEY) ou base64 de DER (SPKI ou PKCS#1 publico). Chave PRIVADA (PKCS#1/
@@ -33,13 +33,8 @@ func parseKeyMaterial(alg, key string) (interface{}, error) {
 	return nil, fmt.Errorf("alg %q nao suportado", alg)
 }
 
-// Rotulos PEM aceitos. Desde a reuniao de 05/10 (D-0510-2) o registro
-// (C.6.8.2, bindcontext.go) e a validacao do bind-token usam ESTA mesma
-// funcao — PEM so com o texto comecando por "-----BEGIN" e um destes rotulos;
-// base64 nas quatro codificacoes de decodeBase64Any —, entao o registro nao
-// aceita chave que a validacao nao le. Antes, o registro ficava no tv3ws
-// (broadcaster-security/bind-token.ts) com regras copiadas destas; os casos
-// de testdata/keyformats.json vem desse teste cruzado.
+// Rotulos PEM aceitos. O registro (C.6.8.2) e a validacao do bind-token usam
+// esta mesma funcao: o registro nao aceita chave que a validacao nao le.
 var pemLabels = map[string]bool{"PUBLIC KEY": true, "RSA PUBLIC KEY": true, "RSA PRIVATE KEY": true, "PRIVATE KEY": true}
 
 func parseRSAPublicKey(s string) (*rsa.PublicKey, error) {

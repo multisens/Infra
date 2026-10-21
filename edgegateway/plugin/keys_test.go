@@ -85,10 +85,8 @@ func TestChavesInvalidas(t *testing.T) {
 	}
 }
 
-// Casos de testdata/keyformats.json. Nasceram como teste cruzado com o tv3ws,
-// que registrava as chaves (C.6.8.2) ate a reuniao de 05/10; desde entao o
-// registro (bindcontext.go) e a validacao usam este mesmo parser, e os casos
-// seguem como regressao.
+// Casos de testdata/keyformats.json: regressao do parser usado no registro
+// (C.6.8.2) e na validacao do bind-token.
 func TestFormatosDeChaveDoFixture(t *testing.T) {
 	raw, err := os.ReadFile("testdata/keyformats.json")
 	if err != nil {

@@ -1,15 +1,6 @@
-// CONTRATO entre os adaptadores de verdade e as funcoes do Redis (P4, decisao
-// do Luis em 10/10). Os dubles dos testes de unidade (tv3ws e aop) imitam so
-// o EFEITO das funcoes; aqui o codigo dos servicos fala com um Redis REAL com
-// a biblioteca tv30 carregada: prova que o formato que cada servico grava
-// passa no esquema (inclusive o que o gestor de perfis monta a partir do
-// formulario), que dado fora do esquema volta como erro TV30ESQUEMA e que, no
-// fim, a auditoria esta vazia.
-//
-// Rode por: bash infra/redis/test/run.sh contrato (Redis descartavel +
-// node:20-alpine com o TV30 montado; usa tv3ws/node_modules e
-// aop/node_modules). O contrato do plugin Go roda em seguida, no mesmo Redis
-// (edgegateway/plugin/contrato_test.go).
+// Contrato: os adaptadores reais do tv3ws e do aop contra as funcoes num Redis
+// real (os dubles dos testes de unidade imitam so o efeito). O que cada servico
+// grava passa no esquema e dado fora dele volta TV30ESQUEMA. Rode por run.sh contrato.
 'use strict';
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -22,17 +13,14 @@ const TV30 = path.join(__dirname, '..', '..', '..');
 const TV3WS = path.join(TV30, 'tv3ws');
 const AOP = path.join(TV30, 'aop');
 
-// G8 (decisao do Luis em 12/10, esquema versao 4): o AoP grava o avatar do
-// perfil criado em <USER_DATA_PATH>/thumbs/<id>.svg, guarda no campo avatar so
-// o nome do arquivo. O TV30 esta montado so
-// para leitura no container do teste: aqui o diretorio de dados do AoP e um
-// temporario, com o thumbs/ que o userfiles-seed cria na stack. Definido
-// ANTES de carregar o AoP (vale se ele le o ambiente na carga ou na chamada).
+// O AoP grava o avatar em <USER_DATA_PATH>/thumbs/<id>.svg. O TV30 esta montado
+// so para leitura, entao aqui o USER_DATA_PATH e um temporario, definido antes
+// de carregar o AoP (vale se ele le o ambiente na carga ou na chamada).
 const USER_DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'tv30-contrato-'));
 const THUMBS = path.join(USER_DATA, 'thumbs');
 fs.mkdirSync(THUMBS);
 process.env.USER_DATA_PATH = USER_DATA;
-// formato do contrato da G8 (o mesmo do tipo nomeArquivo de esquema.json)
+// o mesmo formato do tipo nomeArquivo do esquema.json
 const AVATAR_FORMATO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(svg|png|jpg|jpeg|webp)$/;
 // um SVG da paleta do formulario do AoP (aop/src/modules/profile-manager/
 // avatar.js, cor Azul), como a tela de criacao o manda
@@ -100,7 +88,7 @@ test('tv3ws: auth-manager de verdade (autorizar, emitir e rotacionar, bloquear, 
     assert.deepEqual(await r('SMEMBERS', 'clients:blocked'), ['cliente-recusado']);
     await auth.AuthorizeClient('cliente-associado', 'local-associated');
     await auth.AuthorizeClient('cliente-nao-local', 'non-local');
-    // registro anterior ao conjunto (gravado a mao, como a base antiga)
+    // registro fora de clients:authorized, gravado a mao (o backfill o inclui)
     await r('HSET', 'client:legado', 'class', 'local-autonomous', 'refreshToken', 'rt');
     assert.equal(await auth.backfillAuthorizedClients(), 1);
     assert.deepEqual(await auditoria(), []);
@@ -109,22 +97,18 @@ test('tv3ws: auth-manager de verdade (autorizar, emitir e rotacionar, bloquear, 
     assert.equal(await r('SISMEMBER', 'clients:authorized', 'c-x'), 0);
 });
 
-test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ultimo acesso; sexto recusado; remocao (E4)', async () => {
+test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ultimo acesso; sexto recusado; remocao', async () => {
     await tv.sessaoServicoId('urn:tv30:service:users-test');
     const bodies = [
         { nickname: 'Viewer 1' },
-        // com o avatar escolhido no formulario (G8)
+        // com o avatar escolhido no formulario
         { nickname: 'é'.repeat(20), parentalControl: true, maxContentRating: 'L', audioLanguage: 'en', userInterfaceLanguage: 'pt-BR', avatar: SVG_AZUL },
         { nickname: 'Libras', closedSigning: true, closedSigningSide: 'left', closedSigningWidth: '14' },
         { nickname: 'Legenda', closedCaptioning: true, closedCaptioningLanguage: 'es-419', audioDescription: true, dialogEnhancement: 'on', voiceGuidance: 1 },
         { nickname: 'Visivel', accessConsent: ['urn:tv30:service:webmedia', 'urn:tv30:service:uff'] },
     ];
     const ids = [];
-    // F-3 (decisao do Luis em 11/10): o AoP gera o id do perfil com
-    // crypto.randomUUID(); o esquema exige UUID em minusculas (RFC 9562).
-    // UUID estrito (decisao do Luis em 12/10, esquema versao 3): versao de 1
-    // a 8 e variante 8, 9, a ou b; o randomUUID gera a versao 4 com a
-    // variante da RFC 9562, e e isso que se confere aqui.
+    // o AoP gera o id com crypto.randomUUID(): versao 4, variante da RFC 9562
     const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
     for (const b of bodies) {
         const { user } = await profiles.createProfile(b);
@@ -134,10 +118,8 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
     assert.equal(new Set(ids).size, 5);
     assert.equal(await r('SCARD', 'users:index'), 5);
     assert.deepEqual(await auditoria(), [], 'perfis montados pelo AoP cumprem o esquema');
-    // G8: avatar = <id>.svg, com o arquivo no diretorio de miniaturas; o SVG
-    // do formulario e o conteudo do arquivo. Sem avatar no formulario, o
-    // contrato admite o campo ausente (o avatar padrao de cada tela) ou o
-    // arquivo do padrao.
+    // avatar = <id>.svg, com o SVG do formulario no arquivo; sem avatar no
+    // formulario, o campo pode faltar (o avatar padrao de cada tela)
     for (const [i, id] of ids.entries()) {
         const av = await r('HGET', `user:${id}`, 'avatar');
         if (av === null && !bodies[i].avatar) continue;
@@ -152,16 +134,14 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
     // atributo de emissora no perfil que sera removido abaixo (o tv3ws grava)
     assert.equal(await tv.atributosEmissora(ids[0], 'urn:tv30:service:users-test', { cor: 'azul' }), 1);
     await assert.rejects(tv.atributosEmissora(ids[0], 'urn:tv30:service:users-test', { nickname: 'x' }), esquema);
-    // UUID valido fora de users:index (invariante perfil-dependentes) e id no
-    // formato antigo (fora do esquema)
+    // UUID valido fora de users:index (invariante perfil-dependentes) e id que
+    // nao e UUID
     await assert.rejects(tv.atributosEmissora('9d1e2f3a-4b5c-4d6e-8f70-81a2b3c4d5e6', 'urn:s', { cor: 'azul' }), { message: /perfil-dependentes/ });
     await assert.rejects(tv.atributosEmissora('user_1760000000000', 'urn:s', { cor: 'azul' }), { message: /^TV30ESQUEMA .*RFC 9562/ });
-    // UUID estrito (12/10): o nulo e a versao fora de 1 a 8 voltam ao
-    // servico como erro TV30ESQUEMA, com a parte que falhou
+    // o UUID nulo e a versao fora de 1 a 8 voltam como TV30ESQUEMA, com a parte que falhou
     await assert.rejects(tv.atributosEmissora('00000000-0000-0000-0000-000000000000', 'urn:s', { cor: 'azul' }), { message: /^TV30ESQUEMA .*UUID nulo/ });
     await assert.rejects(tv.atributosEmissora('9d1e2f3a-4b5c-9d6e-8f70-81a2b3c4d5e6', 'urn:s', { cor: 'azul' }), { message: /^TV30ESQUEMA .*versao do UUID deve ser de 1 a 8/ });
-    // sexto perfil: recusado, sem despejo nem arquivo novo (Joel, 15/10; ate
-    // 15/10, P3, despejava o de ultimo acesso mais antigo)
+    // sexto perfil: recusado, sem despejo nem arquivo novo
     const thumbsAntes = fs.readdirSync(THUMBS).sort();
     await assert.rejects(profiles.createProfile({ nickname: 'Sexto' }), err => err instanceof profiles.ValidationError);
     assert.equal(await r('SCARD', 'users:index'), 5);
@@ -174,9 +154,8 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
         if (av !== null) vivos.push(av);
     }
     assert.deepEqual(fs.readdirSync(THUMBS).sort(), vivos.sort(), 'arquivos de thumbs/ = avatares dos perfis existentes');
-    // E4 (Joel, 15/10): a remocao do perfil, pelo adaptador do AoP, leva os
-    // atributos de emissora na mesma funcao (tv30_perfil_remove). A remocao
-    // pelo telespectador ainda nao existe; o adaptador e o que ela vai usar.
+    // a remocao pelo adaptador do AoP leva os atributos de emissora na mesma
+    // funcao (tv30_perfil_remove)
     assert.ok(await aop.perfilRemove(ids[0]) >= 4);
     assert.deepEqual(await r('KEYS', `user:${ids[0]}*`), [], 'a remocao leva os atributos de emissora juntos');
     assert.equal(await r('SISMEMBER', 'users:index', ids[0]), 0);

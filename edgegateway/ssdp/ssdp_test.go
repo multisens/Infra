@@ -25,10 +25,9 @@ func TestNormalizeHost(t *testing.T) {
 	}
 }
 
-// B2 revista pelo Joel em 15/10: o SSDP_ADVERTISE_HOST e sobreposicao.
-// Ausente ou vazio, o host e detectado (Host vazio, preenchido a cada sessao
-// com o IPv4 da interface); definido sem host continua erro. O SERVER_URL
-// nao e fonte do host do anuncio.
+// SSDP_ADVERTISE_HOST ausente ou vazio: host detectado (Host vazio, preenchido
+// a cada sessao com o IPv4 da interface); definido sem host e erro. O
+// SERVER_URL nao e fonte do host do anuncio.
 func TestResolveEndpoint(t *testing.T) {
 	e, err := resolveEndpoint(env(map[string]string{"SSDP_ADVERTISE_HOST": "192.168.2.7", "SERVER_URL": "x"}))
 	if err != nil || e.Host != "192.168.2.7" || e.HTTPPort != 44642 || e.HTTPSPort != 44643 {
@@ -70,7 +69,7 @@ func TestWarnings(t *testing.T) {
 	if len(w) != 1 || !strings.Contains(w[0], "EDGE_HTTP_PORT=8080") {
 		t.Fatalf("porta: %v", w)
 	}
-	// host detectado e porta padrao: nenhum aviso (a 44643 tem TLS desde a A7)
+	// host detectado e porta padrao: nenhum aviso
 	if w = warnings(endpoint{"", 44642, 44643}); len(w) != 0 {
 		t.Fatalf("detectado: %v", w)
 	}
@@ -114,7 +113,7 @@ func TestChooseInterface(t *testing.T) {
 		!strings.Contains(err.Error(), "nenhuma interface") {
 		t.Fatalf("sem interface deveria ser falta de rede: %v", err)
 	}
-	// host detectado (B2 revista): a interface da rota padrao, sem aviso
+	// host detectado: a interface da rota padrao, sem aviso
 	c, err = chooseInterface("", "", ifs, route)
 	if err != nil || c.Name != "wlp2s0" || c.Addr != "192.168.2.7" || c.Source != "default-route" || len(c.Warnings) != 0 {
 		t.Fatalf("detectado: %+v %v", c, err)

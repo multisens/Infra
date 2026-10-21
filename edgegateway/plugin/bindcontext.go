@@ -12,37 +12,26 @@ import (
 	"strings"
 )
 
-// Broadcaster security APIs (C.6.8), RESPONDIDAS pela borda (decisao da
-// reuniao de 05/10 com o Joel, D-0510-2). Mesmo contrato que o tv3ws
-// implementava em src/api/broadcaster-security (removido de la na mesma
-// rodada), inclusive o armazenamento:
-//
-//	bind-context:{serviceId}  LIST de JSON {"alg","key","registeredAt"(ms)}
-//
-// gravado so pelas funcoes do Redis tv30_bind_registra e tv30_bind_remove
-// (P4, Luis em 10/10; redis.go), que conferem o esquema da entrada.
-//
-// serviceId = session:current-service-id no momento da chamada. A classe que
-// pode chamar cada rota (106: POST/DELETE so associado; GET so autonomo e
-// nao local) e o access token do GET (107) ficam na politica da rota
-// (routes.json), aplicada antes por evaluate.
+// Broadcaster security APIs (C.6.8), respondidas pela borda. As chaves ficam em
+// bind-context:{serviceId}, LIST de JSON {"alg","key","registeredAt"(ms)},
+// gravada so pelas funcoes do Redis (redis.go). Classe e access token de cada
+// rota sao conferidos antes, pela politica da rota (evaluate).
 
 // Menor modulo RSA (bytes) que comporta a assinatura PKCS#1 v1.5: DigestInfo
 // (19 bytes de cabecalho + o hash) mais 11 de preenchimento. Com menos, a
-// chave registra mas nenhum token valida — a Tabela C.47 preve 101 para "key
+// chave registra mas nenhum token valida; a Tabela C.49 preve 101 para "key
 // format incompatible with the specified algorithm". A chave de 512 bits do
-// exemplo da norma (64 bytes) serve para RS256, nao para RS512.
+// exemplo da norma serve para RS256, nao para RS512.
 var minRSAModulusBytes = map[string]int{algRS256: 19 + 32 + 11, algRS512: 19 + 64 + 11}
 
-// Teto do corpo do registro: o mesmo padrao do express.json do tv3ws.
+// Teto do corpo do registro: o padrao do express.json (100 KiB).
 const maxRegisterBody = 100 << 10
 
-// checkRegistration: corpo do POST /tv3/bind-context (Tabela C.47), nas
-// mesmas regras do tv3ws (checkRegistration + express.json): 101 se o corpo
-// nao for objeto JSON (inclusive Content-Type que nao eh application/json, o
-// que o express.json nao le), se o alg nao for suportado ou se a chave for
-// incompativel com o alg; 105 se faltar alg ou key num objeto JSON. Corpo
-// vazio com Content-Type JSON vale {} (o express.json faz isso) e da 105.
+// checkRegistration: corpo do POST /tv3/bind-context (Tabela C.49), nas regras
+// do express.json: 101 se o corpo nao for objeto JSON (inclusive Content-Type
+// que nao e application/json), se o alg nao for suportado ou se a chave for
+// incompativel com ele; 105 se faltar alg ou key. Corpo vazio com Content-Type
+// JSON vale {} e da 105.
 func checkRegistration(r *http.Request) (alg, key string, code int, detail string) {
 	const notObject = "message body must be a JSON object with alg and key, body"
 	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -111,7 +100,7 @@ type storedEntry struct {
 }
 
 // parseStoredEntry: elemento lido do Redis; ok=false se malformado (alg fora
-// dos quatro ou key ausente/nao texto), como o parseStoredEntry do tv3ws.
+// dos quatro ou key ausente/nao texto).
 func parseStoredEntry(raw string) (storedKey, bool) {
 	var e struct {
 		Alg *string `json:"alg"`
@@ -127,7 +116,7 @@ func parseStoredEntry(raw string) (storedKey, bool) {
 // chega aparado) ou, para RSA, a mesma chave publica em outra codificacao.
 // Casa o cabecalho "key" da revogacao (C.6.8.4), que nao traz alg: a
 // revogacao de "s" remove tambem um segredo HS registrado como "s " (efeito
-// aceito, igual ao tv3ws).
+// aceito).
 func sameKey(a, b string) bool {
 	if strings.TrimSpace(a) == strings.TrimSpace(b) {
 		return true
@@ -153,17 +142,14 @@ func sameRegisteredKey(alg, a, b string) bool {
 	return sameKey(a, b)
 }
 
-// C.6.8.2 (Tabela C.47): registra {alg, key} para o servico corrente.
-// Ordem: corpo (101/105) -> servico corrente (300) -> grava. A norma nao lista
-// erro para "sem servico" na C.47; 300 eh o codigo do catalogo para "No DTV
-// service currently in use" (mesma escolha do tv3ws).
+// C.6.8.2 (Tabela C.49): registra {alg, key} para o servico corrente. Sem
+// servico, 300 ("No DTV service currently in use"): a tabela nao lista erro
+// para esse caso.
 //
-// Leitura e escrita nao sao atomicas (LRANGE e depois a funcao de registro,
-// como no tv3ws): dois registros simultaneos da mesma chave podem gravar uma
-// duplicata, que nao muda o resultado (qualquer chave da lista valida; a
-// revogacao remove todas as iguais). A deteccao de duplicata fica aqui porque
-// compara chaves RSA pela chave publica (sameRegisteredKey), o que a funcao do
-// Redis nao faz; a funcao confere o formato da entrada (P4).
+// Leitura e escrita nao sao atomicas: dois registros simultaneos da mesma chave
+// podem gravar uma duplicata, inofensiva (qualquer chave da lista valida; a
+// revogacao remove todas as iguais). A duplicata e detectada aqui porque chaves
+// RSA se comparam pela chave publica, o que a funcao do Redis nao faz.
 func (h *authHandler) bindRegister(r *http.Request, _ map[string]string) edgeReply {
 	alg, key, code, detail := checkRegistration(r)
 	if code != 0 {
@@ -176,8 +162,7 @@ func (h *authHandler) bindRegister(r *http.Request, _ map[string]string) edgeRep
 	if sid == "" {
 		return edgeReply{Code: 300, Detail: "no DTV service selected for the bind context"}
 	}
-	// A6 (Joel, 15/10): o serviceContextId e o globalServiceId do servico
-	// corrente (o BAM; Tabela 6, C.3.5); ate 15/10, a constante do tv3ws
+	// serviceContextId = globalServiceId do servico corrente (Tabela 6, C.3.5)
 	ok := edgeReply{Body: struct {
 		ServiceContextID string `json:"serviceContextId"`
 	}{sid}}
@@ -212,13 +197,12 @@ type boundService struct {
 	ServiceID        *uint64 `json:"serviceId,omitempty"`
 }
 
-// C.6.8.3 (Tabela C.48): servicos cujas chaves validam o bind-token, de
-// TODOS os servicos com chave registrada (SCAN bind-context:*). Codigos: 104
-// sem o cabecalho; 108 se nao eh JWT; 101 se nenhuma chave registrada valida
-// a assinatura; 108 se a assinatura confere mas o token esta fora do prazo
-// (nbf/exp/iat — a C.48 eh silente; Tabela C.1: "invalid"). A assinatura vem
-// antes do prazo (C.4.1.4). Lista ilegivel (outro tipo no Redis) ou entrada
-// malformada eh ignorada com log.
+// C.6.8.3 (Tabela C.50): servicos, entre todos com chave registrada, cujas
+// chaves validam o bind-token. Aqui o bind-token e argumento da API, e nao
+// credencial da rota. 104 sem o cabecalho; 108 se nao e JWT; 101 se nenhuma
+// chave valida a assinatura; 108 se ela confere mas o token esta fora do prazo
+// (a Tabela C.50 nao trata o caso; a assinatura vem antes, C.4.1.4). Lista
+// ilegivel ou entrada malformada e ignorada com log.
 func (h *authHandler) bindList(r *http.Request, _ map[string]string) edgeReply {
 	tok := strings.TrimSpace(r.Header.Get("bind-token"))
 	if tok == "" {
@@ -261,8 +245,7 @@ func (h *authHandler) bindList(r *http.Request, _ map[string]string) edgeReply {
 
 	// Nome e id so se conhecem para o servico corrente (session:current-
 	// service); para os demais nao ha fonte no testbed e os campos sao
-	// omitidos (C.3.2.2). O serviceContextId de cada item e o globalServiceId
-	// do servico (A6, Joel 15/10): os itens deixaram de ser indistinguiveis.
+	// omitidos (C.3.2.2).
 	cur, err := h.store.CurrentServiceID()
 	if err != nil {
 		return redisDown(err)
@@ -292,8 +275,6 @@ func (h *authHandler) bindList(r *http.Request, _ map[string]string) edgeReply {
 	}{items}}
 }
 
-// numericServiceID: o serviceId so vira inteiro quando eh so digitos (o
-// tv3ws usava /^[0-9]+$/ e Number()).
 func numericServiceID(s string) (uint64, bool) {
 	if s == "" || strings.TrimLeft(s, "0123456789") != "" {
 		return 0, false
@@ -302,12 +283,10 @@ func numericServiceID(s string) (uint64, bool) {
 	return n, err == nil
 }
 
-// C.6.8.4 (Tabela C.49): remove do servico corrente toda entrada com a mesma
+// C.6.8.4 (Tabela C.51): remove do servico corrente toda entrada com a mesma
 // chave (o cabecalho "key" nao traz alg). Sucesso mesmo se a chave nao existe
-// — inclusive sem servico corrente, quando nao ha lista de que remover.
-// ADIADO (Joel, 15/10; A10): ao revogar, a C.4.4 manda liberar os recursos
-// compartilhados que a aplicacao usava — nao implementado (L7). Depende do
-// Application Lifecycle Manager e do menu de autorizacoes.
+// ou nao ha servico corrente. Nao libera os recursos compartilhados da
+// aplicacao, como pede a C.4.4.
 func (h *authHandler) bindRemove(r *http.Request, _ map[string]string) edgeReply {
 	key := strings.TrimSpace(r.Header.Get("key"))
 	if key == "" {

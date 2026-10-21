@@ -11,19 +11,9 @@ import (
 	"time"
 )
 
-// Mini cliente Redis (protocolo RESP2) so com net da biblioteca padrao —
-// leitura (GET, SISMEMBER, HGET, LRANGE, HGETALL, SCAN) e, para a C.6.8
-// respondida pela borda, escrita SO por FCALL (P4, decisao do Luis em 10/10,
-// "Funcoes + auditoria"): o registro e a revogacao chamam as funcoes
-// tv30_bind_registra e tv30_bind_remove da biblioteca de funcoes do Redis
-// (infra/redis/funcoes.lua), que conferem o esquema da entrada
-// (infra/redis/esquema.json) antes de gravar. Antes eram RPUSH e LREM diretos.
-// O teste estatico (escritas_test.go) falha se o codigo da borda voltar a ter
-// comando de escrita que nao seja FCALL. Pool pequeno de conexoes, timeout
-// curto por comando e reconexao: conexao com erro de rede eh descartada e o
-// comando eh repetido UMA vez numa conexao nova — menos o registro quando a
-// falha veio DEPOIS de o comando sair (resposta perdida de um comando talvez
-// executado: repetir duplicaria a entrada).
+// Mini cliente Redis (RESP2) so com a biblioteca padrao. Escreve so por FCALL
+// das funcoes tv30_bind_registra e tv30_bind_remove (infra/redis/funcoes.lua),
+// que conferem o esquema da entrada; escritas_test.go barra outro comando.
 
 type redisError string
 
@@ -94,7 +84,7 @@ func (rc *redisClient) do(args ...string) (interface{}, error) {
 	return rc.exec(true, args)
 }
 
-// fcall chama uma funcao da biblioteca tv30 do Redis (P4) com numkeys 0 —
+// fcall chama uma funcao da biblioteca tv30 do Redis com numkeys 0 —
 // as funcoes derivam as chaves dos argumentos. idempotente=false (o registro
 // de bind-context): NAO repete as cegas, so se a falha foi antes de o comando
 // terminar de sair.
@@ -353,14 +343,12 @@ func (rc *redisClient) scanKeys(match string) ([]string, error) {
 //
 //	clients:blocked              SET    le    — tv3ws (auth-manager): clientes bloqueados (C.4.2.2)
 //	clients:authorized           SET    le    — tv3ws (auth-manager): clientes autorizados pelo
-//	                                    espectador (D-0510-4); a borda exige o sub do access
-//	                                    token aqui (E6, decisao do Luis em 11/10)
-//	origins:associated           HASH   le    — AoP (core.js): origem -> scid das apps associadas
+//	                                    espectador; a borda exige nele o sub do access token
+//	origins:associated           HASH   le    — AoP (core.js): origem -> servico que lancou a app
 //	session:current-service-id   STRING le    — tv3ws (api/user/service.ts): servico corrente
 //	session:current-service      HASH   le    — tv3ws (core.ts): serviceName/serviceId do corrente (C.6.8.3)
-//	bind-context:{serviceId}     LIST   le e ESCREVE — a propria borda (C.6.8.2/C.6.8.4, bindcontext.go):
-//	                                    {alg,key,registeredAt}; escrita so pelas funcoes
-//	                                    tv30_bind_registra/tv30_bind_remove (P4)
+//	bind-context:{serviceId}     LIST   le e escreve — a borda (C.6.8.2/C.6.8.4, bindcontext.go):
+//	                                    {alg,key,registeredAt}, so pelas funcoes tv30_bind_*
 const (
 	keyBlocked        = "clients:blocked"
 	keyAuthorized     = "clients:authorized"
@@ -373,10 +361,9 @@ const (
 // store eh o que a borda precisa do armazenamento (interface p/ testes).
 type store interface {
 	IsBlocked(clientID string) (bool, error)
-	IsAuthorized(clientID string) (bool, error) // SISMEMBER clients:authorized (E6)
-	// AssociatedOrigin: HGET origins:associated <origem> — o servico que lancou
-	// a app (o AoP grava ao lancar; H1, Joel 15/10); ok=false se a origem nao
-	// esta na lista.
+	IsAuthorized(clientID string) (bool, error) // SISMEMBER clients:authorized
+	// AssociatedOrigin: HGET origins:associated <origem>, o servico que lancou
+	// a app; ok=false se a origem nao esta na lista.
 	AssociatedOrigin(origin string) (service string, ok bool, err error)
 	CurrentServiceID() (string, error)
 	BindKeys(serviceID string) ([]string, error)

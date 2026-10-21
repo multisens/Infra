@@ -6,21 +6,10 @@ import (
 	"strings"
 )
 
-// Escolha da interface do anuncio. Uma interface so: o anuncio sai por ela e
-// a busca e respondida por ela (sem as respostas duplicadas medidas no teste
-// 7 de docs/ssdp-verificacao.md). Ordem:
-//  1. SSDP_INTERFACE, se definida (nome que nao existe na maquina = erro de
-//     configuracao, conferido uma vez na partida por checkForced; existir
-//     sem IPv4 = falta de rede);
-//  2. a interface que tem o IPv4 do host anunciado;
-//  3. a interface da rota padrao, com aviso (sem aviso quando o host e
-//     detectado: B2 revista pelo Joel em 15/10, ver config.go).
-// A rota padrao vem do proprio sistema, pelo endereco local que ele escolhe
-// para um socket UDP "conectado" a um endereco fora da rede (nada e enviado):
-// vale nos tres sistemas (complemento do Joel de 15/10). Ate 15/10 lia o
-// /proc/net/route, que so existe no Linux.
-// Quando nada serve, o erro e de falta de rede (netDown): o anunciante espera
-// e escolhe de novo na tentativa seguinte (decisao do Luis, 10/10).
+// Escolha da interface do anuncio. Uma so, para a busca nao receber respostas
+// duplicadas. Ordem: SSDP_INTERFACE, se definida; a interface que tem o IPv4
+// do host anunciado; a da rota padrao (com aviso, salvo com o host detectado).
+// Quando nada serve, o erro e de falta de rede (netDown).
 
 type ifaceInfo struct {
 	Name  string
@@ -166,8 +155,8 @@ func chooseInterface(host, forced string, ifaces []ifaceInfo, defaultRoute func(
 	if len(ifaces) == 0 {
 		return choice{}, netDown{fmt.Errorf("nenhuma interface de pe com IPv4 externo")}
 	}
-	// host detectado (sem SSDP_ADVERTISE_HOST; B2 revista): a interface da
-	// rota padrao, sem aviso; o IPv4 dela vira o host do LOCATION
+	// host detectado (sem SSDP_ADVERTISE_HOST): a interface da rota padrao,
+	// sem aviso; o IPv4 dela vira o host do LOCATION
 	if host == "" {
 		if r := defaultRoute(); r != "" {
 			if ifi := find(ifaces, r); ifi != nil {

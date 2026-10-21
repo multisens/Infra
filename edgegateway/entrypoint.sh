@@ -1,12 +1,6 @@
 #!/bin/sh
-# Supervisor do edgegateway (dumb-init como PID 1 encaminha sinais).
-# Regra do plano: MORRE-INTEIRO — se qualquer processo cair, o container
-# encerra por completo (nada de meio-vivo).
-#
-# O anunciante SSDP (C.3.4) saiu deste container em 15/10 (complemento do
-# Joel): roda nativo no host, fora do Docker, subido pelo ./tv30 up
-# (infra/edgegateway/ssdp). De 09/10 a 15/10 ele rodava aqui, com a borda em
-# rede do host (docker-compose.ssdp.yml, so Linux nativo).
+# Supervisor do edgegateway (dumb-init como PID 1 encaminha sinais): se
+# qualquer processo cair, o container encerra por completo.
 set -u
 
 VARIANT="${EDGE_VARIANT:-linux}"

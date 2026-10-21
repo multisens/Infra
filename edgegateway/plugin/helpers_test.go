@@ -103,15 +103,15 @@ func storedJSON(alg, key string) string {
 // fakeStore: Redis em memoria para os testes da decisao e das APIs da borda.
 type fakeStore struct {
 	blocked    map[string]bool
-	authorized map[string]bool   // clients:authorized (E6)
+	authorized map[string]bool   // clients:authorized
 	associated map[string]string // origins:associated: origem -> servico que lancou a app
 	current    string
 	keys       map[string][]string // bind-context:{serviceId}
 	svcHash    map[string]string   // session:current-service
 	wrongType  map[string]bool     // bind-context:{serviceId} de outro tipo (WRONGTYPE)
 	err        error
-	authzErr   error // so no SISMEMBER clients:authorized (E6)
-	writeErr   error // so nas escritas (a funcao do Redis recusando o dado, P4)
+	authzErr   error // so no SISMEMBER clients:authorized
+	writeErr   error // so nas escritas (a funcao do Redis recusando o dado)
 	calls      int
 }
 

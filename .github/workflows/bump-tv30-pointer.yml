@@ -11,11 +11,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Pos-consolidacao (fases 2-3 do plano): a borda inteira e uma
-          # imagem (edgegateway) e o redis leva seed+commander embutidos.
-          # As imagens antigas (gatewayhttps/http, middlewares, swagger)
-          # deixam de ser buildadas — remocao dos repositorios no Docker
-          # Hub fica pra fase 4, junto do renome R1.
           - name: tv30-mosquitto
             context: ./mqtt-broker
             dockerfile: ./mqtt-broker/infra/Dockerfile

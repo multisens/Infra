@@ -1,6 +1,4 @@
-// Leitura do payload MQTT inteiro como texto JSON (correcao de 12/10, defeito
-// achado na revisao do plugin). Ver json_payload.h. Teste:
-// tests/test_json_payload.c (roda tambem no build da imagem, infra/Dockerfile).
+// Ver json_payload.h. Teste: tests/test_json_payload.c, que roda no build da imagem.
 #include "json_payload.h"
 #include <limits.h>
 #include <string.h>

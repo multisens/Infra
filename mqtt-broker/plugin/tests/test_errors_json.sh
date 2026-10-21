@@ -1,17 +1,7 @@
 #!/bin/bash
-# Teste de integracao: a mensagem que o plugin publica em errors/<client_id>
-# e sempre JSON valido (correcao de 12/10, defeito achado pela auditoria da
-# documentacao: publish_error colava os campos sem escape, e uma mensagem de
-# 2048 bytes ou mais nao saia). Desde as correcoes de 12/10 da revisao do
-# plugin, tambem a leitura do payload inteiro na validacao, o topico
-# errors/<client_id> e a resposta do teste de latencia (ver o driver).
-#
-# Constroi a imagem do broker com tag PROPRIA (o build ja roda os testes de
-# unidade tests/test_error_json.c e tests/test_json_payload.c), sobe um
-# broker DESCARTAVEL numa rede propria, sem portas publicadas, e roda
-# errors_json_driver.py num segundo container da mesma imagem. Nao toca a
-# stack (nem o container mqtt-broker).
-# No fim remove o container, a rede e a imagem que construiu.
+# Teste de integracao do plugin (errors_json_driver.py): mensagem e topico de
+# errors/<client_id>, leitura do payload inteiro e resposta do teste de latencia.
+# Imagem com tag propria e broker descartavel numa rede propria; nao toca a stack.
 #
 #   bash infra/mqtt-broker/plugin/tests/test_errors_json.sh
 #   IMG=<imagem> NOBUILD=1 bash ...   usa uma imagem ja construida (e nao a remove)

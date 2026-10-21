@@ -15,7 +15,6 @@
 mosquitto_plugin_id_t *mosq_pid = NULL;
 static json_object *schemas = NULL;
 
-// Load schemas from file
 static void load_schemas_from_file(const char* filename) {
     FILE *file = fopen(filename, "r");
     if (!file) {
@@ -52,14 +51,7 @@ static void load_schemas_from_file(const char* filename) {
     }
 }
 
-// Publish error to errors/<client_id> topic
-// Correcao de 12/10 (defeito achado pela auditoria da documentacao): os
-// campos entravam no JSON por snprintf, sem escape, e um payload ou mensagem
-// com aspas, barra invertida ou caractere de controle gerava JSON invalido;
-// mensagem de 2048 bytes ou mais nao saia. Agora a mensagem e montada por
-// error_json_build (error_json.c): escape da RFC 8259, UTF-8 valido, payload
-// pelo comprimento (NUL no meio vira \u0000) e corte em fronteira segura, com
-// "truncated":true, para caber em ERROR_JSON_CAP - 1 = 2047 bytes.
+// Publica em errors/<client_id>; mensagem e topico seguem error_json.h.
 static void publish_error(const char* topic, const char* error_type, const char* details, const char* payload, size_t payload_len, const char* client_id) {
     char *error_buffer = malloc(ERROR_JSON_CAP);
     if (!error_buffer) return;
@@ -72,10 +64,7 @@ static void publish_error(const char* topic, const char* error_type, const char*
                                client_id ? client_id : "unknown", payload, payload_len);
 
     // mosquitto_broker_publish so fica com o buffer (e o libera) quando
-    // devolve sucesso; nos outros casos ele e liberado aqui (antes vazava).
-    // Topico (correcao de 12/10, revisao do plugin): error_json_topic corta so
-    // entre caracteres UTF-8 inteiros e troca +, #, / e controles do client_id
-    // por _ (regra em error_json.h); antes era snprintf("errors/%s").
+    // devolve sucesso; nos outros casos ele e liberado aqui
     if (len > 0) {
         char error_topic[ERROR_JSON_TOPIC_CAP];
         if (error_json_topic(error_topic, sizeof(error_topic), client_id) > 0 &&
@@ -86,8 +75,8 @@ static void publish_error(const char* topic, const char* error_type, const char*
     free(error_buffer);
 }
 
-// Casamento de topico MQTT (+ e #) — o lookup por igualdade exata deixava
-// fora os topicos parametrizados de sinalizacao (tlm/sls/<sid>/esg etc).
+// Casamento de topico MQTT (+ e #), para os topicos parametrizados de
+// sinalizacao (tlm/sls/<sid>/esg etc.)
 static int topic_matches(const char* pattern, const char* topic) {
     while (*pattern && *topic) {
         if (*pattern == '#') return 1;
@@ -109,8 +98,6 @@ static int topic_matches(const char* pattern, const char* topic) {
     return 0;
 }
 
-// Get schema for a topic: igualdade exata primeiro, depois padrao (P4 —
-// esquema declarado nos topicos REAIS de sinalizacao e estado).
 static json_object* get_schema_for_topic(const char* topic) {
     if (!schemas) return NULL;
 
@@ -127,8 +114,8 @@ static json_object* get_schema_for_topic(const char* topic) {
     return NULL;
 }
 
-// Schema declara type=string? (payloads de estado da plataforma sao strings
-// puras — uuid, caminho, nome de tela — que nao sao JSON valido)
+// payloads de estado da plataforma sao strings puras (uuid, caminho, nome de
+// tela), que nao sao JSON
 static int schema_expects_plain_string(json_object* schema) {
     json_object *type;
     if (!json_object_object_get_ex(schema, "type", &type)) return 0;
@@ -136,17 +123,9 @@ static int schema_expects_plain_string(json_object* schema) {
     return t && strcmp(t, "string") == 0;
 }
 
-// Validate message against schema
-// payload_len (12/10): o comprimento real, para a mensagem de errors/ levar o
-// payload inteiro mesmo com NUL no meio.
-// Leitura do payload (correcao de 12/10, revisao do plugin): antes era
-// json_tokener_parse(payload), que le ate o primeiro NUL e ignora o que vem
-// depois do primeiro valor ({"value":1}lixo e {"value":1}\0lixo passavam e
-// eram entregues). Agora json_payload_parse le o payload inteiro, pelo
-// comprimento, e so aceita exatamente um texto JSON (RFC 8259; regra em
-// json_payload.h); o resto vira INVALID_JSON. O literal null continua como
-// antes (o json-c o representa por NULL): INVALID_JSON, ou string pura nos
-// topicos de esquema type=string.
+// payload_len e o comprimento real: o payload e lido inteiro, mesmo com NUL no
+// meio (json_payload.h). O literal null vira NULL no json-c: INVALID_JSON, ou
+// string pura nos topicos de esquema type=string.
 static int validate_message(const char* topic, const char* payload, size_t payload_len, const char* client_id) {
     json_object *schema = get_schema_for_topic(topic);
     if (!schema) {
@@ -156,11 +135,8 @@ static int validate_message(const char* topic, const char* payload, size_t paylo
     json_object *message = NULL;
     json_payload_parse(payload, payload_len, &message);
     if (!message && schema_expects_plain_string(schema) && !memchr(payload, '\0', payload_len)) {
-        // payload string pura (uuid/caminho/nome de tela): embrulha como
-        // string JSON pra validar minLength/maxLength/pattern do schema.
-        // 12/10: o payload inteiro, pelo comprimento; com NUL nao embrulha
-        // (minLength/maxLength/pattern leem C string e parariam no NUL) e
-        // vira INVALID_JSON.
+        // string pura: embrulha como string JSON para minLength/maxLength/pattern.
+        // Com NUL nao embrulha (essas regras leem C string e parariam no NUL).
         message = json_object_new_string_len(payload, (int)payload_len);
     }
     if (!message) {
@@ -195,7 +171,6 @@ static int callback_acl_check(int event, void *event_data, void *userdata) {
         return MOSQ_ERR_SUCCESS;
     }
     
-    // Check for testResponsetime messages on PublisherResponseTime topics
     if (ed->access == MOSQ_ACL_WRITE && strncmp(ed->topic, "PublisherResponseTime", 21) == 0) {
         if (ed->payload && ed->payloadlen > 0) {
             char *payload_str = malloc(ed->payloadlen + 1);
@@ -208,15 +183,9 @@ static int callback_acl_check(int event, void *event_data, void *userdata) {
         return MOSQ_ERR_SUCCESS;
     }
     
-    // Controle de acesso a topicos foi removido por decisao de desenho:
-    // isolamento de transporte interno nao tem contrapartida normativa
-    // (a identidade no barramento e de microsservico; o isolamento que a
-    // norma exige e por contexto de servico DTV, na fronteira das APIs).
-
-    // Valida so PUBLISH; o antigo retorno antecipado que restringia a
-    // validacao a topicos sensor/* saiu (P4): qualquer topico com esquema
-    // declarado e validado — sinalizacao e estado da plataforma inclusive.
-    // Topico sem esquema segue passando (lookup devolve NULL).
+    // Sem controle de acesso por topico: a identidade no barramento e de
+    // microsservico, e o isolamento que a norma exige e por contexto de servico,
+    // na fronteira das APIs. Valida so PUBLISH; topico sem esquema passa.
     if (ed->access != MOSQ_ACL_WRITE || strncmp(ed->topic, "$SYS/", 5) == 0) {
         return MOSQ_ERR_SUCCESS;
     }

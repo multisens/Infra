@@ -1,14 +1,6 @@
 'use strict';
-// Testes do generate.js (tabela unica de rotas, M4). Sem dependencias:
-//   node --test generate.test.js
-// Tambem rodam no build da imagem (Dockerfile, estagio gen): tabela que
-// quebra a regra nao vira imagem.
-//
-// Foco: superficies (F-1, F-2 e E7, respostas do Joel em 15/10, que reveem a
-// P1.9 do Luis de 10/10). As duas tem todas as rotas; na externa (44643,
-// Server-SecureBaseURL) as de uso exclusivo do cliente local e a C.6.1.2
-// respondem 106 a qualquer requisicao (C.4.1.8); na interna (44642, HTTP) o
-// nao local so usa a C.6.1.2 e a C.6.1.3 (C.4.1.6). E o 300 sem servico (H2).
+// Testes do generate.js, sem dependencias: node --test generate.test.js.
+// Rodam tambem no build da imagem: tabela que quebra a regra nao vira imagem.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
@@ -43,7 +35,7 @@ const EXCLUSIVAS_DO_LOCAL = [
   'POST /tv3/bind-context',
 ];
 
-test('as duas superficies tem todas as rotas (F-1, Joel 15/10)', () => {
+test('as duas superficies tem todas as rotas', () => {
   const t = real();
   for (const s of ['external', 'internal']) assert.equal(g.routesOf(t, s).length, t.routes.length, s);
   for (const r of t.routes) assert.deepEqual(g.surfacesOf(r), ['external', 'internal'], key(r));
@@ -51,7 +43,7 @@ test('as duas superficies tem todas as rotas (F-1, Joel 15/10)', () => {
   for (const s of ['external', 'internal']) assert.equal(plugin(files, s).routes.length, 26, s);
 });
 
-test('F-1: na externa, 106 nas exclusivas do cliente local e na C.6.1.2 (C.4.1.8); na interna, nenhuma', () => {
+test('na externa, 106 nas exclusivas do cliente local e na C.6.1.2 (C.4.1.8); na interna, nenhuma', () => {
   const t = real();
   const com106 = s => t.routes.filter(r => g.surfaceErrorOf(r, s) === 106).map(key).sort();
   assert.deepEqual(com106('external'), [...EXCLUSIVAS_DO_LOCAL, 'GET /tv3/authorize'].sort());
@@ -71,7 +63,7 @@ test('F-1: na externa, 106 nas exclusivas do cliente local e na C.6.1.2 (C.4.1.8
   }
 });
 
-test('E7: na interna, nonlocal_https_only e so a C.6.1.2/C.6.1.3 isentas; na externa, nada disso', () => {
+test('na interna, nonlocal_https_only e so a C.6.1.2/C.6.1.3 isentas (C.4.1.6); na externa, nada disso', () => {
   const files = g.generate(real());
   const int = plugin(files, 'internal'), ext = plugin(files, 'external');
   assert.equal(int.nonlocal_https_only, true);
@@ -80,7 +72,7 @@ test('E7: na interna, nonlocal_https_only e so a C.6.1.2/C.6.1.3 isentas; na ext
   assert.ok(ext.routes.every(r => !('nonlocal_http' in r)));
 });
 
-test('H2: no_service 300 na C.6.4.7 e da C.6.14.1 a C.6.14.6; nao na C.6.16.3', () => {
+test('no_service 300 na C.6.4.7 e da C.6.14.1 a C.6.14.6; nao na C.6.16.3', () => {
   const t = real();
   const com300 = t.routes.filter(r => r.no_service === 300).map(r => r.api.section).sort();
   assert.deepEqual([...new Set(com300)].sort(), ['C.6.14.1', 'C.6.14.2', 'C.6.14.3', 'C.6.14.4', 'C.6.14.5', 'C.6.14.6', 'C.6.4.7']);
@@ -93,11 +85,11 @@ test('H2: no_service 300 na C.6.4.7 e da C.6.14.1 a C.6.14.6; nao na C.6.16.3', 
   assert.ok(g.checkTable(mini([{ method: 'GET', path: '/a', auth: 'token', no_service: 300 }])).some(e => /so vale em rota token\+bind/.test(e)));
 });
 
-// A4 (decisao do Luis em 11/10): POST /tv3/{serviceContextId}/users, fora da
-// Tabela C.2, saiu da tabela: nenhuma superficie a tem, e a borda responde 100.
-test('A4: POST /tv3/{serviceContextId}/users fora da tabela', () => {
+// POST /tv3/{serviceContextId}/users nao esta na Tabela C.2: nenhuma
+// superficie a tem, e a borda responde 100.
+test('POST /tv3/{serviceContextId}/users fora da tabela', () => {
   const t = real();
-  assert.ok(!t.routes.some(r => key(r) === 'POST /tv3/{serviceContextId}/users'), 'rota retirada (A4)');
+  assert.ok(!t.routes.some(r => key(r) === 'POST /tv3/{serviceContextId}/users'), 'rota fora da norma');
   assert.ok(t.routes.some(r => key(r) === 'POST /tv3/current-service/users'), 'a da norma (C.6.14.1) fica');
   const files = g.generate(t);
   for (const [name, cfg] of Object.entries(files)) {
@@ -113,7 +105,7 @@ test('o campo "surfaces" por rota eh recusado (a superficie eh derivada)', () =>
   const t = mini([{ method: 'GET', path: '/health', auth: 'none', surfaces: ['internal'] }]);
   const errs = g.checkTable(t);
   assert.equal(errs.length, 1, errs.join('\n'));
-  assert.match(errs[0], /GET \/health: o campo "surfaces" da rota saiu \(P1\.9\)/);
+  assert.match(errs[0], /GET \/health: o campo "surfaces" nao vale por rota/);
 });
 
 test('superficies e backends tem de casar com SURFACE_RULES', () => {
@@ -162,7 +154,7 @@ test('em cada config KrakenD, endpoints = rotas do plugin = rotas da superficie'
   }
 });
 
-test('CORS do plugin: allow_headers, expose_headers e max_age do routes.json chegam as duas superficies, sem o modulo CORS do KrakenD (opcao b, 12/10)', () => {
+test('CORS do plugin: allow_headers, expose_headers e max_age do routes.json chegam as duas superficies, sem o modulo CORS do KrakenD', () => {
   const t = real();
   const files = g.generate(t);
   for (const [name, cfg] of Object.entries(files)) {
@@ -171,7 +163,7 @@ test('CORS do plugin: allow_headers, expose_headers e max_age do routes.json che
     assert.deepEqual(plugin.cors_allow_headers, t.cors.allow_headers, name);
     assert.deepEqual(plugin.cors_expose_headers, t.cors.expose_headers, name);
     assert.equal(plugin.cors_max_age, t.cors.max_age, name);
-    // o modulo CORS do KrakenD saiu: ele envolve o plugin e responderia o
+    // sem o modulo CORS do KrakenD: ele envolve o plugin e responderia o
     // preflight antes dele
     assert.ok(!('security/cors' in cfg.extra_config), name);
   }
@@ -183,8 +175,8 @@ test('CORS do plugin: allow_headers, expose_headers e max_age do routes.json che
   assert.deepEqual(comCors({ allow_headers: ['Content-Type'], expose_headers: ['X-A'], max_age: '12h' }), []);
   for (const [nome, cors] of Object.entries({
     'sem bloco': undefined,
-    'allow_origins (saiu)': { allow_headers: ['Content-Type'], allow_origins: ['*'] },
-    'allow_methods (saiu)': { allow_headers: ['Content-Type'], allow_methods: ['GET'] },
+    'allow_origins (sem uso)': { allow_headers: ['Content-Type'], allow_origins: ['*'] },
+    'allow_methods (sem uso)': { allow_headers: ['Content-Type'], allow_methods: ['GET'] },
     'allow_headers vazio': { allow_headers: [] },
     'allow_headers com virgula': { allow_headers: ['Content-Type, Authorization'] },
     'expose_headers nao lista': { allow_headers: ['Content-Type'], expose_headers: 'X-A' },
@@ -193,7 +185,7 @@ test('CORS do plugin: allow_headers, expose_headers e max_age do routes.json che
   })) assert.ok(comCors(cors).length > 0, nome);
 });
 
-test('F-2 (Joel, 15/10): as duas superficies listam todas as APIs, na ordem da Tabela C.2', () => {
+test('as duas superficies listam todas as APIs, na ordem da Tabela C.2', () => {
   const t = real();
   const files = g.generate(t);
   const apis = s => plugin(files, s).apis.map(a => a.id);
@@ -216,11 +208,11 @@ test('OpenAPI: as duas superficies com todas as rotas; a externa documenta o 106
   assert.doesNotMatch(int.paths['/tv3/token'].get.description, /nao local recebe 106/);
   assert.deepEqual(ext.paths['/health'].get['x-tv30-surfaces'], ['external', 'internal']);
   assert.match(ext.info.description, /C\.4\.1\.8/);
-  assert.equal(ext.servers[0].url, 'https://localhost:44643'); // A7: TLS na 44643
+  assert.equal(ext.servers[0].url, 'https://localhost:44643'); // TLS na 44643
   assert.equal(int.servers[0].url, 'http://localhost:44642');
 });
 
-test('D1/D4/E2 (Joel, 15/10): versoes por rota; a C.6.15.5 serve 2.0 e 100.0, as rotas por handle so 100.0', () => {
+test('versoes por rota: a C.6.15.5 serve 2.0 e 100.0, as rotas por handle so 100.0', () => {
   const t = real();
   const files = g.generate(t);
   const pr = plugin(files, 'internal').routes;
@@ -232,11 +224,11 @@ test('D1/D4/E2 (Joel, 15/10): versoes por rota; a C.6.15.5 serve 2.0 e 100.0, as
   for (const r of pr.filter(r => !r.path.startsWith('/tv3/remote-device/device'))) {
     if (pk(r) !== 'GET /tv3/remote-device/devices/{classId}') assert.deepEqual(r.versions, ['2.0'], pk(r));
   }
-  // E2: a C.6.7.8 informa a mais recente da API
+  // a C.6.7.8 informa a mais recente da API
   const apis = plugin(files, 'external').apis;
   assert.equal(apis.find(a => a.id === 'tv3ws-remotedevice-communication').version, '100.0');
   assert.ok(apis.filter(a => a.id !== 'tv3ws-remotedevice-communication').every(a => a.version === '2.0'));
-  // D2: o cabecalho interno vai em input_headers de toda rota, e nao no OpenAPI
+  // o cabecalho interno vai em input_headers de toda rota, e nao no OpenAPI
   for (const v of Object.keys(t.backends.internal)) {
     for (const e of files[`krakend-internal.${v}.json`].endpoints) assert.ok(e.input_headers.includes('X-TV30-API-Version'), `${e.method} ${e.endpoint}`);
   }
@@ -244,17 +236,17 @@ test('D1/D4/E2 (Joel, 15/10): versoes por rota; a C.6.15.5 serve 2.0 e 100.0, as
   assert.deepEqual(files['openapi-internal.json'].paths['/tv3/remote-device/devices/{classId}'].get['x-tv30-versions'], ['2.0', '100.0']);
 });
 
-test('D4: validacao de versions e de api.version (a mais recente da rota)', () => {
+test('validacao de versions e de api.version (a mais recente da rota)', () => {
   const r = extra => mini([{ method: 'GET', path: '/a', api: { id: 'tv3ws-a', section: 'C.6.1.2', version: '2.0' }, ...extra }]);
   assert.deepEqual(g.checkTable(r({})), []);
   assert.ok(g.checkTable(r({ versions: [] })).some(e => /versions nao eh lista nao vazia/.test(e)));
   assert.ok(g.checkTable(r({ versions: ['2'] })).some(e => /fora do formato X\.Y/.test(e)));
   assert.ok(g.checkTable(r({ versions: ['2.0', '2.0'] })).some(e => /repetida/.test(e)));
-  assert.ok(g.checkTable(r({ versions: ['2.0', '100.0'] })).some(e => /diferente da mais recente que a rota serve \(100\.0; E2\)/.test(e)));
+  assert.ok(g.checkTable(r({ versions: ['2.0', '100.0'] })).some(e => /diferente da mais recente que a rota serve \(100\.0\)/.test(e)));
   assert.ok(g.checkTable(mini([{ method: 'GET', path: '/a', headers: ['Accept-Version', 'X-TV30-API-Version'] }])).some(e => /cabecalho interno da borda/.test(e)));
 });
 
-test('A7 (Joel, 15/10): TLS so na superficie segura, com o certificado do tls-init', () => {
+test('TLS so na superficie segura, com o certificado do tls-init', () => {
   const files = g.generate(real());
   for (const [name, cfg] of Object.entries(files)) {
     if (!name.startsWith('krakend-')) continue;

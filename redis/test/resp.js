@@ -1,8 +1,6 @@
-// Cliente Redis minimo (RESP2) para os testes de infra/redis: so biblioteca
-// padrao do node, para rodar num node:20-alpine sem npm install. Um comando
-// por vez, em ordem. Resposta de erro do Redis REJEITA com um Error cuja
-// message e o texto do erro (ex.: "TV30ESQUEMA tv30_perfil_grava: ...") e
-// redis = true.
+// Cliente RESP2 minimo, so com a biblioteca padrao do node (roda num
+// node:20-alpine sem npm install). Um comando por vez; erro do Redis rejeita
+// com Error cuja message e o texto do erro e redis = true.
 'use strict';
 const net = require('net');
 

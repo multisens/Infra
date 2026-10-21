@@ -7,14 +7,8 @@ import (
 	"time"
 )
 
-// F-1, F-2 e E7 (respostas do Joel em 15/10, que reveem a P1.9 do Luis de
-// 10/10): as duas superficies tem todas as rotas. Quem deriva as diferencas
-// eh o generate.js (generate.test.js confere a derivacao): na externa
-// (Server-SecureBaseURL), as rotas de uso exclusivo do cliente local e a
-// C.6.1.2 chegam com surface_error 106 (C.4.1.8); na interna (HTTP), o
-// bloco chega com nonlocal_https_only e as rotas C.6.1.2/C.6.1.3 com
-// nonlocal_http (C.4.1.6). Aqui fica o comportamento do plugin com a tabela
-// da externa.
+// Comportamento do plugin com a tabela da superficie externa. As diferencas
+// entre as superficies sao derivadas pelo generate.js (generate.test.js).
 
 // externalExtra: testExtra() como o generate.js o entrega a superficie
 // externa: as mesmas rotas e o mesmo catalogo de APIs, com o 106 da C.4.1.8
@@ -122,11 +116,10 @@ func TestExternaRotaExclusivaDoLocalDa106(t *testing.T) {
 	}
 }
 
-// Na externa o nao local usa as APIs (sem o 106 da E7, que e da superfície
-// HTTP). O caminho do POST continua declarado, entao o OPTIONS que nao e
-// preflight recebe os cabecalhos da C.4.1.9.3; o preflight a borda concede
-// como em qualquer caminho (opcao b, Luis 12/10), e a requisicao de verdade
-// da 106.
+// Na externa o nao local usa as APIs (o 106 da C.4.1.6 e da superficie HTTP).
+// O caminho do POST continua declarado: o OPTIONS que nao e preflight recebe
+// os cabecalhos da C.4.1.9.3, o preflight e concedido como em qualquer
+// caminho, e a requisicao de verdade da 106.
 func TestExternaMantemGetEOptions(t *testing.T) {
 	st := baseStore()
 	bind := signJWT(t, "HS256", []byte("chave-webmedia"), timeClaims(t0, t0, t0.Add(time.Hour)))
@@ -157,8 +150,8 @@ func TestExternaMantemGetEOptions(t *testing.T) {
 	}
 }
 
-// F-2 revista (Joel, 15/10): a C.6.7.9 lista todas as APIs implementadas nas
-// duas superficies, e a C.6.7.8 responde por todas.
+// A C.6.7.9 lista todas as APIs implementadas nas duas superficies, e a
+// C.6.7.8 responde por todas.
 func TestExternaAPIInfo(t *testing.T) {
 	h := externalHandler(t, modeEnforce, baseStore(), nil)
 	wantOK(t, "externa: lista", apiGet(t, h, "/tv3/api-info", nil), allAPIs)

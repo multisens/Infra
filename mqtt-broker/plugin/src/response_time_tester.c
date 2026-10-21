@@ -10,7 +10,7 @@
 
 extern mosquitto_plugin_id_t *mosq_pid;
 
-// Tamanho do buffer da resposta, com o NUL (o mesmo 512 de antes)
+// buffer da resposta, com o NUL
 #define RESPONSE_CAP 512
 
 static char* format_timestamp() {
@@ -62,8 +62,8 @@ void handle_response_time_test(const char* topic, const char* payload) {
     
     const char *pub_time_str = json_object_get_string(publisher_time);
     const char *id = json_object_get_string(publisher_id);
-    // comprimento real do id (12/10): string JSON com \u0000 no meio sai
-    // inteira na resposta; id que nao e string vale o seu texto JSON
+    // comprimento real do id: string JSON com \u0000 no meio sai inteira na
+    // resposta; id que nao e string vale o seu texto JSON
     size_t id_len = json_object_is_type(publisher_id, json_type_string)
         ? (size_t)json_object_get_string_len(publisher_id) : strlen(id);
     int iter = json_object_get_int(iteration);
@@ -86,13 +86,8 @@ void handle_response_time_test(const char* topic, const char* payload) {
         return;
     }
     
-    // Correcao de 12/10 (revisao do plugin), o mesmo defeito do publish_error:
-    // o id entrava no JSON por snprintf, sem escape (aspas, barra invertida ou
-    // controle no id davam JSON invalido), e o buffer vazava quando a
-    // resposta nao cabia em 512 bytes ou o publish falhava. Agora o id sai
-    // escapado por error_json_string (as regras do error_json.c) e o buffer e
-    // liberado aqui sempre que o broker nao fica com ele. Resposta que nao
-    // cabe em RESPONSE_CAP - 1 bytes continua nao saindo, como antes.
+    // id escapado por error_json_string; resposta maior que RESPONSE_CAP - 1
+    // bytes nao sai, e o buffer e liberado aqui sempre que o broker nao fica com ele
     char id_json[RESPONSE_CAP];
     int len = -1;
     if (error_json_string(id_json, sizeof(id_json), id, id_len) >= 0) {

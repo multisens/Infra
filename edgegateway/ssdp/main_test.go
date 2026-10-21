@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// Politica de falha do anunciante (decisao do Luis, 10/10), com rede falsa:
+// Politica de falha do anunciante, com rede falsa:
 // erro de configuracao encerra (exit 1); falta de rede espera e tenta de
 // novo, com um aviso ao entrar e outro ao sair.
 
@@ -173,8 +173,8 @@ type harness struct {
 	onOpen func(n int, c *fakeConn) // n-esima conexao aberta
 }
 
-// O SSDP_ADVERTISE_HOST e obrigatorio (B2, Luis 11/10): o harness ja traz o
-// IPv4 do Wi-Fi de teste (wifi2); o teste que quer outro troca ou apaga.
+// O harness ja traz SSDP_ADVERTISE_HOST com o IPv4 do Wi-Fi de teste (wifi2);
+// o teste que quer outro troca ou apaga.
 func newHarness(t *testing.T) *harness {
 	h := &harness{t: t, env: map[string]string{"SSDP_ADVERTISE_HOST": "192.168.2.7"}, stop: make(chan os.Signal, 4),
 		clock: time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)}
@@ -294,9 +294,8 @@ const (
 	enviaByebye = "enviando ssdp:byebye"
 )
 
-// Teste 44 de docs/ssdp-verificacao.md: o Wi-Fi ainda sem IPv4 na partida.
-// A borda nao cai: o anunciante espera (1, 2, 4, 8 s), avisa uma vez e, com
-// a rede de volta, anuncia pela interface que tem o IPv4 de
+// Wi-Fi ainda sem IPv4 na partida: o anunciante espera (1, 2, 4, 8 s), avisa
+// uma vez e, com a rede de volta, anuncia pela interface que tem o IPv4 de
 // SSDP_ADVERTISE_HOST.
 func TestSemRedeNaPartidaEsperaEVolta(t *testing.T) {
 	h := newHarness(t)
@@ -349,8 +348,8 @@ func TestEsperaCrescenteAte30s(t *testing.T) {
 // Queda de rede no meio do anuncio (troca de Wi-Fi, docker network
 // disconnect): fecha os sockets, espera e volta na rede nova, com a interface
 // e o IPv4 de origem escolhidos de novo. O LOCATION nao muda: o host e o
-// SSDP_ADVERTISE_HOST (B2, Luis 11/10), e o aviso diz que o IPv4 configurado
-// nao esta mais em nenhuma interface. O erro de envio vale como falta de rede
+// SSDP_ADVERTISE_HOST, e o aviso diz que o IPv4 configurado nao esta em
+// nenhuma interface. O erro de envio vale como falta de rede
 // pelo errno ou porque o IPv4 da sessao sumiu; com o IPv4 ainda la e errno
 // fora da lista, e erro de configuracao.
 func TestQuedaDeRedeDuranteOAnuncio(t *testing.T) {
@@ -461,8 +460,7 @@ func TestErrosDeConfiguracaoEncerram(t *testing.T) {
 		want    string
 		opens   int
 	}{
-		// B2 revista (Joel, 15/10): ausente ou vazio vale host detectado
-		// (TestHostDetectado); definido sem host continua erro
+		// ausente ou vazio vale host detectado (TestHostDetectado)
 		{"SSDP_ADVERTISE_HOST sem host", map[string]string{"SSDP_ADVERTISE_HOST": "http://:44642"}, nil, false,
 			cfg + "SSDP_ADVERTISE_HOST=\"http://:44642\" sem host", 0},
 		{"porta invalida", map[string]string{"EDGE_HTTP_PORT": "abc"}, nil, false,
@@ -542,7 +540,7 @@ func TestErroDeRedeNaAbertura(t *testing.T) {
 	h.wantWaits(1*time.Second, 2*time.Second)
 }
 
-// Os avisos do anuncio (D9) saem uma vez; numa sessao nova so os que mudaram.
+// Os avisos do anuncio saem uma vez; numa sessao nova so os que mudaram.
 func TestAvisosNaoSeRepetem(t *testing.T) {
 	h := newHarness(t)
 	h.env["SSDP_ADVERTISE_HOST"] = "tv.local"
@@ -568,7 +566,7 @@ func TestAvisosNaoSeRepetem(t *testing.T) {
 		t.Fatalf("saida %d:\n%s", code, h.log())
 	}
 	h.wantLog(anunciando, 3)
-	h.wantLog("SEM TLS", 0) // a 44643 tem TLS desde a A7
+	h.wantLog("SEM TLS", 0) // a 44643 tem TLS: nenhum aviso de porta sem TLS
 	h.wantLog("AVISO host anunciado: 'tv.local' nao e um IPv4 (nome ou IPv6); o anuncio sai pela interface da rota padrao wlp2s0 (192.168.2.7)", 1)
 	h.wantLog("AVISO host anunciado: 'tv.local' nao e um IPv4 (nome ou IPv6); o anuncio sai pela interface da rota padrao wlp2s0 (192.168.0.23)", 1)
 	h.wantLog(semRede, 2) // uma por queda
@@ -617,8 +615,8 @@ func TestIsNetDown(t *testing.T) {
 	}
 }
 
-// B2 revista (Joel, 15/10): sem SSDP_ADVERTISE_HOST, o host do LOCATION e o
-// IPv4 da interface da rota padrao, sem aviso.
+// Sem SSDP_ADVERTISE_HOST, o host do LOCATION e o IPv4 da interface da rota
+// padrao, sem aviso.
 func TestHostDetectado(t *testing.T) {
 	h := newHarness(t)
 	delete(h.env, "SSDP_ADVERTISE_HOST")
@@ -639,10 +637,9 @@ func TestHostDetectado(t *testing.T) {
 	h.wantLog(falha, 0)
 }
 
-// Complemento do Joel (15/10), medicao M4: com o host detectado, a troca de
-// rede com o anuncio no ar e percebida no NOTIFY seguinte. O anunciante
-// manda o byebye do endereco antigo, avisa no log, nao cai nem passa pelo
-// estado "sem rede", e volta a anunciar com o IP novo.
+// Com o host detectado, a troca de rede com o anuncio no ar e percebida no
+// NOTIFY seguinte: byebye do endereco antigo, aviso no log, sem passar pelo
+// estado "sem rede", e novo anuncio com o IP novo.
 func TestTrocaDeRedeComHostDetectado(t *testing.T) {
 	h := newHarness(t)
 	delete(h.env, "SSDP_ADVERTISE_HOST")
@@ -682,7 +679,7 @@ func TestTrocaDeRedeComHostDetectado(t *testing.T) {
 
 // Arquivo de parada (SSDP_STOP_FILE): o comando de descida o cria, e o
 // anunciante manda o byebye como no SIGTERM (no Windows nao ha SIGTERM para
-// processo em segundo plano). Medicao M3.
+// processo em segundo plano).
 func TestArquivoDeParada(t *testing.T) {
 	sig := make(chan os.Signal, 1)
 	n := 0

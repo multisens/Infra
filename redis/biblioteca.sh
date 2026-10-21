@@ -1,17 +1,7 @@
 #!/bin/sh
-# Monta a biblioteca de funcoes "tv30" do Redis (P4, decisao do Luis em
-# 10/10) e a imprime na saida padrao, pronta para
-#   sh biblioteca.sh | redis-cli -x FUNCTION LOAD REPLACE
-#
-# A biblioteca = cabecalho #!lua + o esquema.json embutido numa string Lua
-# longa (ESQUEMA_JSON) + o corpo funcoes.lua. Assim as regras ficam
-# declaradas num lugar so, o esquema.json: a funcao aplica exatamente o que
-# esta nele, e os testes (infra/redis/test) leem o mesmo arquivo.
-#
-# Uso: biblioteca.sh [esquema.json] [funcoes.lua]
-#      (padrao: os dois ao lado deste script)
-# Quem chama: infra/redis/entrypoint.sh (a cada partida), o Dockerfile
-# (conferencia no build) e infra/redis/test/run.sh.
+# Monta a biblioteca "tv30" do Redis (#!lua + esquema.json numa string Lua
+# longa + funcoes.lua) e a imprime: sh biblioteca.sh | redis-cli -x FUNCTION LOAD REPLACE
+# Uso: biblioteca.sh [esquema.json] [funcoes.lua] (padrao: ao lado deste script)
 set -eu
 DIR=$(dirname "$0")
 ESQ=${1:-$DIR/esquema.json}

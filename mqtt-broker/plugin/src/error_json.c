@@ -1,9 +1,5 @@
-// Montagem da mensagem de errors/<client_id> como JSON sempre valido
-// (correcao de 12/10, defeito achado pela auditoria da documentacao). Ver
-// error_json.h. Teste: tests/test_error_json.c (roda tambem no build da
-// imagem, infra/Dockerfile). Tambem o topico errors/<client_id> e o escape
-// avulso de string JSON (error_json_topic e error_json_string, correcoes de
-// 12/10 da revisao do plugin).
+// Mensagem e topico de errors/<client_id> e escape de string JSON (error_json.h).
+// Teste: tests/test_error_json.c, que roda no build da imagem.
 #include "error_json.h"
 #include <stdio.h>
 #include <string.h>
@@ -62,13 +58,9 @@ static void put_literal(json_writer *w, const char *t) {
     w->buf[w->len] = '\0';
 }
 
-// Acrescenta s[0..n) como conteudo de string JSON (sem as aspas), escapado
-// pela RFC 8259, secao 7: aspas e barra invertida com barra, U+0000 a U+001F
-// com \b \f \n \r \t ou \u00XX; o resto do UTF-8 valido sai como esta, e cada
-// byte invalido vira \ufffd. Escreve no maximo max bytes. Cada unidade (um
-// caractere UTF-8 ou um escape) entra inteira ou nao entra: o corte nunca
-// fica no meio de um escape nem de um caractere. Devolve 1 se coube tudo, 0
-// se cortou.
+// s[0..n) como conteudo de string JSON, sem aspas (RFC 8259, secao 7), em no
+// maximo max bytes; cada unidade (caractere UTF-8 ou escape) entra inteira ou
+// nao entra. Devolve 1 se coube tudo, 0 se cortou.
 static int put_string(json_writer *w, const char *s, size_t n, size_t max) {
     const unsigned char *p = (const unsigned char *)s;
     size_t used = 0, i = 0;
@@ -166,8 +158,6 @@ int error_json_build(char *out, size_t cap,
     return (int)w.len;
 }
 
-// Topico errors/<nome> (correcao de 12/10, revisao do plugin). Regra em
-// error_json.h.
 int error_json_topic(char *out, size_t cap, const char *client_id) {
     static const char PREFIX[] = "errors/";
     const size_t plen = sizeof(PREFIX) - 1;

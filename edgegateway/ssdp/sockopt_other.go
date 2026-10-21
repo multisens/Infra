@@ -4,11 +4,8 @@ package main
 
 import "syscall"
 
-// Opcoes de socket e erros do sistema fora do Windows (Linux e macOS). O
-// Windows tem o par em sockopt_windows.go: la o descritor e syscall.Handle, e
-// os erros de rede sao os codigos WSA (complemento do Joel de 15/10: os
-// binarios dos tres sistemas saem do mesmo codigo, so com a biblioteca
-// padrao).
+// Opcoes de socket e erros do sistema fora do Windows (Linux e macOS); o par
+// do Windows esta em sockopt_windows.go.
 
 func setMulticastOpts(fd uintptr, a [4]byte, ttl int) error {
 	if err := syscall.SetsockoptInet4Addr(int(fd), syscall.IPPROTO_IP, syscall.IP_MULTICAST_IF, a); err != nil {

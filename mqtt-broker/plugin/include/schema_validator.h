@@ -8,7 +8,6 @@ typedef struct {
     int is_valid;
 } validation_result;
 
-// Main validation function
 validation_result validate_json_schema(json_object *data, json_object *schema);
 
 #endif

@@ -3,7 +3,6 @@
 #include <regex.h>
 #include <math.h>
 
-// Validate type
 static int validate_type(json_object *data, const char *expected_type, char *error) {
     json_type actual_type = json_object_get_type(data);
     
@@ -38,7 +37,6 @@ static int validate_type(json_object *data, const char *expected_type, char *err
     return 1;
 }
 
-// Validate minimum
 static int validate_minimum(json_object *data, json_object *schema, char *error) {
     json_object *min_obj;
     if (!json_object_object_get_ex(schema, "minimum", &min_obj)) return 1;
@@ -53,7 +51,6 @@ static int validate_minimum(json_object *data, json_object *schema, char *error)
     return 1;
 }
 
-// Validate maximum
 static int validate_maximum(json_object *data, json_object *schema, char *error) {
     json_object *max_obj;
     if (!json_object_object_get_ex(schema, "maximum", &max_obj)) return 1;
@@ -68,7 +65,6 @@ static int validate_maximum(json_object *data, json_object *schema, char *error)
     return 1;
 }
 
-// Validate exclusiveMinimum
 static int validate_exclusive_minimum(json_object *data, json_object *schema, char *error) {
     json_object *min_obj;
     if (!json_object_object_get_ex(schema, "exclusiveMinimum", &min_obj)) return 1;
@@ -83,7 +79,6 @@ static int validate_exclusive_minimum(json_object *data, json_object *schema, ch
     return 1;
 }
 
-// Validate exclusiveMaximum
 static int validate_exclusive_maximum(json_object *data, json_object *schema, char *error) {
     json_object *max_obj;
     if (!json_object_object_get_ex(schema, "exclusiveMaximum", &max_obj)) return 1;
@@ -98,7 +93,6 @@ static int validate_exclusive_maximum(json_object *data, json_object *schema, ch
     return 1;
 }
 
-// Validate multipleOf
 static int validate_multiple_of(json_object *data, json_object *schema, char *error) {
     json_object *mult_obj;
     if (!json_object_object_get_ex(schema, "multipleOf", &mult_obj)) return 1;
@@ -113,7 +107,6 @@ static int validate_multiple_of(json_object *data, json_object *schema, char *er
     return 1;
 }
 
-// Validate minLength
 static int validate_min_length(json_object *data, json_object *schema, char *error) {
     json_object *min_obj;
     if (!json_object_object_get_ex(schema, "minLength", &min_obj)) return 1;
@@ -129,7 +122,6 @@ static int validate_min_length(json_object *data, json_object *schema, char *err
     return 1;
 }
 
-// Validate maxLength
 static int validate_max_length(json_object *data, json_object *schema, char *error) {
     json_object *max_obj;
     if (!json_object_object_get_ex(schema, "maxLength", &max_obj)) return 1;
@@ -145,7 +137,6 @@ static int validate_max_length(json_object *data, json_object *schema, char *err
     return 1;
 }
 
-// Validate pattern
 static int validate_pattern(json_object *data, json_object *schema, char *error) {
     json_object *pattern_obj;
     if (!json_object_object_get_ex(schema, "pattern", &pattern_obj)) return 1;
@@ -171,7 +162,6 @@ static int validate_pattern(json_object *data, json_object *schema, char *error)
     return 1;
 }
 
-// Validate enum
 static int validate_enum(json_object *data, json_object *schema, char *error) {
     json_object *enum_obj;
     if (!json_object_object_get_ex(schema, "enum", &enum_obj)) return 1;
@@ -188,7 +178,6 @@ static int validate_enum(json_object *data, json_object *schema, char *error) {
     return 0;
 }
 
-// Validate const
 static int validate_const(json_object *data, json_object *schema, char *error) {
     json_object *const_obj;
     if (!json_object_object_get_ex(schema, "const", &const_obj)) return 1;
@@ -200,7 +189,6 @@ static int validate_const(json_object *data, json_object *schema, char *error) {
     return 1;
 }
 
-// Validate minItems
 static int validate_min_items(json_object *data, json_object *schema, char *error) {
     json_object *min_obj;
     if (!json_object_object_get_ex(schema, "minItems", &min_obj)) return 1;
@@ -215,7 +203,6 @@ static int validate_min_items(json_object *data, json_object *schema, char *erro
     return 1;
 }
 
-// Validate maxItems
 static int validate_max_items(json_object *data, json_object *schema, char *error) {
     json_object *max_obj;
     if (!json_object_object_get_ex(schema, "maxItems", &max_obj)) return 1;
@@ -230,7 +217,6 @@ static int validate_max_items(json_object *data, json_object *schema, char *erro
     return 1;
 }
 
-// Validate uniqueItems
 static int validate_unique_items(json_object *data, json_object *schema, char *error) {
     json_object *unique_obj;
     if (!json_object_object_get_ex(schema, "uniqueItems", &unique_obj)) return 1;
@@ -251,7 +237,6 @@ static int validate_unique_items(json_object *data, json_object *schema, char *e
     return 1;
 }
 
-// Validate minProperties
 static int validate_min_properties(json_object *data, json_object *schema, char *error) {
     json_object *min_obj;
     if (!json_object_object_get_ex(schema, "minProperties", &min_obj)) return 1;
@@ -266,7 +251,6 @@ static int validate_min_properties(json_object *data, json_object *schema, char 
     return 1;
 }
 
-// Validate maxProperties
 static int validate_max_properties(json_object *data, json_object *schema, char *error) {
     json_object *max_obj;
     if (!json_object_object_get_ex(schema, "maxProperties", &max_obj)) return 1;
@@ -281,10 +265,8 @@ static int validate_max_properties(json_object *data, json_object *schema, char 
     return 1;
 }
 
-// Forward declaration for recursive validation
 static validation_result validate_with_schema(json_object *data, json_object *schema);
 
-// Validate required properties
 static int validate_required(json_object *data, json_object *schema, char *error) {
     json_object *required_obj;
     if (!json_object_object_get_ex(schema, "required", &required_obj)) return 1;
@@ -303,7 +285,6 @@ static int validate_required(json_object *data, json_object *schema, char *error
     return 1;
 }
 
-// Validate properties
 static int validate_properties(json_object *data, json_object *schema, char *error) {
     json_object *properties_obj;
     if (!json_object_object_get_ex(schema, "properties", &properties_obj)) return 1;
@@ -321,12 +302,10 @@ static int validate_properties(json_object *data, json_object *schema, char *err
     return 1;
 }
 
-// Validate additionalProperties
 static int validate_additional_properties(json_object *data, json_object *schema, char *error) {
     json_object *additional_obj;
     if (!json_object_object_get_ex(schema, "additionalProperties", &additional_obj)) return 1;
     
-    // If additionalProperties is false, no extra properties allowed
     if (json_object_get_type(additional_obj) == json_type_boolean && 
         !json_object_get_boolean(additional_obj)) {
         
@@ -340,7 +319,6 @@ static int validate_additional_properties(json_object *data, json_object *schema
             }
         }
     }
-    // If additionalProperties is a schema, validate extra properties against it
     else if (json_object_get_type(additional_obj) == json_type_object) {
         json_object *properties_obj;
         json_object_object_get_ex(schema, "properties", &properties_obj);
@@ -358,14 +336,12 @@ static int validate_additional_properties(json_object *data, json_object *schema
     return 1;
 }
 
-// Validate array items
 static int validate_items(json_object *data, json_object *schema, char *error) {
     json_object *items_obj;
     if (!json_object_object_get_ex(schema, "items", &items_obj)) return 1;
     
     int array_len = json_object_array_length(data);
     
-    // If items is a schema, validate all items against it
     if (json_object_get_type(items_obj) == json_type_object) {
         for (int i = 0; i < array_len; i++) {
             json_object *item = json_object_array_get_idx(data, i);
@@ -376,7 +352,6 @@ static int validate_items(json_object *data, json_object *schema, char *error) {
             }
         }
     }
-    // If items is an array of schemas, validate each item against corresponding schema
     else if (json_object_get_type(items_obj) == json_type_array) {
         int schema_len = json_object_array_length(items_obj);
         for (int i = 0; i < array_len && i < schema_len; i++) {
@@ -392,11 +367,9 @@ static int validate_items(json_object *data, json_object *schema, char *error) {
     return 1;
 }
 
-// Main validation logic
 static validation_result validate_with_schema(json_object *data, json_object *schema) {
     validation_result result = {.is_valid = 1, .error_message = ""};
     
-    // Validate type
     json_object *type_obj;
     if (json_object_object_get_ex(schema, "type", &type_obj)) {
         const char *type = json_object_get_string(type_obj);
@@ -408,7 +381,6 @@ static validation_result validate_with_schema(json_object *data, json_object *sc
     
     json_type data_type = json_object_get_type(data);
     
-    // Number validations
     if (data_type == json_type_int || data_type == json_type_double) {
         if (!validate_minimum(data, schema, result.error_message) ||
             !validate_maximum(data, schema, result.error_message) ||
@@ -420,7 +392,6 @@ static validation_result validate_with_schema(json_object *data, json_object *sc
         }
     }
     
-    // String validations
     if (data_type == json_type_string) {
         if (!validate_min_length(data, schema, result.error_message) ||
             !validate_max_length(data, schema, result.error_message) ||
@@ -430,7 +401,6 @@ static validation_result validate_with_schema(json_object *data, json_object *sc
         }
     }
     
-    // Array validations
     if (data_type == json_type_array) {
         if (!validate_min_items(data, schema, result.error_message) ||
             !validate_max_items(data, schema, result.error_message) ||
@@ -441,7 +411,6 @@ static validation_result validate_with_schema(json_object *data, json_object *sc
         }
     }
     
-    // Object validations
     if (data_type == json_type_object) {
         if (!validate_required(data, schema, result.error_message) ||
             !validate_min_properties(data, schema, result.error_message) ||
@@ -453,7 +422,6 @@ static validation_result validate_with_schema(json_object *data, json_object *sc
         }
     }
     
-    // Generic validations
     if (!validate_enum(data, schema, result.error_message) ||
         !validate_const(data, schema, result.error_message)) {
         result.is_valid = 0;
@@ -463,7 +431,6 @@ static validation_result validate_with_schema(json_object *data, json_object *sc
     return result;
 }
 
-// Public API
 validation_result validate_json_schema(json_object *data, json_object *schema) {
     return validate_with_schema(data, schema);
 }
