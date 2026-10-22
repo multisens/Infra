@@ -34,7 +34,7 @@ const INTERNAL_VERSION_HEADER = 'X-TV30-API-Version';
 const INTERNAL_HOST_HEADER = 'X-TV30-Host';
 const INTERNAL_HEADERS = [INTERNAL_VERSION_HEADER, INTERNAL_HOST_HEADER];
 // versions da rota: as versoes "X.Y" servidas (C.3.6.2); ausente => so a 2.0, a
-// "current version" da C.3.6.3. De 100 em diante, propostas do testbed.
+// "current version" da C.3.6.3. De 100 em diante, extensoes do testbed.
 const DEFAULT_VERSIONS = ['2.0'];
 const compareVersions = (a, b) => {
   const [am, an] = a.split('.').map(Number), [bm, bn] = b.split('.').map(Number);
@@ -57,7 +57,7 @@ const NONLOCAL_HTTP_SECTIONS = ['C.6.1.2', 'C.6.1.3'];
 const NO_SERVICE_VALUES = [300];
 
 // Superficies, com as chaves de surfaces e backends do routes.json; secure = a
-// do Server-SecureBaseURL. Duas superficies sao escolha do testbed: a C.3.4 so
+// do Server-SecureBaseURL. Duas superficies sao do testbed: a C.3.4 so
 // define o Server-BaseURL (http, porta fixa 44642) e o Server-SecureBaseURL.
 const SURFACE_RULES = {
   external: {

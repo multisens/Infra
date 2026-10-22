@@ -10,7 +10,7 @@
 
 // Teto, em bytes ja escapados, de cada campo alem do payload, que fica com o
 // resto. So cortam casos extremos: topico e client_id do MQTT vao a 65535 bytes;
-// details vem de error_message[512]. Decisao de implementacao, sem base na norma.
+// details vem de error_message[512]. Sem base na norma.
 #define ERROR_JSON_TIMESTAMP_MAX 32
 #define ERROR_JSON_TOPIC_MAX 512
 #define ERROR_JSON_TYPE_MAX 64
@@ -44,8 +44,8 @@ int error_json_build(char *out, size_t cap,
 // U+007F a U+009F) do client_id viram _, como cada byte fora de UTF-8; corte so
 // entre caracteres inteiros. Curinga ou UTF-8 invalido no topico o tornam
 // inassinavel ou derrubam o cliente libmosquitto. NULL vale "unknown"; vazio, "_".
-// a+b e a_b caem no mesmo topico: o campo client_id leva o original. Decisao de
-// implementacao, sem base na norma. Devolve o comprimento ou -1 (out NULL ou cap < 9).
+// a+b e a_b caem no mesmo topico: o campo client_id leva o original. Sem base na
+// norma. Devolve o comprimento ou -1 (out NULL ou cap < 9).
 int error_json_topic(char *out, size_t cap, const char *client_id);
 
 // s[0..n) como string JSON com aspas, pelo escape de error_json_build, sem

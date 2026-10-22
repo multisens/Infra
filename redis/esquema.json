@@ -2,7 +2,7 @@
   "$comentario": [
     "Esquema das chaves do Redis do testbed TV30. A biblioteca de funcoes (funcoes.lua) o recebe embutido",
     "(biblioteca.sh) e os testes (infra/redis/test) o leem: a regra muda aqui e vale na proxima partida do redis.",
-    "Redis, funcoes e este esquema sao decisoes de implementacao do testbed, nao da ABNT NBR 25608;",
+    "Redis, funcoes e este esquema sao do testbed, nao da ABNT NBR 25608;",
     "o campo 'fonte' de cada regra diz de onde ela veio (secao da norma, schemas.json do broker ou codigo)."
   ],
   "versao": "4",
@@ -82,7 +82,7 @@
       "campos": {
         "id": { "ref": "idPerfil", "obrigatorio": true, "fonte": "Tabela 7: UUID string, required" },
         "nickname": { "tipo": "texto", "min": 1, "max": 20, "obrigatorio": true, "fonte": "Tabela 7: string (up to 20 characters), required" },
-        "avatar": { "tipo": "nomeArquivo", "maxNome": 128, "extensoes": ["svg", "png", "jpg", "jpeg", "webp"], "fonte": "Tabela 7: 'Path indicating the file with the graphical representation of the viewer profile', file path, optional. Nome de um arquivo do diretorio de miniaturas (<USER_DATA_PATH>/thumbs no AoP = USER_THUMBS no tv3ws, que o entrega pela C.6.14.6), no formato ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.(svg|png|jpg|jpeg|webp)$; ausente = o avatar padrao de cada tela. O AoP grava <id do perfil>.svg. Restringir o caminho a um nome dentro de um diretorio e decisao do testbed; a norma so diz 'file path'" },
+        "avatar": { "tipo": "nomeArquivo", "maxNome": 128, "extensoes": ["svg", "png", "jpg", "jpeg", "webp"], "fonte": "Tabela 7: 'Path indicating the file with the graphical representation of the viewer profile', file path, optional. Nome de um arquivo do diretorio de miniaturas (<USER_DATA_PATH>/thumbs no AoP = USER_THUMBS no tv3ws, que o entrega pela C.6.14.6), no formato ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.(svg|png|jpg|jpeg|webp)$; ausente = o avatar padrao de cada tela. O AoP grava <id do perfil>.svg. A norma so diz 'file path'; o testbed restringe o caminho a um nome dentro de um diretorio" },
         "parentalControl": { "ref": "booleano", "obrigatorio": true, "fonte": "Tabela 7: (true | false), required" },
         "maxContentRating": { "tipo": "enum", "valores": ["L", "10", "12", "14", "16", "18"], "obrigatorioSe": { "campo": "parentalControl", "valor": "true" }, "fonte": "Tabela 7: valores predefinidos do pais (classificacao indicativa do Brasil, os mesmos do AoP); required only if parentalControl = true" },
         "audioLanguage": { "ref": "idioma", "fonte": "Tabela 7: IETF RFC 5646, optional" },
@@ -95,7 +95,7 @@
         "audioDescription": { "ref": "booleano", "obrigatorio": true, "fonte": "Tabela 7: (true | false), required" },
         "dialogEnhancement": { "ref": "booleano", "obrigatorio": true, "fonte": "Tabela 7: (true | false), required" },
         "voiceGuidance": { "ref": "booleano", "obrigatorio": true, "fonte": "Tabela 7: (true | false), required" },
-        "lastAccess": { "tipo": "inteiro", "min": 0, "fonte": "Instante do ultimo acesso em ms, decisao de implementacao; fora da Tabela 7" }
+        "lastAccess": { "tipo": "inteiro", "min": 0, "fonte": "Instante do ultimo acesso em ms; fora da Tabela 7" }
       },
       "outrosCampos": false,
       "campoIgualAParte": { "campo": "id", "parte": "id" },
@@ -193,7 +193,7 @@
         "campos": {
           "alg": { "tipo": "enum", "valores": ["HS256", "HS512", "RS256", "RS512"], "obrigatorio": true, "fonte": "C.4.1.4.8" },
           "key": { "tipo": "texto", "min": 1, "obrigatorio": true, "fonte": "C.6.8.2 (o texto recebido; a borda ja confere o formato da chave)" },
-          "registeredAt": { "tipo": "inteiro", "min": 0, "obrigatorio": true, "fonte": "instante do registro em ms (decisao de implementacao)" }
+          "registeredAt": { "tipo": "inteiro", "min": 0, "obrigatorio": true, "fonte": "instante do registro em ms (fora da norma)" }
         },
         "outrosCampos": false
       },
@@ -205,7 +205,7 @@
     {
       "id": "perfil-indexado",
       "descricao": "Todo membro de users:index tem o hash user:{id}, e todo hash user:{id} tem o id em users:index.",
-      "fonte": "Decisao de implementacao: user:{id} e users:index andam juntos"
+      "fonte": "user:{id} e users:index andam juntos"
     },
     {
       "id": "perfil-dependentes",
@@ -215,7 +215,7 @@
     {
       "id": "clientes-disjuntos",
       "descricao": "Nenhum id esta ao mesmo tempo em clients:authorized e clients:blocked.",
-      "fonte": "Decisao de implementacao: o cliente esta autorizado ou bloqueado, nunca os dois"
+      "fonte": "o cliente esta autorizado ou bloqueado, nunca os dois"
     },
     {
       "id": "autorizado-tem-registro",

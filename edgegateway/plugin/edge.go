@@ -52,7 +52,7 @@ func edgeHandlerNames() string {
 // Negociacao de versao (C.3.6.5), em toda rota, contra o campo versions do
 // routes.json (ausente = 2.0, a "current version" da C.3.6.3): sem
 // Accept-Version vale a 2.0; fora do formato X.Y, 101; versao que a rota nao
-// serve, 100. Versoes de 100 em diante sao propostas do testbed (100.0:
+// serve, 100. Versoes de 100 em diante sao extensoes do testbed (100.0:
 // remote-device por handle). A negociada vai ao servico em X-TV30-API-Version.
 const (
 	defaultVersion        = "2.0"

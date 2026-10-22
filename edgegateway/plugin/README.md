@@ -130,7 +130,7 @@ O gerador tem testes próprios: `node --test ../generate.test.js`.
 
 ## Limitações
 
-- **Associado pelo `Origin`:** fora do navegador, o `Origin` é forjável; o risco é aceito (decisão do projeto). A chamada sem `Origin` fica fora do 106 do associado excluído (etapa 3).
+- **Associado pelo `Origin`:** fora do navegador, o `Origin` é forjável. A chamada sem `Origin` fica fora do 106 do associado excluído (etapa 3).
 - **Não implementado:**
   - liberar os recursos compartilhados (C.4.4) ao revogar uma chave, ao remover a autorização ou ao fechar a app associada;
   - o 304 a serviço fora do Application Catalog, porque o catálogo não tem publicador;

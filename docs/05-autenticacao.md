@@ -12,8 +12,8 @@ A classe é definida **uma vez**, na autorização (`GET /tv3/authorize`, em `tv
 | `local-autonomous` | sem `pm`, e `Origin` fora de `origins:associated` | access token; bind-token nas APIs protegidas |
 | `local-associated` | `Origin` presente no hash `origins:associated`, que o AoP grava ao lançar a app (origem própria da app → `globalServiceId` do serviço corrente; sem serviço corrente, a origem não é gravada) | nenhuma no próprio contexto de serviço (C.4.1.1); fora dele, bind-token válido daquele contexto |
 
-O reconhecimento do local associado pelo `Origin` é decisão do projeto, com o risco aceito. Os limites conhecidos:
-- **Risco aceito:** fora do navegador, o `Origin` pode ser forjado, e um `Origin` forjado presente em `origins:associated` passa como associado;
+O local associado é reconhecido pelo `Origin`. Os limites conhecidos:
+- **`Origin` forjável:** fora do navegador, o `Origin` pode ser forjado, e um `Origin` forjado presente em `origins:associated` passa como associado;
 - **origem própria por app:** o AoP abre cada app na origem `http://<rótulo>.<APPS_DOMAIN>:<AOP_PUBLIC_PORT>` (padrão `<rótulo>.apps.localhost:8080`; `aop/src/app-hosts.js`), roteia pelo cabeçalho `Host` e grava essa origem ao lançar a app (`aop/src/core.js`); é o `Origin` que o navegador manda nas chamadas dela. O rótulo sai de um `appId` fixo por app (`urn-tv30-app-users-test`, por exemplo), e a URL leva o prefixo `/graphicsAppProxy`, que não entra no `Origin`. O caminho `/graphicsAppProxy` no host do AoP redireciona (302) para o host da app. Com a tela do AoP aberta de outra máquina, `*.localhost` não aponta para o AoP, e as apps não carregam (`APPS_DOMAIN` aceita um domínio resolvível na rede);
 - a C.4.1.7 manda o associado usar uma porta de origem atribuída pelo gerenciador de componentes e diz, na mesma seção, que o mecanismo de diferenciação é decisão de implementação. O `Origin` é a decisão deste testbed.
 
@@ -158,7 +158,7 @@ A política está em `edgegateway/routes.json`, nos campos `auth` (`none`, `toke
 
 `GET /tv3/remote-device/devices/{classId}` (C.6.15.5) é só do cliente local: a Tabela C.80 diz "This API allows a local client application". O não local recebe 106; a Tabela C.80 lista 107 para ele, e no testbed o 107 fica para o access token ausente, inválido ou expirado.
 
-`GET` e `DELETE /tv3/remote-device/device/{handle}` são rotas de proposta do testbed, fora da norma (fora da Tabela C.2 e sem campo `api`). Seguem a C.6.15.5 (só o cliente local) e só existem na versão 100.0: sem `Accept-Version: 100.0`, a borda responde 100.
+`GET` e `DELETE /tv3/remote-device/device/{handle}` são rotas de extensão do testbed, fora da norma (fora da Tabela C.2 e sem campo `api`). Seguem a C.6.15.5 (só o cliente local) e só existem na versão 100.0: sem `Accept-Version: 100.0`, a borda responde 100.
 
 A tabela completa está em `edgegateway/plugin/README.md`.
 
