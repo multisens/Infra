@@ -1,6 +1,6 @@
 #!/bin/sh
-# Supervisor do edgegateway (dumb-init como PID 1 encaminha sinais): se
-# qualquer processo cair, o container encerra por completo.
+# Supervisor of the edgegateway (dumb-init as PID 1 forwards signals): if any
+# process exits, the whole container exits.
 set -u
 
 VARIANT="${EDGE_VARIANT:-linux}"
@@ -22,7 +22,7 @@ shutdown() {
 }
 trap shutdown TERM INT
 
-# ash nao tem `wait -n`: vigia por polling e derruba tudo se um cair.
+# ash has no `wait -n`: polls, and brings everything down if one exits.
 while :; do
   for p in $PIDS; do
     if ! kill -0 "$p" 2>/dev/null; then

@@ -11,9 +11,9 @@ import (
 	"time"
 )
 
-// Politica de falha do anunciante, com rede falsa:
-// erro de configuracao encerra (exit 1); falta de rede espera e tenta de
-// novo, com um aviso ao entrar e outro ao sair.
+// Failure policy of the announcer, with a fake network: a configuration
+// error exits (exit 1); a lack of network waits and tries again, with one
+// warning on entering and another on leaving.
 
 type readMsg struct {
 	msg  string
@@ -27,7 +27,8 @@ type fakeConn struct {
 	sent    []string
 	replies []string
 	sendErr error
-	onSend  func(n int) // depois do n-esimo envio bem-sucedido
+	// After the n-th successful send.
+	onSend  func(n int)
 	onReply func()
 	in      chan readMsg
 	closed  chan struct{}
@@ -99,12 +100,14 @@ func (c *fakeConn) count(nts string) int {
 }
 
 type fakeNet struct {
-	h       *harness
-	mu      sync.Mutex
-	ifaces  []ifaceInfo
-	route   string
-	names   map[string]bool // existem na maquina (Lookup), com ou sem IPv4
-	openErr []error         // erros dos proximos Open, um por chamada
+	h      *harness
+	mu     sync.Mutex
+	ifaces []ifaceInfo
+	route  string
+	// Exist on the machine (Lookup), with or without IPv4.
+	names map[string]bool
+	// Errors of the next Open calls, one per call.
+	openErr []error
 	opened  []*fakeConn
 }
 
@@ -160,21 +163,24 @@ func (f *fakeNet) conns() []*fakeConn {
 }
 
 type harness struct {
-	t      *testing.T
-	net    *fakeNet
-	env    map[string]string
-	stop   chan os.Signal
-	mu     sync.Mutex
-	logs   []string
-	waits  []time.Duration
-	clock  time.Time
-	ticks  int                      // ticks prontos em cada sessao
-	onWait func(n int)              // depois da n-esima espera
-	onOpen func(n int, c *fakeConn) // n-esima conexao aberta
+	t     *testing.T
+	net   *fakeNet
+	env   map[string]string
+	stop  chan os.Signal
+	mu    sync.Mutex
+	logs  []string
+	waits []time.Duration
+	clock time.Time
+	// Ticks ready in each session.
+	ticks int
+	// After the n-th wait.
+	onWait func(n int)
+	// The n-th connection opened.
+	onOpen func(n int, c *fakeConn)
 }
 
-// O harness ja traz SSDP_ADVERTISE_HOST com o IPv4 do Wi-Fi de teste (wifi2);
-// o teste que quer outro troca ou apaga.
+// The harness sets SSDP_ADVERTISE_HOST to the IPv4 of the test Wi-Fi
+// (wifi2); a test that wants another one replaces or removes it.
 func newHarness(t *testing.T) *harness {
 	h := &harness{t: t, env: map[string]string{"SSDP_ADVERTISE_HOST": "192.168.2.7"}, stop: make(chan os.Signal, 4),
 		clock: time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)}
@@ -184,8 +190,8 @@ func newHarness(t *testing.T) *harness {
 
 func (h *harness) sigterm() { h.stop <- syscall.SIGTERM }
 
-// stopAfterFirstNotify: SIGTERM logo depois do primeiro par de NOTIFY da
-// n-esima conexao.
+// stopAfterFirstNotify: SIGTERM right after the first pair of NOTIFY of the
+// n-th connection.
 func (h *harness) stopAfterFirstNotify(want int) {
 	h.onOpen = func(n int, c *fakeConn) {
 		if n == want {
@@ -294,13 +300,15 @@ const (
 	enviaByebye = "enviando ssdp:byebye"
 )
 
-// Wi-Fi ainda sem IPv4 na partida: o anunciante espera (1, 2, 4, 8 s), avisa
-// uma vez e, com a rede de volta, anuncia pela interface que tem o IPv4 de
-// SSDP_ADVERTISE_HOST.
+// Wi-Fi still without IPv4 at startup: the announcer waits (1, 2, 4, 8 s),
+// warns once and, with the network back, announces on the interface that has
+// the IPv4 of SSDP_ADVERTISE_HOST.
 func TestSemRedeNaPartidaEsperaEVolta(t *testing.T) {
 	h := newHarness(t)
-	h.net.names["wlp2s0"] = true // existe, ainda sem IPv4
-	h.ticks = 3                  // SIGTERM pendente vence o tick: sem alive depois do byebye
+	// Exists, still without IPv4.
+	h.net.names["wlp2s0"] = true
+	// A pending SIGTERM wins over the tick: no alive after the byebye.
+	h.ticks = 3
 	h.onWait = func(n int) {
 		if n == 4 {
 			h.net.set("wlp2s0", wifi2)
@@ -323,8 +331,8 @@ func TestSemRedeNaPartidaEsperaEVolta(t *testing.T) {
 	}
 }
 
-// Espera crescente ate 30 s, sem repetir o aviso; SIGTERM sem rede sai com
-// 0 e sem byebye (nao ha socket).
+// Increasing wait up to 30 s, without repeating the warning; SIGTERM without
+// network exits with 0 and without byebye (there is no socket).
 func TestEsperaCrescenteAte30s(t *testing.T) {
 	h := newHarness(t)
 	h.onWait = func(n int) {
@@ -345,13 +353,13 @@ func TestEsperaCrescenteAte30s(t *testing.T) {
 	}
 }
 
-// Queda de rede no meio do anuncio (troca de Wi-Fi, docker network
-// disconnect): fecha os sockets, espera e volta na rede nova, com a interface
-// e o IPv4 de origem escolhidos de novo. O LOCATION nao muda: o host e o
-// SSDP_ADVERTISE_HOST, e o aviso diz que o IPv4 configurado nao esta em
-// nenhuma interface. O erro de envio vale como falta de rede
-// pelo errno ou porque o IPv4 da sessao sumiu; com o IPv4 ainda la e errno
-// fora da lista, e erro de configuracao.
+// Network loss while announcing (Wi-Fi change, docker network disconnect):
+// closes the sockets, waits and comes back on the new network, with the
+// interface and source IPv4 chosen again. LOCATION does not change: the host
+// is SSDP_ADVERTISE_HOST, and the warning says the configured IPv4 is on no
+// interface. A send error is a lack of network by the errno or because the
+// IPv4 of the session is gone; with the IPv4 still there and an errno
+// outside the list, it is a configuration error.
 func TestQuedaDeRedeDuranteOAnuncio(t *testing.T) {
 	for _, c := range []struct {
 		name    string
@@ -371,7 +379,8 @@ func TestQuedaDeRedeDuranteOAnuncio(t *testing.T) {
 			h.ticks = 1
 			h.onOpen = func(n int, conn *fakeConn) {
 				switch n {
-				case 1: // depois do primeiro par, o envio passa a falhar
+				// After the first pair, sending fails.
+				case 1:
 					conn.onSend = func(k int) {
 						if k == 2 {
 							conn.setSendErr(c.err)
@@ -390,7 +399,8 @@ func TestQuedaDeRedeDuranteOAnuncio(t *testing.T) {
 			}
 			h.onWait = func(n int) {
 				if n == 2 || (!c.netGone && n == 1) {
-					h.net.set("wlp2s0", wifi0) // a rede nova
+					// The new network.
+					h.net.set("wlp2s0", wifi0)
 				}
 			}
 			code := h.run()
@@ -424,7 +434,7 @@ func TestQuedaDeRedeDuranteOAnuncio(t *testing.T) {
 	}
 }
 
-// Erro de leitura do grupo: mesma classificacao do envio.
+// A read error on the group: the same classification as sending.
 func TestErroDeLeitura(t *testing.T) {
 	h := newHarness(t)
 	h.net.set("wlp2s0", wifi2)
@@ -448,19 +458,22 @@ func TestErroDeLeitura(t *testing.T) {
 	h.wantWaits(1 * time.Second)
 }
 
-// Erros de configuracao: exit 1 (a borda cai), sem esperar a rede.
+// Configuration errors: exit 1 (the edge goes down), without waiting for the
+// network.
 func TestErrosDeConfiguracaoEncerram(t *testing.T) {
 	inUse := sockErr("listen", "bind", syscall.EADDRINUSE)
 	const cfg = falha + " configuracao do anuncio (SSDP_ADVERTISE_HOST, EDGE_HTTP_PORT, EDGE_HTTPS_PORT): "
 	for _, c := range []struct {
-		name    string
-		env     map[string]string // "-" = apaga a variavel
+		name string
+		// "-" removes the variable.
+		env     map[string]string
 		openErr []error
-		noNet   bool // sem rede na 1a tentativa
-		want    string
-		opens   int
+		// No network on the first attempt.
+		noNet bool
+		want  string
+		opens int
 	}{
-		// ausente ou vazio vale host detectado (TestHostDetectado)
+		// Absent or empty means a detected host (TestHostDetectado).
 		{"SSDP_ADVERTISE_HOST sem host", map[string]string{"SSDP_ADVERTISE_HOST": "http://:44642"}, nil, false,
 			cfg + "SSDP_ADVERTISE_HOST=\"http://:44642\" sem host", 0},
 		{"porta invalida", map[string]string{"EDGE_HTTP_PORT": "abc"}, nil, false,
@@ -504,8 +517,8 @@ func TestErrosDeConfiguracaoEncerram(t *testing.T) {
 	}
 }
 
-// SSDP_INTERFACE existe mas sem IPv4: espera (nao e erro de configuracao) e
-// anuncia por ela quando o IPv4 chega.
+// SSDP_INTERFACE exists but without IPv4: waits (not a configuration error)
+// and announces on it when the IPv4 arrives.
 func TestInterfaceForcadaSemIPv4Espera(t *testing.T) {
 	h := newHarness(t)
 	h.env["SSDP_INTERFACE"] = "wlp2s0"
@@ -522,8 +535,9 @@ func TestInterfaceForcadaSemIPv4Espera(t *testing.T) {
 	h.wantWaits(1 * time.Second)
 }
 
-// Erro de rede ao abrir os sockets (o IPv4 sumiu entre a escolha e o bind,
-// ou o grupo nao entra na interface): espera e tenta de novo.
+// A network error opening the sockets (the IPv4 gone between the choice and
+// the bind, or the group does not join the interface): waits and tries
+// again.
 func TestErroDeRedeNaAbertura(t *testing.T) {
 	h := newHarness(t)
 	h.net.set("wlp2s0", wifi2)
@@ -540,7 +554,8 @@ func TestErroDeRedeNaAbertura(t *testing.T) {
 	h.wantWaits(1*time.Second, 2*time.Second)
 }
 
-// Os avisos do anuncio saem uma vez; numa sessao nova so os que mudaram.
+// The warnings of the announcement are logged once; in a new session, only
+// those that changed.
 func TestAvisosNaoSeRepetem(t *testing.T) {
 	h := newHarness(t)
 	h.env["SSDP_ADVERTISE_HOST"] = "tv.local"
@@ -552,9 +567,12 @@ func TestAvisosNaoSeRepetem(t *testing.T) {
 				return
 			}
 			switch n {
-			case 1: // cai e volta na mesma rede: nenhum aviso novo
+			// Down and back on the same network: no new warning.
+			case 1:
 				conn.setSendErr(sockErr("write", "sendto", syscall.ENETUNREACH))
-			case 2: // cai e volta numa rede nova: o aviso da rota padrao muda
+			// Down and back on a new network: the default route warning
+			// changes.
+			case 2:
 				conn.setSendErr(sockErr("write", "sendto", syscall.ENETUNREACH))
 				h.net.set("wlp2s0", wifi0)
 			case 3:
@@ -566,14 +584,17 @@ func TestAvisosNaoSeRepetem(t *testing.T) {
 		t.Fatalf("saida %d:\n%s", code, h.log())
 	}
 	h.wantLog(anunciando, 3)
-	h.wantLog("SEM TLS", 0) // a 44643 tem TLS: nenhum aviso de porta sem TLS
+	// 44643 has TLS: no warning of a port without TLS.
+	h.wantLog("SEM TLS", 0)
 	h.wantLog("AVISO host anunciado: 'tv.local' nao e um IPv4 (nome ou IPv6); o anuncio sai pela interface da rota padrao wlp2s0 (192.168.2.7)", 1)
 	h.wantLog("AVISO host anunciado: 'tv.local' nao e um IPv4 (nome ou IPv6); o anuncio sai pela interface da rota padrao wlp2s0 (192.168.0.23)", 1)
-	h.wantLog(semRede, 2) // uma por queda
+	// One per loss.
+	h.wantLog(semRede, 2)
 	h.wantLog(deVolta, 2)
 }
 
-// Busca respondida pela interface da sessao; SIGTERM manda o byebye.
+// A search answered on the interface of the session; SIGTERM sends the
+// byebye.
 func TestRespondeBuscaEByebye(t *testing.T) {
 	h := newHarness(t)
 	h.net.set("wlp2s0", wifi2)
@@ -615,8 +636,8 @@ func TestIsNetDown(t *testing.T) {
 	}
 }
 
-// Sem SSDP_ADVERTISE_HOST, o host do LOCATION e o IPv4 da interface da rota
-// padrao, sem aviso.
+// Without SSDP_ADVERTISE_HOST, the host of LOCATION is the IPv4 of the
+// interface of the default route, without a warning.
 func TestHostDetectado(t *testing.T) {
 	h := newHarness(t)
 	delete(h.env, "SSDP_ADVERTISE_HOST")
@@ -637,9 +658,10 @@ func TestHostDetectado(t *testing.T) {
 	h.wantLog(falha, 0)
 }
 
-// Com o host detectado, a troca de rede com o anuncio no ar e percebida no
-// NOTIFY seguinte: byebye do endereco antigo, aviso no log, sem passar pelo
-// estado "sem rede", e novo anuncio com o IP novo.
+// With the detected host, a network change while announcing is noticed on
+// the next NOTIFY: byebye of the old address, a warning in the log, without
+// going through the "no network" state, and a new announcement with the new
+// IP.
 func TestTrocaDeRedeComHostDetectado(t *testing.T) {
 	h := newHarness(t)
 	delete(h.env, "SSDP_ADVERTISE_HOST")
@@ -650,7 +672,8 @@ func TestTrocaDeRedeComHostDetectado(t *testing.T) {
 		case 1:
 			c.onSend = func(k int) {
 				if k == 2 {
-					h.net.set("wlp2s0", wifi0) // outro Wi-Fi: o mesmo adaptador, outro IPv4
+					// Another Wi-Fi: the same adapter, another IPv4.
+					h.net.set("wlp2s0", wifi0)
 				}
 			}
 		case 2:
@@ -673,13 +696,13 @@ func TestTrocaDeRedeComHostDetectado(t *testing.T) {
 	if len(cs) != 2 || cs[0].count(ssdpByebye) != 2 || !cs[0].isClosed() || cs[1].ch.Addr != "192.168.0.23" {
 		t.Fatalf("conexoes %d; byebye da antiga %d", len(cs), cs[0].count(ssdpByebye))
 	}
-	// com SSDP_ADVERTISE_HOST definido, a troca de IPv4 nao encerra a sessao
-	// (o host e fixo): TestQuedaDeRedeDuranteOAnuncio cobre o caminho da falha
+	// With SSDP_ADVERTISE_HOST set, an IPv4 change does not end the session
+	// (the host is fixed): TestQuedaDeRedeDuranteOAnuncio covers the failure
+	// path.
 }
 
-// Arquivo de parada (SSDP_STOP_FILE): o comando de descida o cria, e o
-// anunciante manda o byebye como no SIGTERM (no Windows nao ha SIGTERM para
-// processo em segundo plano).
+// Stop file (SSDP_STOP_FILE): when it is created, the announcer sends the
+// byebye as on SIGTERM.
 func TestArquivoDeParada(t *testing.T) {
 	sig := make(chan os.Signal, 1)
 	n := 0

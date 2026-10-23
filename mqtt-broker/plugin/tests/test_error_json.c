@@ -1,11 +1,13 @@
-// Teste de error_json.c: mensagem de errors/<client_id> (1 a 7), topico (8) e
-// error_json_string (9). Cada mensagem passa pelo json-c estrito, por uma
-// varredura propria (sem controle cru, UTF-8 valido) e pela comparacao campo a campo.
+// Test of error_json.c: message of errors/<client_id> (1 to 7), topic (8)
+// and error_json_string (9). Each message goes through strict json-c, an own
+// scan (no raw control character, valid UTF-8) and a field by field
+// comparison.
 //
-//   (em infra/mqtt-broker/plugin)
+//   (in infra/mqtt-broker/plugin)
 //   gcc -std=gnu11 -Wall -Wextra -I include tests/test_error_json.c
 //       src/error_json.c -ljson-c -o /tmp/test_error_json
-//   /tmp/test_error_json [/tmp/mensagens.jsonl]   (uma mensagem por linha, para o json do Python)
+//   /tmp/test_error_json [/tmp/mensagens.jsonl]
+//   (one message per line, for the Python json module)
 #include <json-c/json.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,8 +29,8 @@ static FILE *dump = NULL;
 
 #define TS "2026-10-12T00:00:00"
 
-// UTF-8 valido pela RFC 3629, escrito aqui de novo (de proposito, sem usar
-// o codigo testado).
+// Valid UTF-8 by RFC 3629, written here again, on purpose without the
+// tested code.
 static int valid_utf8(const unsigned char *s, size_t n) {
     size_t i = 0;
     while (i < n) {
@@ -52,7 +54,7 @@ static int valid_utf8(const unsigned char *s, size_t n) {
     return 1;
 }
 
-// Varredura propria + leitor do json-c. Devolve o objeto (ou NULL).
+// Own scan and the json-c reader. Returns the object, or NULL.
 static json_object *parse_checked(const char *msg, int len, size_t cap, const char *caso) {
     CHECK(len >= 0, "%s: error_json_build devolveu %d", caso, len);
     if (len < 0) return NULL;
@@ -111,7 +113,7 @@ static int build(size_t cap, const char *topic, const char *type, const char *de
     return error_json_build(buf, cap, TS, topic, type, details, client, payload, plen);
 }
 
-// 1. Formato com texto simples
+// 1. Format with plain text.
 static void t_formato(void) {
     int len = build(ERROR_JSON_CAP, "sensor/room1/temperature", "INVALID_JSON",
                     "Payload is not valid JSON", "cli", "abc", 3);
@@ -126,14 +128,14 @@ static void t_formato(void) {
     CHECK(strcmp(buf, want) == 0, "sem payload: %s", buf);
     json_object_put(parse_checked(buf, len, ERROR_JSON_CAP, "sem payload"));
 
-    // payload vazio (comprimento 0) ainda e campo
+    // An empty payload (length 0) is still a field.
     len = build(ERROR_JSON_CAP, "t", "X", "d", "c", "", 0);
     json_object *o = parse_checked(buf, len, ERROR_JSON_CAP, "payload vazio");
     expect_field(o, "payload", "", 0, "payload vazio");
     json_object_put(o);
 }
 
-// 2. Aspas, barra invertida e todos os caracteres de controle, inclusive NUL
+// 2. Quotes, backslash and every control character, NUL included.
 static void t_escapes(void) {
     char p[64];
     size_t n = 0;
@@ -145,19 +147,20 @@ static void t_escapes(void) {
     expect_field(o, "payload", p, n, "escapes");
     CHECK(!is_truncated(o), "escapes: marcado como cortado");
     json_object_put(o);
-    // forma exata dos escapes (RFC 8259, secao 7)
+    // Exact form of the escapes (RFC 8259, section 7).
     const char *raw = "\"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007\\b\\t\\n\\u000b\\f\\r\\u000e";
     CHECK(strstr(buf, raw) != NULL, "escapes: forma exata ausente em %s", buf);
     CHECK(strstr(buf, "\\u001f\\\"\\\\/\x7f" "fim\"") != NULL, "escapes: fim da forma exata ausente em %s", buf);
 
-    // NUL no meio: o campo vai ate o fim (payload_len), nao ate o NUL
+    // NUL inside: the field goes to the end (payload_len), not to the NUL.
     len = build(ERROR_JSON_CAP, "t", "X", "d", "c", "abc\0def", 7);
     o = parse_checked(buf, len, ERROR_JSON_CAP, "NUL no meio");
     expect_field(o, "payload", "abc\0def", 7, "NUL no meio");
     json_object_put(o);
 }
 
-// 3. Aspas e barra em topico, details e client_id (nao so no payload)
+// 3. Quotes and backslash in topic, details and client_id, not only in the
+// payload.
 static void t_campos(void) {
     const char *topic = "tlm/sls/x\"y\\z/esg";
     const char *details = "Item at index 0: Property 'backgroundColor': String 'x\"y\\z\n' does not match pattern '^#[0-9A-Fa-f]{6}$'";
@@ -172,7 +175,7 @@ static void t_campos(void) {
     expect_field(o, "payload", "{\"a\":1}", 7, "campos");
     json_object_put(o);
 
-    // NULL vale ""
+    // NULL is "".
     len = error_json_build(buf, ERROR_JSON_CAP, NULL, NULL, NULL, NULL, NULL, NULL, 0);
     o = parse_checked(buf, len, ERROR_JSON_CAP, "NULL");
     expect_field(o, "topic", "", 0, "NULL");
@@ -183,7 +186,7 @@ static void t_campos(void) {
     CHECK(error_json_build(buf, ERROR_JSON_MIN_CAP - 1, TS, "t", "X", "d", "c", "p", 1) == -1, "cap abaixo do minimo aceita");
 }
 
-// 4. UTF-8: valido passa como esta; cada byte invalido vira U+FFFD
+// 4. UTF-8: valid passes as is; each invalid byte becomes U+FFFD.
 static void t_utf8(void) {
     const char *ok = "a\xc3\xa7\xc3\xa3o \xe2\x82\xac \xf0\x9f\x98\x80 \xf4\x8f\xbf\xbf";
     int len = build(ERROR_JSON_CAP, "t", "X", "d", "c", ok, strlen(ok));
@@ -193,23 +196,33 @@ static void t_utf8(void) {
     CHECK(strstr(buf, ok) != NULL, "utf8 valido: nao saiu como esta");
 
     struct { const char *in; size_t n; int fffd; } bad[] = {
-        { "\xff", 1, 1 },                 // byte que nunca aparece em UTF-8
-        { "\x80", 1, 1 },                 // continuacao solta
-        { "\xc0\xaf", 2, 2 },             // forma longa de '/'
-        { "\xe0\x80\xaf", 3, 3 },         // forma longa de 3 bytes
-        { "\xed\xa0\x80", 3, 3 },         // substituto UTF-16 (U+D800)
-        { "\xf4\x90\x80\x80", 4, 4 },     // acima de U+10FFFF
-        { "\xf0\x8f\xbf\xbf", 4, 4 },     // forma longa de 4 bytes
-        { "\xe2\x82", 2, 2 },             // sequencia cortada no fim
-        { "\xc3", 1, 1 },                 // inicio de 2 bytes cortado
-        { "\xc3(", 2, 1 },                // inicio seguido de nao continuacao
+        // A byte that never appears in UTF-8.
+        { "\xff", 1, 1 },
+        // A stray continuation byte.
+        { "\x80", 1, 1 },
+        // Overlong form of '/'.
+        { "\xc0\xaf", 2, 2 },
+        // Overlong 3-byte form.
+        { "\xe0\x80\xaf", 3, 3 },
+        // UTF-16 surrogate (U+D800).
+        { "\xed\xa0\x80", 3, 3 },
+        // Above U+10FFFF.
+        { "\xf4\x90\x80\x80", 4, 4 },
+        // Overlong 4-byte form.
+        { "\xf0\x8f\xbf\xbf", 4, 4 },
+        // A sequence cut at the end.
+        { "\xe2\x82", 2, 2 },
+        // A cut 2-byte start.
+        { "\xc3", 1, 1 },
+        // A start followed by a non-continuation byte.
+        { "\xc3(", 2, 1 },
     };
     for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
         char caso[64];
         snprintf(caso, sizeof(caso), "utf8 invalido %zu", i);
         len = build(ERROR_JSON_CAP, "t", "X", "d", "c", bad[i].in, bad[i].n);
         o = parse_checked(buf, len, ERROR_JSON_CAP, caso);
-        // esperado: cada byte invalido -> EF BF BD; o resto como esta
+        // Expected: each invalid byte becomes EF BF BD; the rest as is.
         char want[64];
         size_t wn = 0;
         for (int k = 0; k < bad[i].fffd; k++) { memcpy(want + wn, "\xef\xbf\xbd", 3); wn += 3; }
@@ -217,7 +230,8 @@ static void t_utf8(void) {
         expect_field(o, "payload", want, wn, caso);
         json_object_put(o);
     }
-    // invalido tambem em details (o validador de esquema copia texto do payload)
+    // Invalid also in details, where the schema validator copies payload
+    // text.
     len = build(ERROR_JSON_CAP, "t", "X", "String '\xff' does not match", "c", NULL, 0);
     o = parse_checked(buf, len, ERROR_JSON_CAP, "utf8 invalido em details");
     const char *dwant = "String '\xef\xbf\xbd' does not match";
@@ -225,9 +239,9 @@ static void t_utf8(void) {
     json_object_put(o);
 }
 
-// 5. Corte: para cada tipo de unidade, todos os tamanhos ate passar do
-// limite. O corte e sempre entre unidades inteiras, a mensagem cabe, usa o
-// espaco (nao corta antes da hora) e so leva "truncated" quando cortou.
+// 5. Cut: for each kind of unit, every size until past the limit. The cut
+// is always between whole units, the message fits, uses the room (does not
+// cut early) and carries "truncated" only when it cut.
 static void t_corte(void) {
     struct { const char *u; size_t un; const char *dec; size_t dn; size_t esc; } units[] = {
         { "a", 1, "a", 1, 1 },
@@ -264,7 +278,7 @@ static void t_corte(void) {
             CHECK(cut == is_truncated(o), "%s: truncated=%d mas cortou=%d", caso, is_truncated(o), cut);
             if (cut) {
                 saw_cut = 1;
-                // usa o espaco: sobra menos que uma unidade escapada
+                // Uses the room: less than one escaped unit is left.
                 CHECK(len > ERROR_JSON_CAP - 1 - (int)units[u].esc, "%s: cortou cedo demais (len %d)", caso, len);
             }
             if (!cut && len == ERROR_JSON_CAP - 1) saw_exact = 1;
@@ -275,8 +289,8 @@ static void t_corte(void) {
     }
 }
 
-// 6. Campos alem do payload em tamanhos extremos: cada um para no seu teto,
-// e a mensagem continua valida e com o payload.
+// 6. Fields other than the payload at extreme sizes: each stops at its
+// maximum, and the message stays valid and with the payload.
 static void t_tetos(void) {
     static char big[70000];
     memset(big, '"', 1000); big[1000] = '\0';
@@ -306,8 +320,8 @@ static void t_tetos(void) {
     json_object_put(o);
 }
 
-// 7. Toda capacidade entre o minimo e 2048, com o pior caso em todos os
-// campos: sempre JSON valido e dentro da capacidade.
+// 7. Every capacity between the minimum and 2048, with the worst case in
+// every field: always valid JSON and within the capacity.
 static void t_capacidades(void) {
     static char mix[6000];
     size_t n = 0;
@@ -328,13 +342,15 @@ static void t_capacidades(void) {
     }
 }
 
-// 8. Topico errors/<client_id>: +, #, / e controles viram _, byte invalido vira
-// _, corte so entre caracteres inteiros, no maximo 255 bytes.
+// 8. Topic errors/<client_id>: +, #, / and control characters become _, an
+// invalid byte becomes _, cut only between whole characters, at most 255
+// bytes.
 static char tbuf[ERROR_JSON_TOPIC_CAP + 64];
 
-// Nome de topico MQTT valido, conferido aqui de novo como o mosquitto faz
-// (mosquitto_pub_topic_check e mosquitto_validate_utf8): nao vazio, sem + e
-// #, UTF-8 valido, sem controle (U+0000 a U+001F, U+007F a U+009F).
+// Valid MQTT topic name, checked here again as mosquitto does
+// (mosquitto_pub_topic_check and mosquitto_validate_utf8): not empty, no +
+// or #, valid UTF-8, no control character (U+0000 to U+001F, U+007F to
+// U+009F).
 static int valid_topic(const char *t, size_t n) {
     const unsigned char *s = (const unsigned char *)t;
     if (n == 0 || !valid_utf8(s, n)) return 0;
@@ -376,10 +392,10 @@ static void t_topico(void) {
     CHECK(error_json_topic(tbuf, 8, "c") == -1, "topico: cap 8 aceita");
     CHECK(topic(9, "cc") == 8 && strcmp(tbuf, "errors/c") == 0 && tbuf[9] == 'Z', "topico: cap 9 deu '%s'", tbuf);
 
-    // Corte: para cada tamanho de caractere, com 0 a 3 bytes de enchimento na
-    // frente, todos os comprimentos ate passar do limite. O topico cabe em
-    // 255 bytes, e valido, e prefixo do topico inteiro, corta so entre
-    // caracteres e usa o espaco.
+    // Cut: for each character size, with 0 to 3 padding bytes in front, every
+    // length until past the limit. The topic fits in 255 bytes, is valid, is a
+    // prefix of the whole topic, cuts only between characters and uses the
+    // room.
     struct { const char *u; size_t un; const char *out; size_t on; } units[] = {
         { "c", 1, "c", 1 },
         { "+", 1, "_", 1 },
@@ -425,7 +441,7 @@ static void t_topico(void) {
     }
 }
 
-// 9. error_json_string: escape de string JSON, sem corte (o id do response_time_tester.c)
+// 9. error_json_string: JSON string escaping, without cutting.
 static void expect_string(const char *s, size_t n, const char *want, const char *caso) {
     char out[256];
     memset(out, 'Z', sizeof(out));
@@ -441,7 +457,7 @@ static void t_string(void) {
     expect_string("a\0b", 3, "\"a\\u0000b\"", "NUL no meio");
     expect_string("\xff", 1, "\"\\ufffd\"", "byte invalido");
 
-    // o json-c estrito, com validacao de UTF-8, le de volta o mesmo texto
+    // Strict json-c, with UTF-8 validation, reads back the same text.
     const char *s = "id \"x\" \\ \t\r\n\x1f \xc3\xa7 \xf0\x9f\x98\x80 /";
     size_t sn = strlen(s);
     char out[256];
@@ -460,7 +476,7 @@ static void t_string(void) {
     json_tokener_free(tok);
     if (dump && len > 0) fprintf(dump, "%s\n", out);
 
-    // sem corte: cabe inteiro ou devolve -1 com out vazio
+    // No cut: it fits whole or returns -1 with an empty out.
     char small[8];
     CHECK(error_json_string(small, 8, "abcde", 5) == 7 && strcmp(small, "\"abcde\"") == 0, "string: cabe exato deu '%s'", small);
     memset(small, 'Z', sizeof(small));

@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-# O broker nao usa o Redis (o plugin so valida esquema); o migrate_to_redis.py
-# fica em /usr/local/bin para depuracao manual.
+# The broker does not use Redis; migrate_to_redis.py is in /usr/local/bin for
+# manual debugging.
 
 echo "Starting Mosquitto..."
 exec /usr/local/sbin/mosquitto -c /mosquitto/config/mosquitto.conf

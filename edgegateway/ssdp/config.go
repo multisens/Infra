@@ -7,9 +7,9 @@ import (
 	"strings"
 )
 
-// Endereco que a descoberta SSDP divulga (C.3.4): LOCATION e Server-BaseURL (o
-// /manifest do tv3ws) tem de sair do mesmo host. O host e o IPv4 da interface
-// do anuncio (iface.go); SSDP_ADVERTISE_HOST, se definido, o fixa.
+// Address announced by the SSDP discovery (C.3.4): the host of LOCATION is
+// the IPv4 of the announcement interface (iface.go), or SSDP_ADVERTISE_HOST
+// when set.
 
 const (
 	ssdpST              = "urn:schemas-sbtvd-org:service:TV3.0WebServices:1"
@@ -19,15 +19,16 @@ const (
 )
 
 type endpoint struct {
-	Host      string // de SSDP_ADVERTISE_HOST; "" = detectado
+	// From SSDP_ADVERTISE_HOST; "" when detected.
+	Host      string
 	HTTPPort  int
 	HTTPSPort int
 }
 
 var schemeRE = regexp.MustCompile(`(?i)^[a-z][a-z0-9+.-]*://`)
 
-// normalizeHost tira esquema, caminho e porta ("http://192.168.1.150:44642/x"
-// -> "192.168.1.150"); IPv6 sai entre colchetes.
+// normalizeHost removes scheme, path and port ("http://192.168.1.150:44642/x"
+// becomes "192.168.1.150"); an IPv6 address comes out in brackets.
 func normalizeHost(raw string) string {
 	h := schemeRE.ReplaceAllString(strings.TrimSpace(raw), "")
 	h = strings.SplitN(h, "/", 2)[0]
@@ -59,9 +60,9 @@ func parsePort(name, raw string, fallback int) (int, error) {
 	return n, nil
 }
 
-// resolveEndpoint: <host> = SSDP_ADVERTISE_HOST, se definido; vazio ou ausente
-// = detectado a cada sessao. Conferido uma vez, na partida: erro aqui e de
-// configuracao.
+// resolveEndpoint: <host> is SSDP_ADVERTISE_HOST, if set; empty or absent,
+// detected on each session. Checked once, at startup: an error here is a
+// configuration error.
 func resolveEndpoint(getenv func(string) string) (endpoint, error) {
 	httpPort, err := parsePort("EDGE_HTTP_PORT", getenv("EDGE_HTTP_PORT"), defaultEdgeHTTPPort)
 	if err != nil {
@@ -94,11 +95,12 @@ func isLoopbackHost(host string) bool {
 		h == "::1" || h == "0:0:0:0:0:0:0:1"
 }
 
-// warnings: o que sera anunciado e merece aviso no boot. Nao mudam o anuncio.
+// warnings returns the warnings logged at startup about what is announced.
+// They do not change the announcement.
 func warnings(e endpoint) []string {
 	var out []string
 	if e.Host != "" && isLoopbackHost(e.Host) {
-		// um valor de loopback configurado de proposito segue so com aviso
+		// A loopback value is kept, with a warning.
 		out = append(out, fmt.Sprintf("SSDP_ADVERTISE_HOST='%s' e de loopback: um cliente em outro "+
 			"equipamento recebe o anuncio mas nao alcanca o LOCATION nem o Server-BaseURL (C.3.4). "+
 			"Defina no .env da raiz o IP do equipamento na rede.", e.Host))

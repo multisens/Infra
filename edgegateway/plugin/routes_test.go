@@ -17,7 +17,7 @@ func mustRoute(t *testing.T, method, path, auth string, classes ...string) *rout
 
 func testTable(t *testing.T) *routeTable {
 	tb := &routeTable{}
-	// ordem proposital: as rotas com {param} antes das literais
+	// Deliberate order: the routes with {param} before the literal ones.
 	tb.add(mustRoute(t, "GET", "/tv3/{serviceContextId}/users/{userid}", authTokenBind))
 	tb.add(mustRoute(t, "GET", "/tv3/current-service/users/{userid}", authTokenBind))
 	tb.add(mustRoute(t, "GET", "/tv3/current-service/users/files", authTokenBind))
@@ -43,7 +43,8 @@ func TestMatchPrecedenciaLiteral(t *testing.T) {
 		{"POST", "/tv3/current-service/users", "POST /tv3/current-service/users", nil},
 		{"POST", "/tv3/c08b2c72/users", "POST /tv3/{serviceContextId}/users", map[string]string{"serviceContextId": "c08b2c72"}},
 		{"GET", "/health", "GET /health", nil},
-		{"GET", "/tv3/current-service/", "GET /tv3/current-service", nil}, // barra final tolerada
+		// Trailing slash ignored.
+		{"GET", "/tv3/current-service/", "GET /tv3/current-service", nil},
 		{"DELETE", "/tv3/remote-device/7", "DELETE /tv3/remote-device/{handle}", map[string]string{"handle": "7"}},
 	}
 	for _, c := range cases {
@@ -66,12 +67,18 @@ func TestMatchPrecedenciaLiteral(t *testing.T) {
 func TestMatchNaoDeclarado(t *testing.T) {
 	tb := testTable(t)
 	cases := [][2]string{
-		{"GET", "/tv3/abc"},                    // panic do Gin em KNOWN-ISSUES
-		{"POST", "/tv3/users"},                 // fora da tabela
-		{"DELETE", "/health"},                  // metodo nao declarado
-		{"GET", "/"},                           // raiz
-		{"GET", "/tv3/current-service/users/"}, // so a barra: nao eh {userid} vazio
-		{"GET", "/tv3//users/x"},               // segmento vazio nao casa {param}
+		// Gin panic (KNOWN-ISSUES).
+		{"GET", "/tv3/abc"},
+		// Outside the table.
+		{"POST", "/tv3/users"},
+		// Undeclared method.
+		{"DELETE", "/health"},
+		// Root.
+		{"GET", "/"},
+		// Only the slash: not an empty {userid}.
+		{"GET", "/tv3/current-service/users/"},
+		// An empty segment does not match {param}.
+		{"GET", "/tv3//users/x"},
 		{"GET", "/tv3/current-service/users/a/b"},
 		{"GET", "relativo"},
 	}
@@ -90,7 +97,8 @@ func TestNewRouteValidacao(t *testing.T) {
 		{"", "/x", authNone, nil},
 		{"GET", "x", authNone, nil},
 		{"GET", "/x", "bind", nil},
-		{"GET", "/x", authNone, []string{"local-standalone"}}, // valor que o tv3ws NAO usa
+		// A value that is not a client class.
+		{"GET", "/x", authNone, []string{"local-standalone"}},
 		{"GET", "/x/{", authNone, nil},
 		{"GET", "/x/{}", authNone, nil},
 		{"GET", "/x//y", authNone, nil},

@@ -1,10 +1,11 @@
 #!/bin/sh
-# redis-server, biblioteca de funcoes tv30, carga inicial e commander (debug).
-# Se o redis-server ou o commander cair, o container encerra.
+# redis-server, the tv30 function library, the initial load and the commander
+# (debug). If redis-server or the commander exits, the container exits.
 set -u
 
-# Marca do healthcheck: so existe depois de a biblioteca carregar nesta partida
-# e a carga estar aplicada. O /tmp sobrevive a docker restart: sai antes de tudo.
+# Healthcheck mark: it exists only after the library loaded in this start
+# and the load is applied. /tmp survives docker restart, so it is removed
+# before anything else.
 PRONTO=/tmp/tv30-redis-pronto
 rm -f "$PRONTO"
 
@@ -12,8 +13,8 @@ redis-server --appendonly yes --appendfsync everysec &
 REDIS_PID=$!
 CMD_PID=""
 
-# docker stop (o dumb-init repassa o SIGTERM): espera o redis-server terminar o
-# desligamento (AOF) em vez de sair com o banco ainda gravando.
+# docker stop (dumb-init forwards SIGTERM): waits for redis-server to finish
+# its shutdown (AOF) instead of exiting with the database still writing.
 shutdown() {
   [ -n "$CMD_PID" ] && kill "$CMD_PID" 2>/dev/null
   kill "$REDIS_PID" 2>/dev/null
@@ -27,8 +28,9 @@ until redis-cli ping >/dev/null 2>&1; do
   sleep 0.2
 done
 
-# A biblioteca carrega a cada partida, antes da carga inicial: o Redis guarda as
-# funcoes no AOF, e o REPLACE faz valer a versao desta imagem, nao a do volume.
+# The library loads on every start, before the initial load: Redis keeps the
+# functions in the AOF, and REPLACE makes the version of this image prevail
+# over the one of the volume.
 SAIDA=$(sh /opt/tv30-redis/biblioteca.sh /opt/tv30-redis/esquema.json /opt/tv30-redis/funcoes.lua \
   | redis-cli -x FUNCTION LOAD REPLACE 2>&1)
 if [ "$SAIDA" != tv30 ]; then
@@ -40,8 +42,9 @@ if [ "$SAIDA" != tv30 ]; then
 fi
 echo "[redis] biblioteca de funcoes tv30 carregada (esquema versao $(redis-cli --raw FCALL_RO tv30_versao 0))"
 
-# Carga inicial so no banco vazio. O build ja confere a carga, entao recusa aqui
-# so com biblioteca e seed de origens diferentes: sem seed:done, fica unhealthy.
+# Initial load only on an empty database. A refusal here happens only with a
+# library and a seed of different origins: without seed:done, the container
+# stays unhealthy.
 if [ "$(redis-cli --raw EXISTS seed:done)" = "0" ]; then
   echo "[redis] aplicando carga inicial pelas funcoes (redis-cli --pipe)..."
   RES=$(redis-cli --pipe < /seed.resp 2>&1)
@@ -58,12 +61,14 @@ else
 fi
 [ "$(redis-cli --raw EXISTS seed:done)" = "1" ] && touch "$PRONTO"
 
-# Login so na UI do commander; a 6379 segue sem senha. Na 0.9.0 nao e HTTP basic:
-# GET / e os estaticos abrem sem credencial, POST /signin troca usuario e senha
-# por token e as rotas de dados respondem 401 sem ele. HTTP_USER/HTTP_PASSWORD
-# tiram a senha do ps e do log, mas o compose a poe no ambiente do container
-# (docker inspect). Senha vazia desligaria o login: vazio cai no padrao.
-# Escrita pelo commander nao passa pelas funcoes: FCALL_RO tv30_auditoria 0 a mostra.
+# Login only on the commander UI; 6379 has no password. In 0.9.0 it is not
+# HTTP basic: GET / and the static files open without a credential, POST
+# /signin exchanges user and password for a token, and the data routes
+# answer 401 without it. HTTP_USER/HTTP_PASSWORD keep the password out of ps
+# and of the log, but it is in the environment of the container (docker
+# inspect). An empty password would disable the login: empty falls back to
+# the default. A write through the commander does not go through the
+# functions: FCALL_RO tv30_auditoria 0 shows it.
 CMD_USER="${REDIS_COMMANDER_USER:-admin}"
 CMD_PASS="${REDIS_COMMANDER_PASSWORD:-tv30-redis-admin}"
 HTTP_USER="$CMD_USER" HTTP_PASSWORD="$CMD_PASS" \
@@ -72,9 +77,9 @@ HTTP_USER="$CMD_USER" HTTP_PASSWORD="$CMD_PASS" \
 CMD_PID=$!
 echo "[redis] commander (debug) na porta ${COMMANDER_PORT:-18081}, com login (usuario: ${CMD_USER})"
 
-# ash nao tem `wait -n`: vigia por polling (o `sleep` em primeiro plano recolhe o
-# processo que saiu, e o `kill -0` passa a falhar). Se um cair, o outro e
-# encerrado; a vigia espera o AOF do redis-server e sai com 1.
+# ash has no `wait -n`: polls (the foreground `sleep` reaps the process that
+# exited, and `kill -0` starts to fail). If one exits, the other is stopped;
+# the watcher waits for the AOF of redis-server and exits with 1.
 while :; do
   for p in "$REDIS_PID" "$CMD_PID"; do
     if ! kill -0 "$p" 2>/dev/null; then
