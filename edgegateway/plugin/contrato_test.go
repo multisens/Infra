@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -125,5 +126,22 @@ func TestContratoFuncoes(t *testing.T) {
 	if l, _ := s.BindKeys(sid); len(l) != 0 {
 		t.Fatalf("lista depois do DELETE: %q", l)
 	}
-	t.Logf("contrato: entrada da borda aceita, %d entradas invalidas recusadas, API C.6.8 completa sobre as funcoes", 5)
+
+	// 304 sobre services:announced gravado pela funcao do AoP
+	// (aop-transport-layer-metadata-lls)
+	const fora = "urn:tv30:test:contrato-go-fora"
+	must("tv30_servicos_anunciados", sid, "urn:tv30:test:contrato-go-outro")
+	defer s.c.fcall(true, "tv30_servicos_anunciados")
+	if in, err := s.ServiceInCatalog(sid); err != nil || !in {
+		t.Fatalf("servico anunciado: %v %v", in, err)
+	}
+	if in, err := s.ServiceInCatalog(fora); err != nil || in {
+		t.Fatalf("servico fora: %v %v", in, err)
+	}
+	cred := map[string]string{"Authorization": accessFor(t, "cli-1", classAutonomous), "bind-token": "abc"}
+	checkC32(t, serve(h, "GET", "/tv3/"+fora+"/users/u1", cred), 304)
+	if v := h.evaluate(withHeaders(httptest.NewRequest("GET", "/tv3/"+sid+"/users/u1", nil), cred)); v.Code != 108 {
+		t.Fatalf("servico do catalogo segue para o bind-token: %d %q", v.Code, v.Detail)
+	}
+	t.Logf("contrato: entrada da borda aceita, %d entradas invalidas recusadas, API C.6.8 completa sobre as funcoes, 304 sobre services:announced", 5)
 }

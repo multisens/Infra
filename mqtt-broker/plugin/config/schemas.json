@@ -147,9 +147,35 @@
     "type": "string",
     "maxLength": 64
   },
+  "aop/removedUser": {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 64,
+    "description": "O id do perfil que o telespectador removeu no gestor de perfis do AoP, NAO retido, publicado depois de o perfil, a visibilidade, os atributos de emissora e o arquivo do avatar serem descartados. Se era o perfil corrente, o AoP publica antes aop/currentUser vazio (retido), que passa ao perfil escolhido no seletor. Publicador: o AoP."
+  },
   "aop/currentService": {
     "type": "string",
     "maxLength": 256
+  },
+  "aop/services": {
+    "type": "array",
+    "uniqueItems": true,
+    "items": {
+      "type": "object",
+      "properties": {
+        "serviceContextId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "O globalServiceId do BAM (Tabela 6), que e o serviceContextId das rotas (C.3.5)."
+        }
+      },
+      "required": [
+        "serviceContextId"
+      ],
+      "additionalProperties": false
+    },
+    "description": "Os servicos anunciados na LLS, um por BAM das BAMT recebidas, sem repeticao, RETIDO; lista vazia = nenhum. O mesmo conteudo de services:announced no Redis, gravado antes da publicacao. Sem o serviceId inteiro da C.6.3.1, que o BAM nao traz. Publicador: aop-transport-layer-metadata-lls, no processo do AoP, a cada BAMT recebida ou retirada e na partida."
   },
   "aop/display/layers/rxgui": {
     "type": "string",

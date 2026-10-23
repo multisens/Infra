@@ -38,7 +38,7 @@ A `ginga_net` é uma bridge criada pelo próprio projeto (`name: ginga_net`, `dr
 | `edgegateway` | 44643 (superfície externa, HTTPS) | 44643, fixa por padrão | `EDGE_EXT_PUBLISH` (padrão `44643:44643`; só o número dá porta livre, que o `/manifest` não anuncia) |
 | `edgegateway` | 8085 (documentação) | livre, escolhida pelo Docker | `infra/docker-compose.yml` |
 | `tv3ws` | 44652, 44653 (API) | não publicadas | a borda chega a elas pela `ginga_net` |
-| `tv3ws` | 45000–45199 (WebSocket do remote-device, `wss://` com o certificado do receptor; `ws://` com `TV3WS_WS_TLS=false`) | as mesmas, fixas | compose da raiz (`WS_PORT_MIN`/`WS_PORT_MAX`) |
+| `tv3ws` | 45000–45199 (WebSocket do remote-device: o ponto de entrada do dispositivo remoto em `wss://` com o certificado do receptor, ou `ws://` com `TV3WS_WS_TLS=false`; o local sempre em `ws://`) | as mesmas, fixas | compose da raiz (`WS_PORT_MIN`/`WS_PORT_MAX`) |
 | `aop` | 8080 | `AOP_PUBLIC_PORT`, padrão 8080, fixa | compose da raiz |
 | `bcast` | 8081 | livre por padrão | `BCAST_PUBLISH` (padrão `8081`; `8081:8081` fixa) |
 | `mqtt-broker` | 1883 (MQTT) | 1883, fixa | `infra/docker-compose.yml` |
@@ -78,7 +78,7 @@ graph LR
 
 - **`redis` saudável** quer dizer biblioteca de funções `tv30` carregada nesta partida e carga inicial aplicada (marca `/tmp/tv30-redis-pronto` e chave `seed:done`; ver [`redis/README.md`](../redis/README.md)).
 - **`preflight`** confere DNS e portas e só termina com erro num caso: a 44642 ocupada por outro processo. A borda então não sobe (`scripts/preflight.sh`).
-- **`tls-init`** gera, na primeira subida, o certificado autoassinado do receptor em `.tv30/tls` da raiz (`key.pem` e `cert.pem`); nas seguintes, não muda nada (`infra/edgegateway/tls-init.sh`). A borda o monta em `/etc/tv30/tls` (TLS, Transport Layer Security, da 44643), e o tv3ws, em `/tls` (HTTPS da 44653, `serverCert` e `wss://`).
+- **`tls-init`** gera, na primeira subida, o certificado autoassinado do receptor em `.tv30/tls` da raiz (`key.pem` e `cert.pem`); nas seguintes, não muda nada (`infra/edgegateway/tls-init.sh`). A borda o monta em `/etc/tv30/tls` (TLS, Transport Layer Security, da 44643), e o tv3ws, em `/tls` (HTTPS da 44653, `serverCert` e o `wss://` do ponto de entrada do dispositivo remoto).
 - **`aop`** usa a forma curta de `depends_on`, que só espera os containers iniciarem; ele mesmo tenta de novo a leitura dos perfis no Redis (`aop/src/core.js`, `loadUserData`).
 - **`sysctl-init`** roda em paralelo; nenhum serviço espera por ele.
 

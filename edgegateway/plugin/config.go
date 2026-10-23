@@ -156,6 +156,15 @@ func loadConfig(raw interface{}, getenv func(string) string) (*config, error) {
 			}
 			rt.NoService = 300
 		}
+		if v, present := rm["not_in_catalog"]; present {
+			if n, ok := v.(float64); !ok || n != 304 {
+				return nil, fmt.Errorf("routes[%d].not_in_catalog invalido: %v (so 304)", i, v)
+			}
+			if rt.Auth != authTokenBind || !rt.hasParam("serviceContextId") {
+				return nil, fmt.Errorf("routes[%d].not_in_catalog so vale em rota %s com {serviceContextId}", i, authTokenBind)
+			}
+			rt.NotInCatalog = 304
+		}
 		table.add(rt)
 	}
 	cfg.Routes = table

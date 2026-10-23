@@ -30,7 +30,7 @@ O healthcheck exige a marca e `seed:done`. A marca é apagada no começo de cada
 Logs esperados:
 
 ```
-[redis] biblioteca de funcoes tv30 carregada (esquema versao 4)
+[redis] biblioteca de funcoes tv30 carregada (esquema versao 6)
 [redis] aplicando carga inicial pelas funcoes (redis-cli --pipe)...
 [redis] carga concluida (1 perfil(is))
 [redis] commander (debug) na porta 18081, com login (usuario: admin)
@@ -49,15 +49,16 @@ As funções são chamadas com `numkeys 0`: elas montam os nomes das chaves a pa
 | `tv30_sessao_usuario` | `<id ou vazio>` | `SET session:current-user` | tv3ws (espelho de `aop/currentUser`; C.6.14.4) |
 | `tv30_sessao_servico_id` | `<id ou vazio>` | `SET session:current-service-id` | tv3ws (espelho de `aop/currentService`) |
 | `tv30_sessao_servico` | `<campo> <valor> ...` | regrava `session:current-service` inteiro | tv3ws (troca de serviço) |
-| `tv30_perfil_grava` | `<id> <n> <serviço 1..n> <campo> <valor> ...` | `users:index` + `user:{id}` regravado + serviços acrescentados a `user:{id}:consent` | AoP (criação), carga inicial, `migrate_to_redis.py` |
+| `tv30_perfil_grava` | `<id> <n> <serviço 1..n> <campo> <valor> ...` | `users:index` + `user:{id}` regravado + serviços acrescentados a `user:{id}:consent`; id novo com `users:index` no teto de cinco (`maxMembros`, 10.3.3) é recusado, na mesma operação | AoP (criação e perfil padrão), carga inicial, `migrate_to_redis.py` |
 | `tv30_perfil_ultimo_acesso` | `<id> <ms>` | `lastAccess`, só de perfil em `users:index` (devolve 1 ou 0) | AoP (troca de usuário corrente) |
-| `tv30_perfil_remove` | `<id>` | tira o perfil e as quatro famílias dele | nenhum código (adaptador `perfilRemove` do AoP, sem chamada) |
+| `tv30_perfil_remove` | `<id>` | tira o perfil e as quatro famílias dele | AoP (remoção pelo telespectador, no seletor de perfil) |
 | `tv30_atributos_emissora` | `<id> <scid> <campo> <valor> ...` | `HDEL` dos vazios e `HSET` dos demais, teto de 20 MB | tv3ws (C.6.14.5) |
 | `tv30_cliente_grava` | `<id> <campo> <valor> ...` | `HSET client:{id}` | tv3ws (emissão e rotação de token) |
-| `tv30_cliente_autoriza` | `<id> <campo> <valor> ...` | `client:{id}` + sai de `clients:blocked` + entra em `clients:authorized` | tv3ws (pop-up aceito) |
+| `tv30_cliente_autoriza` | `<id> <campo> <valor> ...` | `client:{id}` + sai de `clients:blocked` + entra em `clients:authorized` | tv3ws: o "sim" do local autônomo no pop-up; o do não local, no `/tv3/token` que confere o `challenge-response` |
 | `tv30_cliente_bloqueia` | `<id>` | sai de `clients:authorized` + entra em `clients:blocked` | tv3ws (pop-up recusado) |
 | `tv30_cliente_inclui_autorizado` | `<id>` | entra em `clients:authorized` se tem `client:{id}` e não está bloqueado | tv3ws (boot) |
 | `tv30_origem_registra` / `tv30_origem_remove` / `tv30_origens_limpa` | `<origem> <serviço>` / `<origem>` / nada | `origins:associated` | AoP (lançamento e encerramento de app; boot) |
+| `tv30_servicos_anunciados` | `[<serviço> ...]` (nenhum = nenhum serviço) | regrava `services:announced` inteiro (`DEL` + `SADD`); devolve o número de serviços | AoP (`aop-transport-layer-metadata-lls`: BAMT recebida ou retirada, partida) |
 | `tv30_bind_registra` / `tv30_bind_remove` | `<serviceId> <entrada JSON>` | `RPUSH` / `LREM 0` em `bind-context:{serviceId}` | borda (C.6.8.2, C.6.8.4) |
 | `tv30_auditoria` (só leitura) | nada | lista o que está fora do esquema | testes e desenvolvedor |
 | `tv30_versao` (só leitura) | nada | versão do `esquema.json` | desenvolvedor |
@@ -81,7 +82,7 @@ Cada família tem `chave` (com partes como `{id}`), `tipo` (`string`, `hash`, `s
 
 - `valor` (string), `campos` e `outrosCampos` (hash), `membros` (set), `itens` (list), `partes` (as partes da chave);
 - cada regra tem um `tipo`: `texto` (`min`/`max` em caracteres, `proibe`), `booleano` (`"true"`/`"false"`), `inteiro` (decimal sem zero à esquerda, `min`/`max`, `vazio`), `enum`, `idioma` (formato IETF RFC 5646), `uuid` (formato textual da IETF RFC 9562, em minúsculas, com versão de 1 a 8 e variante da RFC 9562, `8`, `9`, `a` ou `b`, o que deixa de fora o UUID nulo e o máximo; o id do perfil), `nomeArquivo` (nome de arquivo sem diretório: começa por letra ou dígito, só letras sem acento, dígitos, `.`, `_` e `-`, até `maxNome` caracteres antes da extensão, e a extensão, o que vem depois do último ponto, numa das `extensoes`, em minúsculas; o avatar do perfil), `origem` (como o navegador manda no `Origin`) e `json` (objeto com `campos`);
-- `obrigatorio`, `obrigatorioSe` (`{campo, valor}`), `campoIgualAParte`, `camposProibidos`, `maxBytes`;
+- `obrigatorio`, `obrigatorioSe` (`{campo, valor}`), `campoIgualAParte`, `camposProibidos`, `maxBytes`, `maxMembros` (teto de membros de um set, conferido pela função que grava e pela auditoria; em `users:index`, os cinco perfis da 10.3.3);
 - `ref` reaproveita uma regra de `definicoes` (por exemplo, `idPerfil`);
 - `fonte` diz de onde a regra veio. A recusa do `nomeArquivo` diz o que falhou, na ordem em que a mensagem ajuda mais: `SVG em linha nao serve`, diretório (`/` ou `\`), extensão, primeiro caractere, demais caracteres e tamanho (`motivoNomeArquivo`, em `funcoes.lua`). A do `uuid` diz qual parte falhou (por exemplo, `versao do UUID deve ser de 1 a 8 (1o digito do 3o grupo; veio 9 em ...)` ou `UUID nulo (...) nao serve de id de perfil`). O id da carga (`c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10`, versão 4, variante `9`) e os do AoP (`crypto.randomUUID()`, versão 4) são válidos.
 
@@ -97,7 +98,7 @@ As invariantes entre chaves (`perfil-indexado`, `perfil-dependentes`, `clientes-
 docker exec redis redis-cli FCALL_RO tv30_auditoria 0
 ```
 
-A auditoria percorre as chaves dos prefixos do alcance (`session:`, `users:`, `user:`, `clients:`, `client:`, `origins:`, `bind-context:`) e devolve uma entrada `[chave, familia, motivo]` por problema: chave sem família, tipo errado, campo fora da regra, membro inválido e cada invariante quebrada. **Vazia = tudo no esquema.** `scripts/test-auth.sh` exige a auditoria vazia no fim, e `scripts/test-consolidacao.sh` a mostra. Exemplo:
+A auditoria percorre as chaves dos prefixos do alcance (`session:`, `users:`, `user:`, `clients:`, `client:`, `origins:`, `bind-context:`, `services:`) e devolve uma entrada `[chave, familia, motivo]` por problema: chave sem família, tipo errado, campo fora da regra, membro inválido, set acima do `maxMembros` e cada invariante quebrada. **Vazia = tudo no esquema.** `scripts/test-auth.sh` exige a auditoria vazia no fim, e `scripts/test-consolidacao.sh` a mostra. Exemplo:
 
 ```
 1) 1) "user:9d1e2f3a-4b5c-4d6e-8f70-81a2b3c4d5e6"
@@ -138,9 +139,9 @@ bash infra/redis/test/run.sh tudo        # ou: funcoes | estatico | contrato | i
 
 | Modo | O que prova |
 |---|---|
-| `funcoes` | Biblioteca num `redis:7-alpine` descartável. Cobre aceitação; **recusa de cada regra**, com os casos gerados a partir do `esquema.json` e conferência de que nada foi gravado; valores de fronteira; atomicidade (tipo errado ou membro inválido no fim não deixam gravação parcial); invariantes; e auditoria, que aponta cada tipo de problema gravado à mão e volta vazia. A regra do avatar (`nomeArquivo`) decide igual à expressão do contrato, nos valores de fronteira e em valores gerados, e o avatar em SVG em linha gravado à mão aparece na auditoria e não pode ser regravado. |
+| `funcoes` | Biblioteca num `redis:7-alpine` descartável. Cobre aceitação; **recusa de cada regra**, com os casos gerados a partir do `esquema.json` e conferência de que nada foi gravado; valores de fronteira; atomicidade (tipo errado ou membro inválido no fim não deixam gravação parcial); invariantes; e auditoria, que aponta cada tipo de problema gravado à mão e volta vazia. O teto de `users:index` (id novo além dele recusado, regravar existente aceito, remover libera, membro gravado à mão contado) e `services:announced` regravado inteiro. A regra do avatar (`nomeArquivo`) decide igual à expressão do contrato, nos valores de fronteira e em valores gerados, e o avatar em SVG em linha gravado à mão aparece na auditoria e não pode ser regravado. |
 | `estatico` | Nenhum serviço grava direto numa família do alcance. Cobre tv3ws e AoP (cadeias de comandos no cliente Redis fora do adaptador), plugin Go (texto de comando de escrita) e carga inicial (Python). O mesmo teste roda no `npm test` do tv3ws e do AoP e no `go test` da borda (`escritas_test.go`, também no build da imagem dela). |
-| `contrato` | Os adaptadores e os gestores de verdade (auth-manager do tv3ws, gestor de perfis e `app-hosts` do AoP, `redisStore` da borda) contra as funções num Redis real. O gestor de perfis grava o avatar em `thumbs/` de um `USER_DATA_PATH` temporário: o `avatar` é `<id>.svg` e o arquivo tem o SVG do formulário; o sexto perfil é recusado sem arquivo novo, e em `thumbs/` só ficam os arquivos dos perfis existentes. A remoção pelo adaptador (`perfilRemove`) leva os atributos de emissora juntos. Termina com a auditoria vazia. |
+| `contrato` | Os adaptadores e os gestores de verdade (auth-manager do tv3ws, gestor de perfis e `app-hosts` do AoP, `redisStore` da borda) contra as funções num Redis real. O gestor de perfis grava o avatar em `thumbs/` de um `USER_DATA_PATH` temporário: o `avatar` é `<id>.svg` e o arquivo tem o SVG do formulário; o sexto perfil é recusado sem arquivo novo, e em `thumbs/` só ficam os arquivos dos perfis existentes. A remoção pelo adaptador (`perfilRemove`) leva os atributos de emissora juntos. O perfil padrão cumpre o esquema, e a unidade `aop-transport-layer-metadata-lls` do AoP grava `services:announced` pela função. Termina com a auditoria vazia. |
 | `imagem` | Build da imagem (com a conferência do `confere-imagem.sh`), healthcheck igual ao do compose, carga pelas funções (id do perfil em UUID, lido do template; o avatar da carga igual ao nome do arquivo que o template traz em `thumbs/`), booleanos `"false"`, a versão do esquema na imagem igual à do `esquema.json`, auditoria vazia, recarga da biblioteca numa nova partida e o morre-inteiro do commander (a morte dele derruba o container com exit 1). |
 
 Os containers, a rede e a imagem de teste têm nomes próprios (`tv30-redis-teste-<pid>`) e são removidos no fim. A stack não é tocada.

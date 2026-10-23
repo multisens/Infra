@@ -22,7 +22,7 @@ flowchart LR
     C["Cliente<br/>(app, celular, TV)"] -->|"HTTP :44642 / HTTPS :44643"| P
 
     subgraph EDGE["edgegateway (KrakenD 2.7.2)"]
-        P["plugin http-server tv30-auth<br/>CORS (OPTIONS e cabecalhos) -><br/>rota (100) -> superficie (106) -> classe (106) -><br/>access token (107) -> servico (300) -><br/>bind-token (104/108) -> versao (100/101)"]
+        P["plugin http-server tv30-auth<br/>CORS (OPTIONS e cabecalhos) -><br/>rota (100) -> superficie (106) -> classe (106) -><br/>access token (107) -> servico (300) -><br/>catalogo (304) -> bind-token (104/108) -><br/>versao (100/101)"]
         A["APIs da propria borda (edge.go)<br/>C.6.8 bind-context<br/>C.6.7.8 / C.6.7.9 api-info"]
         G["roteador KrakenD<br/>proxy no-op"]
         P -->|"liberada (ou warn),<br/>rota com edge"| A
@@ -33,14 +33,15 @@ flowchart LR
     A -.->|"C.6.8: LRANGE / SCAN / HGETALL / GET<br/>e FCALL tv30_bind_registra / tv30_bind_remove"| R
     A -->|"200 ou erro C.3.2"| C
     P -->|"negada<br/>404 + {error, description}"| C
-    G -->|"interna: http://tv3ws:44652<br/>externa: https://tv3ws:44653<br/>+ X-TV30-API-Version, X-TV30-Host"| T["tv3ws"]
+    G -->|"interna: http://tv3ws:44652<br/>externa: https://tv3ws:44653<br/>+ X-TV30-API-Version, X-TV30-Host<br/>(versão 100.0: caminho /v100.0/tv3/...)"| T["tv3ws"]
     T -->|"status e corpo intactos<br/>(no-op)"| C
 ```
 
-- **Plugin `tv30-auth`** (`edgegateway/plugin/`, em Go). Valida as credenciais segundo a política por rota de `routes.json`. Com `AUTH_ENFORCE=enforce` (padrão; vazio também vale), bloqueia. `warn` é opção explícita e transitória: nele, o 104, o 107 e o 108 só ficam no log e marcam a resposta com `X-TV30-Auth-Warn`; o 100, o 101, o 106, o 300 e o 200 saem nos dois modos.
+- **Plugin `tv30-auth`** (`edgegateway/plugin/`, em Go). Valida as credenciais segundo a política por rota de `routes.json`. Com `AUTH_ENFORCE=enforce` (padrão; vazio também vale), bloqueia. `warn` é opção explícita e transitória: nele, o 104, o 107 e o 108 só ficam no log e marcam a resposta com `X-TV30-Auth-Warn`; o 100, o 101, o 106, o 300, o 304 e o 200 saem nos dois modos. O 304 é o do `{serviceContextId}` fora de `services:announced` na C.6.14.2 e na C.6.14.5 (`not_in_catalog` no `routes.json`; [05](05-autenticacao.md)).
   - O CORS é todo dele: responde o `OPTIONS` (o preflight em qualquer caminho) e põe `Access-Control-Allow-Origin` e `Access-Control-Expose-Headers` em toda resposta. A configuração do KrakenD não tem o módulo CORS.
   - Um caminho não declarado recebe 100 sem chegar ao roteador.
   - **Versão (C.3.6).** A borda negocia em toda rota, pelas `versions` do `routes.json` (ausente = 2.0): sem `Accept-Version`, 2.0; fora do formato X.Y, 101; versão que a rota não serve, 100. Repassa a versão negociada no cabeçalho interno `X-TV30-API-Version` e o `Host` original em `X-TV30-Host` (que o `/manifest` usa), apagando os valores do cliente. O tv3ws não interpreta o `Accept-Version`. A C.6.15.5 serve 2.0 e 100.0; `GET` e `DELETE /tv3/remote-device/device/{handle}`, rotas de extensão do testbed, fora da norma, só 100.0.
+  - **Caminho interno das extensões.** Nas versões de 100 em diante, o plugin troca o caminho do salto borda → serviço por `/v<X.Y>` + o caminho público (`internalPath`, em `plugin/edge.go`), e o `generate.js` cria um endpoint do KrakenD por par rota × versão, com destino no mesmo caminho do backend da superfície. O tv3ws registra os tratadores da 100.0 sob `/v100.0/tv3/...`. Caminho declarado com o prefixo `/v<X.Y>` é recusado no build, e `/v...` vindo do cliente não é rota declarada: 100.
   - Um panic no roteador vira 404 com `{error: 200}`, e a resposta 5xx do próprio KrakenD (backend lento ou fora do ar, que sairia como 500 sem corpo) também, nos dois modos (`plugin/handler.go`, `serveNext`).
   - É o único ponto que valida credencial: o tv3ws não confere token nem classe.
   - Detalhes em [05-autenticacao.md](05-autenticacao.md) e no [README do plugin](../edgegateway/plugin/README.md).

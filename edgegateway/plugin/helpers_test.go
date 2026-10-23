@@ -106,11 +106,13 @@ type fakeStore struct {
 	authorized map[string]bool   // clients:authorized
 	associated map[string]string // origins:associated: origem -> servico que lancou a app
 	current    string
+	catalog    map[string]bool     // services:announced
 	keys       map[string][]string // bind-context:{serviceId}
 	svcHash    map[string]string   // session:current-service
 	wrongType  map[string]bool     // bind-context:{serviceId} de outro tipo (WRONGTYPE)
 	err        error
 	authzErr   error // so no SISMEMBER clients:authorized
+	catalogErr error // so no SISMEMBER services:announced
 	writeErr   error // so nas escritas (a funcao do Redis recusando o dado)
 	calls      int
 }
@@ -134,6 +136,13 @@ func (f *fakeStore) AssociatedOrigin(o string) (string, bool, error) {
 func (f *fakeStore) CurrentServiceID() (string, error) {
 	f.calls++
 	return f.current, f.err
+}
+func (f *fakeStore) ServiceInCatalog(id string) (bool, error) {
+	f.calls++
+	if f.catalogErr != nil {
+		return false, f.catalogErr
+	}
+	return f.catalog[id], f.err
 }
 func (f *fakeStore) BindKeys(id string) ([]string, error) {
 	f.calls++

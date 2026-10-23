@@ -22,6 +22,7 @@ var errorText = map[int]string{
 	108: "Invalid or revoked bind token",
 	200: "Platform resource unavailable",
 	300: "No DTV service currently in use",
+	304: "DTV service not found",
 }
 
 const warnHeader = "X-TV30-Auth-Warn"
@@ -114,6 +115,7 @@ func (h *authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveEdge(w, r, v, version)
 		return
 	}
+	toInternalPath(r, version)
 	h.serveNext(w, r)
 }
 
@@ -250,7 +252,7 @@ func (g *guardWriter) replace(r *http.Request, detail string) {
 }
 
 // followsMode: so as recusas de credencial (104, 107, 108) obedecem ao modo;
-// em warn viram aviso. 100, 101, 106, 300 e 200 saem nos dois modos.
+// em warn viram aviso. 100, 101, 106, 300, 304 e 200 saem nos dois modos.
 func followsMode(code int) bool {
 	return code == 104 || code == 107 || code == 108
 }
@@ -262,8 +264,8 @@ func keptOnReplace(k string) bool {
 }
 
 // evaluate decide, nesta ordem: rota (100), superficie (106), classe (106),
-// nao local por HTTP (106), access token (107), servico selecionado (300) e
-// bind-token (104/108). Falha no Redis => 200.
+// nao local por HTTP (106), access token (107), servico selecionado (300),
+// servico do caminho no catalogo (304) e bind-token (104/108). Falha no Redis => 200.
 func (h *authHandler) evaluate(r *http.Request) verdict {
 	rt, params := h.cfg.Routes.match(r.Method, r.URL.Path)
 	if rt == nil {
@@ -328,6 +330,9 @@ func (h *authHandler) evaluate(r *http.Request) verdict {
 		if v = h.requireService(v); v.Code != 0 || rt.Auth != authTokenBind {
 			return v
 		}
+		if v = h.requireCatalog(v); v.Code != 0 {
+			return v
+		}
 		// C.4.1.1, "referencing their own service context": fora do servico
 		// que lancou a app (origins:associated), a regra geral do bind-token.
 		ctx, err := h.pathContext(params)
@@ -349,9 +354,9 @@ func (h *authHandler) evaluate(r *http.Request) verdict {
 	if tokenErr != nil {
 		return v.fail(107, tokenErr.Error())
 	}
-	// Bloqueado (C.4.2.2) ou fora de clients:authorized: 107, tambem com token
-	// de classe local-associated. O bloqueio e conferido antes e mantem a
-	// mensagem dele; token sem sub nunca esta no conjunto.
+	// Bloqueado (C.4.2.2) ou fora de clients:authorized: 107. O bloqueio e
+	// conferido antes e mantem a mensagem dele; token sem sub nunca esta no
+	// conjunto.
 	if claims.Sub == "" {
 		return v.fail(107, "access token sem sub: cliente fora de clients:authorized")
 	}
@@ -369,14 +374,16 @@ func (h *authHandler) evaluate(r *http.Request) verdict {
 	if !authorized {
 		return v.fail(107, "cliente fora de clients:authorized: autorizacao do espectador ausente ou removida")
 	}
-	// token de classe local-associated dispensa o bind-token
-	if v.Class == classAssociated || rt.Auth == authToken {
+	if rt.Auth == authToken {
 		return h.requireService(v)
 	}
 
-	// Servico DTV selecionado (300) antes do bind-token: sem servico nao ha
-	// chave registrada, e tudo daria 108.
+	// Servico DTV selecionado (300) e servico do caminho no catalogo (304)
+	// antes do bind-token: sem eles nao ha chave registrada, e tudo daria 108.
 	if v = h.requireService(v); v.Code != 0 {
+		return v
+	}
+	if v = h.requireCatalog(v); v.Code != 0 {
 		return v
 	}
 
@@ -389,8 +396,8 @@ func (h *authHandler) evaluate(r *http.Request) verdict {
 
 // pathContext: o {serviceContextId} do caminho, que e o globalServiceId do BAM
 // (Tabela 6; C.3.5), ou o servico corrente em current-service e nas rotas sem
-// o parametro ("" = nenhum selecionado). Todo servico explicito e aceito: o
-// 304 das Tabelas C.71 e C.74 (fora do Application Catalog) nao e aplicado.
+// o parametro ("" = nenhum selecionado). Fora do catalogo, o requireCatalog
+// ja respondeu 304 nas rotas que o conferem.
 func (h *authHandler) pathContext(params map[string]string) (string, error) {
 	if scid, ok := params["serviceContextId"]; ok && scid != "current-service" {
 		return scid, nil
@@ -433,6 +440,27 @@ func (h *authHandler) requireService(v verdict) verdict {
 	}
 	if sid == "" {
 		return v.fail(v.rt.NoService, "nenhum servico DTV selecionado")
+	}
+	return v
+}
+
+// requireCatalog: nas rotas com NotInCatalog, o {serviceContextId} explicito
+// fora de services:announced (os servicos do Application Catalog) responde
+// esse codigo, para todo cliente. current-service e o servico sintonizado.
+func (h *authHandler) requireCatalog(v verdict) verdict {
+	if v.rt == nil || v.rt.NotInCatalog == 0 {
+		return v
+	}
+	scid, ok := v.params["serviceContextId"]
+	if !ok || scid == "current-service" {
+		return v
+	}
+	in, err := h.store.ServiceInCatalog(scid)
+	if err != nil {
+		return v.fail(200, "redis indisponivel ("+err.Error()+")")
+	}
+	if !in {
+		return v.fail(v.rt.NotInCatalog, "servico "+scid+" fora do Application Catalog")
 	}
 	return v
 }

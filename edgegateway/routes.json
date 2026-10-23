@@ -435,6 +435,7 @@
       },
       "auth": "token+bind",
       "no_service": 300,
+      "not_in_catalog": 304,
       "headers": [
         "Authorization",
         "Accept-Version"
@@ -453,6 +454,7 @@
       },
       "auth": "token+bind",
       "no_service": 300,
+      "not_in_catalog": 304,
       "headers": [
         "Authorization",
         "Accept-Version",

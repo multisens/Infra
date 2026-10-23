@@ -53,9 +53,11 @@ func edgeHandlerNames() string {
 // routes.json (ausente = 2.0, a "current version" da C.3.6.3): sem
 // Accept-Version vale a 2.0; fora do formato X.Y, 101; versao que a rota nao
 // serve, 100. Versoes de 100 em diante sao extensoes do testbed (100.0:
-// remote-device por handle). A negociada vai ao servico em X-TV30-API-Version.
+// remote-device por handle). A negociada vai ao servico em X-TV30-API-Version
+// e, se for extensao, tambem no caminho (internalPath).
 const (
 	defaultVersion        = "2.0"
+	extensionMajor        = 100
 	internalVersionHeader = "X-TV30-API-Version"
 	// Host original do cliente (o KrakenD o troca pelo do backend): o /manifest
 	// monta com ele o Server-BaseURL, no mesmo host do anuncio SSDP.
@@ -63,6 +65,9 @@ const (
 )
 
 var versionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
+
+// prefixo do caminho interno (internalPath): fora das rotas declaradas
+var internalPrefix = regexp.MustCompile(`^/v[0-9]+\.[0-9]+(/|$)`)
 
 // compareVersions: "X.Y" numerico (C.3.6.2): 2.10 e mais recente que 2.9.
 func compareVersions(a, b string) int {
@@ -97,6 +102,41 @@ func negotiateVersion(r *http.Request, served []string) (version string, code in
 		}
 	}
 	return "", 100, "unsupported version '" + v + "' for this API (served: " + strings.Join(served, ", ") + ")"
+}
+
+func isExtensionVersion(v string) bool {
+	major, _ := splitVersion(v)
+	return major >= extensionMajor
+}
+
+// internalPath: caminho do salto borda -> servico. Extensao do testbed leva o
+// prefixo /v<X.Y> antes do publico; versao da norma, o publico. Antes do /tv3/
+// porque /tv3/{versao}/... colidiria com /tv3/{serviceContextId}/users/...
+// O generate.js gera os endpoints do KrakenD pela mesma regra.
+func internalPath(path, version string) string {
+	if !isExtensionVersion(version) {
+		return path
+	}
+	// sem a barra final: o redirecionamento do roteador mostraria ao cliente o
+	// caminho interno
+	if len(path) > 1 {
+		path = strings.TrimSuffix(path, "/")
+	}
+	return "/v" + version + path
+}
+
+// toInternalPath troca o caminho da requisicao pelo interno. r e a copia
+// feita em ServeHTTP; a URL e copiada para nao mexer na do servidor.
+func toInternalPath(r *http.Request, version string) {
+	if !isExtensionVersion(version) {
+		return
+	}
+	u := *r.URL
+	u.Path = internalPath(u.Path, version)
+	if u.RawPath != "" {
+		u.RawPath = internalPath(u.RawPath, version)
+	}
+	r.URL = &u
 }
 
 // versionInfo: as versoes da rota da requisicao e a mais recente do servidor,

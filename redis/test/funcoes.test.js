@@ -312,6 +312,7 @@ const SLOTS = {
         { rotulo: 'nome de campo', regra: f => f.outrosCampos.nome, chamada: v => ['tv30_origem_registra', [v, 'urn:tv30:service:users-test']], trecho: 'nome de campo:' },
         { rotulo: 'valor', regra: f => f.outrosCampos.valor, chamada: v => ['tv30_origem_registra', [ORIGEM, v]], trecho: 'campo "' },
     ],
+    'services:announced': [{ rotulo: 'membro', regra: f => f.membros, chamada: v => ['tv30_servicos_anunciados', ['urn:tv30:service:ok', v]], trecho: 'services:announced membro' }],
     'bind-context:{serviceId}': [
         { rotulo: '{serviceId}', regra: f => f.partes.serviceId, chamada: v => ['tv30_bind_registra', [v, JSON.stringify(ENTRADA)]], trecho: '{serviceId} da chave:' },
         { rotulo: 'entrada', regra: f => f.itens, chamada: v => ['tv30_bind_registra', ['urn:tv30:service:a', v]], trecho: 'entrada:' },
@@ -503,6 +504,50 @@ test('perfil: grava os tres juntos, visibilidade acumula, ultimo acesso so em pe
     assert.deepEqual(await auditoria(), []);
 });
 
+// a conferencia do teto e da propria funcao: nenhuma leitura antes da chamada
+test('perfil: teto de users:index na gravacao; id novo alem dele recusado, regravar existente aceito, remover libera', async () => {
+    const f = familia('users:index');
+    assert.ok(Number.isInteger(f.maxMembros) && f.maxMembros > 0, 'teto declarado no esquema');
+    assert.ok(f.maxMembrosFonte, 'fonte do teto');
+    const ids = Array.from({ length: f.maxMembros }, (_, i) => `0b6e3c1a-7f2d-4e8b-9a5c-${String(i + 1).padStart(12, '0')}`);
+    for (const id of ids) await fcall('tv30_perfil_grava', ...perfilArgs(id, ['urn:a'], { ...PERFIL_MIN, id }));
+    assert.equal(await r('SCARD', 'users:index'), f.maxMembros);
+
+    const novo = 'c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10';
+    const msg = await recusa('id novo com o conjunto no teto', 'tv30_perfil_grava', perfilArgs(novo, ['urn:b'], { ...PERFIL_MIN, id: novo }),
+        [`users:index teto de ${f.maxMembros} perfis atingido (${f.maxMembrosFonte})`, novo]);
+    assert.ok(!msg.includes('\n'), 'mensagem numa linha so');
+    assert.equal(await r('EXISTS', `user:${novo}`), 0);
+
+    // regravar um dos que estao no teto: aceito, com o conjunto do mesmo tamanho
+    assert.equal(await fcall('tv30_perfil_grava', ...perfilArgs(ids[2], ['urn:c'], { ...PERFIL_MIN, id: ids[2], nickname: 'Regravado' })), 1);
+    assert.equal(await r('HGET', `user:${ids[2]}`, 'nickname'), 'Regravado');
+    assert.deepEqual((await r('SMEMBERS', `user:${ids[2]}:consent`)).sort(), ['urn:a', 'urn:c']);
+    assert.equal(await r('SCARD', 'users:index'), f.maxMembros);
+
+    // removido um, o novo entra; e o seguinte volta a ser recusado
+    await fcall('tv30_perfil_remove', ids[0]);
+    assert.equal(await fcall('tv30_perfil_grava', ...perfilArgs(novo, [], { ...PERFIL_MIN, id: novo })), 1);
+    assert.equal(await r('SCARD', 'users:index'), f.maxMembros);
+    await recusa('de novo no teto', 'tv30_perfil_grava', perfilArgs(ids[0], [], { ...PERFIL_MIN, id: ids[0] }), ['teto de']);
+    assert.deepEqual(await auditoria(), []);
+});
+
+test('perfil: teto conta o que esta no Redis, inclusive membro gravado a mao', async () => {
+    const f = familia('users:index');
+    const ids = Array.from({ length: f.maxMembros + 1 }, (_, i) => `5a9d2f4e-1c3b-4d6a-8e7f-${String(i + 1).padStart(12, '0')}`);
+    for (const id of ids.slice(0, f.maxMembros)) await fcall('tv30_perfil_grava', ...perfilArgs(id, [], { ...PERFIL_MIN, id }));
+    // um a mais, por fora das funcoes: a auditoria aponta o excesso
+    await r('SADD', 'users:index', ids[f.maxMembros]);
+    await r('HSET', `user:${ids[f.maxMembros]}`, ...plano({ ...PERFIL_MIN, id: ids[f.maxMembros] }));
+    const achados = await auditoria();
+    assert.deepEqual(achados, [['users:index', 'users:index', `${f.maxMembros + 1} membros, acima do teto de ${f.maxMembros} (${f.maxMembrosFonte})`]]);
+    // acima do teto: o existente ainda se regrava; id novo, nao
+    assert.equal(await fcall('tv30_perfil_grava', ...perfilArgs(ids[0], [], { ...PERFIL_MIN, id: ids[0], nickname: 'Ainda' })), 1);
+    const novo = 'c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10';
+    await recusa('id novo acima do teto', 'tv30_perfil_grava', perfilArgs(novo, [], { ...PERFIL_MIN, id: novo }), [`teto de ${f.maxMembros} perfis`]);
+});
+
 // o ultimo acesso confere so o campo escrito, e a remocao nao confere o id
 test('id que nao e UUID, gravado a mao: auditoria aponta, gravacao recusada, remocao passa', async () => {
     const velho = 'user_1760000000000';
@@ -644,6 +689,22 @@ test('origens: registra, remove, limpa', async () => {
     assert.equal(await fcall('tv30_origem_remove', ORIGEM), 0);
 });
 
+test('servicos anunciados: o conjunto regravado inteiro; repetido conta uma vez; sem argumento, apaga', async () => {
+    assert.equal(await fcall('tv30_servicos_anunciados', 'urn:tv30:service:a', 'urn:tv30:service:b', 'urn:tv30:service:a'), 2);
+    assert.deepEqual((await r('SMEMBERS', 'services:announced')).sort(), ['urn:tv30:service:a', 'urn:tv30:service:b']);
+    // o que saiu da BAMT sai do conjunto
+    assert.equal(await fcall('tv30_servicos_anunciados', 'urn:tv30:service:b', 'urn:tv30:service:c'), 2);
+    assert.deepEqual((await r('SMEMBERS', 'services:announced')).sort(), ['urn:tv30:service:b', 'urn:tv30:service:c']);
+    assert.deepEqual(await auditoria(), []);
+    assert.equal(await fcall('tv30_servicos_anunciados'), 0);
+    assert.equal(await r('EXISTS', 'services:announced'), 0);
+    assert.equal(await fcall('tv30_servicos_anunciados'), 0);
+    // mais servicos que um lote do SADD
+    const muitos = Array.from({ length: 1000 }, (_, i) => `urn:tv30:service:s${i}`);
+    assert.equal(await fcall('tv30_servicos_anunciados', ...muitos), 1000);
+    assert.deepEqual(await auditoria(), []);
+});
+
 test('bind-context: RPUSH da entrada exata, LREM de todas as iguais', async () => {
     const e1 = JSON.stringify(ENTRADA);
     const e2 = JSON.stringify({ alg: 'RS256', key: '-----BEGIN PUBLIC KEY-----\nMFww\n-----END PUBLIC KEY-----', registeredAt: 1 });
@@ -694,6 +755,15 @@ test('atomicidade: tipo errado numa chave posterior ou membro invalido no fim na
     await r('SET', 'bind-context:urn:a', 'x');
     await recusa('bind-context STRING', 'tv30_bind_registra', ['urn:a', JSON.stringify(ENTRADA)], ['no Redis e string, o esquema pede list']);
     await recusa('bind remove em STRING', 'tv30_bind_remove', ['urn:a', 'x'], ['no Redis e string']);
+    // servicos anunciados: o conjunto anterior fica intacto
+    await limpo();
+    await fcall('tv30_servicos_anunciados', 'urn:antes');
+    await recusa('ultimo servico vazio', 'tv30_servicos_anunciados', ['urn:a', 'urn:b', ''], ['services:announced membro "": vazio']);
+    await recusa('servico longo demais', 'tv30_servicos_anunciados', ['urn:a', 'x'.repeat(257)], ['maximo 256']);
+    await limpo();
+    await r('SET', 'services:announced', 'x');
+    await recusa('services:announced STRING', 'tv30_servicos_anunciados', ['urn:a'], ['services:announced no Redis e string, o esquema pede set']);
+    await recusa('services:announced STRING, sem argumento', 'tv30_servicos_anunciados', [], ['no Redis e string']);
 });
 
 // --------------------------------------------------------------- auditoria --
@@ -709,6 +779,7 @@ test('auditoria: cada tipo de problema gravado a mao aparece com chave, familia 
     await fcall('tv30_cliente_bloqueia', 'c2');
     await fcall('tv30_origem_registra', ORIGEM, 'urn:s');
     await fcall('tv30_bind_registra', 'urn:s', JSON.stringify(ENTRADA));
+    await fcall('tv30_servicos_anunciados', 'urn:s', 'urn:t');
     assert.deepEqual(await auditoria(), [], 'todas as familias validas');
     const valido = await snapshot();
 
@@ -730,7 +801,11 @@ test('auditoria: cada tipo de problema gravado a mao aparece com chave, familia 
         [['HSET', 'client:c1', 'class', 'admin'], ['client:c1', 'client:{id}', 'campo class:']],
         [['HSET', 'origins:associated', 'http://X.example', 'urn:s'], ['origins:associated', 'origins:associated', 'nome de campo: host deve estar em minusculas']],
         [['RPUSH', 'bind-context:urn:s', '{"alg":"none","key":"k","registeredAt":1}'], ['bind-context:urn:s', 'bind-context:{serviceId}', 'item 1: membro "alg"']],
+        [['SADD', 'services:announced', ''], ['services:announced', 'services:announced', 'membro "": vazio']],
+        [['SET', 'services:announced', 'x'], ['services:announced', 'services:announced', 'no Redis e string, o esquema pede set']],
+        [['HSET', 'services:outra', 'a', '1'], ['services:outra', '-', 'chave sem familia']],
         [['SET', 'users:index', 'x'], ['users:index', 'users:index', 'no Redis e string, o esquema pede set']],
+        [['SADD', 'users:index', FANTASMA, ORFAO, SEM_HASH, 'f0f0f0f0-0000-4000-8000-000000000004', 'f0f0f0f0-0000-4000-8000-000000000005'], ['users:index', 'users:index', '6 membros, acima do teto de 5']],
         // ids que nao sao UUID em minusculas
         [['SADD', 'users:index', 'user_1760000000000'], ['users:index', 'users:index', 'membro "user_1760000000000": deve ser UUID no formato da RFC 9562']],
         [['HSET', 'user:c3167a18-5dc5', 'id', 'c3167a18-5dc5'], ['user:c3167a18-5dc5', 'user:{id}', '{id} da chave: deve ser UUID']],

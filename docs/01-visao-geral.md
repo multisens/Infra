@@ -28,7 +28,7 @@ graph TD
     TV3 -.->|"lê perfis, origens e clientes;<br/>grava sessão e clientes"| RE
     TV3 <-->|"MQTT"| MQ
     AOP <-->|"MQTT"| MQ
-    AOP -.->|"perfis e origens associadas"| RE
+    AOP -.->|"perfis, origens associadas<br/>e serviços anunciados"| RE
     AOP -->|"páginas HTTP; camadas e pop-ups<br/>por MQTT no WebSocket /mqtt"| TVB
     RD -->|"WebSocket do remote-device"| TV3
 ```
@@ -45,7 +45,7 @@ Dois exemplos de interação que passam pelo broker:
 |---|---|---|
 | `edgegateway` | Validação de credenciais, C.6.8 e C.6.7.8/C.6.7.9, roteamento ao tv3ws, CORS e documentação (8085); o anúncio SSDP (C.3.4) roda fora dela, nativo no host | tv3ws (HTTP/HTTPS), Redis |
 | `tv3ws` | Demais APIs de `/tv3`; emissão do access token; WebSocket do remote-device | broker (MQTT), Redis |
-| `aop` | Telas da TV, gestor de perfis (dono de `users:index`, `user:{id}` e `user:{id}:consent`), lançamento das apps de emissora no host próprio de cada uma (`origins:associated`), proxy das apps e do vídeo, `/mqtt` | broker (MQTT e repasse do WebSocket), Redis, bcast (HTTP) |
+| `aop` | Telas da TV, gestor de perfis (dono de `users:index`, `user:{id}` e `user:{id}:consent`; criação, remoção e perfil padrão), recepção da BAMT e lista dos serviços anunciados (`services:announced`, `aop/services`, que o Application Catalog mostra), lançamento das apps de emissora no host próprio de cada uma (`origins:associated`), proxy das apps e do vídeo, `/mqtt` | broker (MQTT e repasse do WebSocket), Redis, bcast (HTTP) |
 | `bcast` | Simula a transmissão: publica LLS e SLS (`tlm/lls/...`, `tlm/sls/...`) e `video/event`, e serve os pacotes das apps e a mídia | broker (MQTT) |
 | `mqtt-broker` | Barramento entre os serviços; o plugin C valida o esquema da publicação e responde ao teste de latência | ninguém (não consulta o Redis) |
 | `redis` | Estado compartilhado; a biblioteca de funções `tv30` confere o esquema de toda escrita do código | ninguém |

@@ -45,6 +45,9 @@ type route struct {
 	// NoService: codigo sem servico DTV selecionado, antes do bind-token (300,
 	// nas APIs cuja tabela o lista); 0 = segue o bind-token e da 108.
 	NoService int
+	// NotInCatalog: codigo do {serviceContextId} fora do Application Catalog,
+	// depois do 300 e antes do bind-token (304, Tabelas C.71 e C.74); 0 = nao confere.
+	NotInCatalog int
 	// Versions: versoes servidas, em ordem crescente (ausente no routes.json = 2.0)
 	Versions []string
 	segs     []segment
@@ -57,6 +60,9 @@ func newRoute(method, path, auth string, classes []string) (*route, error) {
 	}
 	if !strings.HasPrefix(path, "/") {
 		return nil, fmt.Errorf("path %q nao comeca com /", path)
+	}
+	if internalPrefix.MatchString(path) {
+		return nil, fmt.Errorf("path %q com o prefixo /v<X.Y>, reservado ao caminho interno", path)
 	}
 	switch auth {
 	case authNone, authToken, authTokenBind:
@@ -106,6 +112,15 @@ func (rt *route) allows(class string) bool {
 }
 
 func (rt *route) String() string { return rt.Method + " " + rt.Path }
+
+func (rt *route) hasParam(name string) bool {
+	for _, s := range rt.segs {
+		if s.param == name {
+			return true
+		}
+	}
+	return false
+}
 
 type routeTable struct {
 	routes []*route

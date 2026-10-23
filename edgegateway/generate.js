@@ -41,6 +41,16 @@ const compareVersions = (a, b) => {
   return am - bm || an - bn;
 };
 const versionsOf = r => [...(r.versions || DEFAULT_VERSIONS)].sort(compareVersions);
+// Caminho do salto borda -> servico (o mesmo internalPath do plugin, edge.go):
+// extensao do testbed leva o prefixo /v<X.Y> antes do caminho publico; versao
+// da norma, o publico. O cliente so usa o publico, com Accept-Version.
+const EXTENSION_MAJOR = 100;
+const isExtensionVersion = v => Number(v.split('.')[0]) >= EXTENSION_MAJOR;
+const internalPathOf = (p, v) => (isExtensionVersion(v) ? `/v${v}${p}` : p);
+const INTERNAL_PREFIX = /^\/v[0-9]+\.[0-9]+(\/|$)/;
+// caminhos internos da rota, um por par rota x versao (as versoes da norma
+// dividem o caminho publico)
+const internalPathsOf = r => [...new Set(versionsOf(r).map(v => internalPathOf(r.path, v)))];
 
 const authOf = r => r.auth || 'token';
 // classes: as que podem usar a rota (ausente => todas); as demais recebem 106.
@@ -55,6 +65,9 @@ const NONLOCAL_HTTP_SECTIONS = ['C.6.1.2', 'C.6.1.3'];
 // no_service: codigo da rota token+bind sem servico DTV selecionado, quando a
 // tabela da API lista o 300; sem o campo, segue o bind-token e da 108
 const NO_SERVICE_VALUES = [300];
+// not_in_catalog: codigo da rota token+bind com {serviceContextId} quando o
+// servico do caminho esta fora do Application Catalog (Tabelas C.71 e C.74)
+const NOT_IN_CATALOG_VALUES = [304];
 
 // Superficies, com as chaves de surfaces e backends do routes.json; secure = a
 // do Server-SecureBaseURL. Duas superficies sao do testbed: a C.3.4 so
@@ -142,6 +155,7 @@ function checkTable(t) {
     const id = `${r.method} ${r.path}`;
     if (seen.has(id)) errs.push(`${id}: rota duplicada`);
     seen.add(id);
+    if (INTERNAL_PREFIX.test(r.path || '')) errs.push(`${id}: caminho com o prefixo /v<X.Y>, reservado ao caminho interno (borda -> servico)`);
     if (r.surfaces !== undefined) errs.push(`${id}: o campo "surfaces" nao vale por rota: as duas superficies tem todas as rotas (SURFACE_RULES)`);
     if (r.auth !== undefined && !AUTH_VALUES.includes(r.auth)) errs.push(`${id}: auth "${r.auth}" invalido (${AUTH_VALUES.join(', ')})`);
     if (r.classes !== undefined) {
@@ -165,6 +179,12 @@ function checkTable(t) {
     if (r.no_service !== undefined) {
       if (!NO_SERVICE_VALUES.includes(r.no_service)) errs.push(`${id}: no_service ${JSON.stringify(r.no_service)} invalido (${NO_SERVICE_VALUES.join(', ')})`);
       if (authOf(r) !== 'token+bind') errs.push(`${id}: no_service so vale em rota token+bind`);
+    }
+    if (r.not_in_catalog !== undefined) {
+      if (!NOT_IN_CATALOG_VALUES.includes(r.not_in_catalog)) errs.push(`${id}: not_in_catalog ${JSON.stringify(r.not_in_catalog)} invalido (${NOT_IN_CATALOG_VALUES.join(', ')})`);
+      if (authOf(r) !== 'token+bind' || !String(r.path).split('/').includes('{serviceContextId}')) {
+        errs.push(`${id}: not_in_catalog so vale em rota token+bind com {serviceContextId}`);
+      }
     }
     if (r.edge !== undefined) {
       if (!EDGE_HANDLERS.includes(r.edge)) errs.push(`${id}: edge "${r.edge}" invalido (${EDGE_HANDLERS.join(', ')})`);
@@ -218,22 +238,26 @@ function headersOf(r) {
   return h;
 }
 
-function endpointFor(r, surface, host) {
-  const e = { endpoint: r.path, method: r.method };
-  const headers = headersOf(r);
-  if (headers.length) e.input_headers = headers;
-  if (r.query) e.input_query_strings = r.query;
-  // no-op: sem isso o KrakenD troca o erro do tv3ws (404 + corpo C.3.2) por
-  // 500 sem corpo
-  e.output_encoding = 'no-op';
-  // Sem "timeout" vale o padrao do KrakenD (2s): um tv3ws travado vira o erro
-  // 200 em 2 s. O /tv3/authorize espera o pop-up (ate 10 s no tv3ws): 15s.
-  if (r.timeout) e.timeout = r.timeout;
-  // Rota com "edge": o plugin responde antes e o backend nunca e chamado; o
-  // endpoint so registra o caminho no roteador (caminho fora da arvore do Gin
-  // pode cair no panic de KNOWN-ISSUES.md).
-  e.backend = [{ url_pattern: r.backendPath || r.path, host: [host], encoding: 'no-op' }];
-  return e;
+// Um endpoint por caminho interno da rota, com destino no mesmo caminho do
+// backend da superficie.
+function endpointsFor(r, host) {
+  return internalPathsOf(r).map(p => {
+    const e = { endpoint: p, method: r.method };
+    const headers = headersOf(r);
+    if (headers.length) e.input_headers = headers;
+    if (r.query) e.input_query_strings = r.query;
+    // no-op: sem isso o KrakenD troca o erro do tv3ws (404 + corpo C.3.2) por
+    // 500 sem corpo
+    e.output_encoding = 'no-op';
+    // Sem "timeout" vale o padrao do KrakenD (2s): um tv3ws travado vira o erro
+    // 200 em 2 s. O /tv3/authorize espera o pop-up (ate 10 s no tv3ws): 15s.
+    if (r.timeout) e.timeout = r.timeout;
+    // Rota com "edge": o plugin responde antes e o backend nunca e chamado; o
+    // endpoint so registra o caminho no roteador (caminho fora da arvore do Gin
+    // pode cair no panic de KNOWN-ISSUES.md).
+    e.backend = [{ url_pattern: p, host: [host], encoding: 'no-op' }];
+    return e;
+  });
 }
 
 // Bloco do plugin tv30-auth: a politica da superficie (metodo+caminho com
@@ -252,6 +276,7 @@ function pluginConfig(t, surface) {
       if (se) p.surface_error = se; // 106 a qualquer requisicao (C.4.1.8)
       if (!secure && nonLocalHTTP(r)) p.nonlocal_http = true; // C.4.1.6
       if (r.no_service) p.no_service = r.no_service;
+      if (r.not_in_catalog) p.not_in_catalog = r.not_in_catalog;
       p.versions = versionsOf(r);
       return p;
     }),
@@ -274,7 +299,7 @@ const ERROR_SCHEMA = {
   type: 'object',
   required: ['error', 'description'],
   properties: {
-    error: { type: 'integer', description: 'codigo da Tabela C.1 / C.3.3 (ex.: 100, 101, 104, 105, 106, 107, 108, 200, 300)' },
+    error: { type: 'integer', description: 'codigo da Tabela C.1 / C.3.3 (ex.: 100, 101, 104, 105, 106, 107, 108, 200, 300, 304)' },
     description: { type: 'string' },
   },
 };
@@ -306,7 +331,7 @@ function generate(t) {
         extra_config: {
           'plugin/http-server': { name: [PLUGIN_NAME], [PLUGIN_NAME]: pluginConfig(t, surface) },
         },
-        endpoints: routes.map(r => endpointFor(r, surface, host)),
+        endpoints: routes.flatMap(r => endpointsFor(r, host)),
       };
     }
     // OpenAPI da superficie (metodos mesclados por path)
@@ -325,8 +350,9 @@ function generate(t) {
           (!SURFACE_RULES[surface].secure && !nonLocalHTTP(r) && classesOf(r).includes('non-local')
             ? 'O cliente nao local recebe 106 nesta superficie (HTTP): use o Server-SecureBaseURL (C.4.1.6). ' : '') +
           (r.no_service ? `Sem servico DTV selecionado: ${r.no_service}. ` : '') +
+          (r.not_in_catalog ? `Servico do caminho fora do Application Catalog: ${r.not_in_catalog}. ` : '') +
           `Versoes servidas (Accept-Version): ${versionsOf(r).join(', ')}; outra da 100. ` +
-          'O local associado dispensa access token e bind-token nas rotas que o admitem (C.4.1.1).',
+          'O local associado dispensa access token nas rotas que o admitem e, no proprio contexto de servico, o bind-token (C.4.1.1).',
         'x-tv30-auth': auth,
         ...(r.classes ? { 'x-tv30-classes': r.classes } : {}),
         'x-tv30-surfaces': where,
@@ -366,7 +392,7 @@ function build() {
   for (const [name, obj] of Object.entries(generate(t))) {
     const out = path.join(GEN, name);
     fs.writeFileSync(out, JSON.stringify(obj, null, 2) + '\n');
-    if (obj.endpoints) console.log(`${out}: ${obj.endpoints.length} rotas, porta ${obj.port}`);
+    if (obj.endpoints) console.log(`${out}: ${obj.endpoints.length} endpoints, porta ${obj.port}`);
   }
   for (const surface of Object.keys(t.surfaces)) {
     const se = t.routes.filter(r => surfaceErrorOf(r, surface)).map(r => `${r.method} ${r.path}`);
@@ -374,7 +400,7 @@ function build() {
   }
 }
 
-module.exports = { SURFACE_RULES, CLASS_VALUES, surfacesOf, routesOf, surfaceErrorOf, checkTable, pluginConfig, apisOf, generate };
+module.exports = { SURFACE_RULES, CLASS_VALUES, surfacesOf, routesOf, surfaceErrorOf, checkTable, pluginConfig, apisOf, internalPathOf, internalPathsOf, generate };
 
 if (require.main === module) {
   const mode = process.argv[2];

@@ -520,6 +520,12 @@ OP.tv30_perfil_grava = function(args)
   exigeTipo(fIndice, fIndice.chave)
   exigeTipo(fPerfil, chave)
   exigeTipo(fVis, chaveVis)
+  -- regravar perfil existente nao conta como novo
+  if fIndice.maxMembros and redis.call('SISMEMBER', fIndice.chave, id) == 0
+      and redis.call('SCARD', fIndice.chave) >= fIndice.maxMembros then
+    falha(fIndice.chave .. ' teto de ' .. fIndice.maxMembros .. ' perfis atingido (' .. fIndice.maxMembrosFonte ..
+      '): ' .. amostra(id) .. ' nao gravado')
+  end
 
   redis.call('SADD', fIndice.chave, id)
   redis.call('DEL', chave)
@@ -703,6 +709,20 @@ OP.tv30_origens_limpa = function(args)
   return redis.call('DEL', familia('origins:associated').chave)
 end
 
+-- servicos anunciados na LLS (dono: aop-transport-layer-metadata-lls, no AoP)
+
+OP.tv30_servicos_anunciados = function(args)
+  local fam = familia('services:announced')
+  for _, s in ipairs(args) do
+    local m = motivo(fam.membros, s)
+    if m then falha(fam.chave .. ' membro ' .. amostra(s) .. ': ' .. m) end
+  end
+  exigeTipo(fam, fam.chave)
+  redis.call('DEL', fam.chave)
+  if #args > 0 then emLotes('SADD', fam.chave, args) end
+  return redis.call('SCARD', fam.chave)
+end
+
 -- bind-context (dono: borda)
 
 OP.tv30_bind_registra = function(args)
@@ -768,9 +788,13 @@ local function auditoria()
         elseif t == 'hash' then
           for _, m in ipairs(motivosHash(fam, partes, hashDe(k), nil)) do add(k, fam.familia, m) end
         elseif t == 'set' then
-          for _, x in ipairs(ordenadas(conjuntoDe(redis.call('SMEMBERS', k)))) do
+          local ms = ordenadas(conjuntoDe(redis.call('SMEMBERS', k)))
+          for _, x in ipairs(ms) do
             local m = motivo(fam.membros, x)
             if m then add(k, fam.familia, 'membro ' .. amostra(x) .. ': ' .. m) end
+          end
+          if fam.maxMembros and #ms > fam.maxMembros then
+            add(k, fam.familia, #ms .. ' membros, acima do teto de ' .. fam.maxMembros .. ' (' .. fam.maxMembrosFonte .. ')')
           end
         elseif t == 'list' then
           for i, x in ipairs(redis.call('LRANGE', k, 0, -1)) do
@@ -858,6 +882,7 @@ local ESCRITA = {
   'tv30_perfil_grava',
   'tv30_perfil_remove',
   'tv30_perfil_ultimo_acesso',
+  'tv30_servicos_anunciados',
   'tv30_sessao_servico',
   'tv30_sessao_servico_id',
   'tv30_sessao_usuario',

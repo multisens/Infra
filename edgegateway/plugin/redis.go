@@ -347,6 +347,8 @@ func (rc *redisClient) scanKeys(match string) ([]string, error) {
 //	origins:associated           HASH   le    — AoP (core.js): origem -> servico que lancou a app
 //	session:current-service-id   STRING le    — tv3ws (api/user/service.ts): servico corrente
 //	session:current-service      HASH   le    — tv3ws (core.ts): serviceName/serviceId do corrente (C.6.8.3)
+//	services:announced           SET    le    — AoP (aop-transport-layer-metadata-lls): servicos do
+//	                                    Application Catalog, para o 304 (C.6.14.2, C.6.14.5)
 //	bind-context:{serviceId}     LIST   le e escreve — a borda (C.6.8.2/C.6.8.4, bindcontext.go):
 //	                                    {alg,key,registeredAt}, so pelas funcoes tv30_bind_*
 const (
@@ -355,6 +357,7 @@ const (
 	keyAssociated     = "origins:associated"
 	keyCurrentService = "session:current-service-id"
 	keyCurrentSvcHash = "session:current-service"
+	keyAnnounced      = "services:announced"
 	keyBindPrefix     = "bind-context:"
 )
 
@@ -366,6 +369,7 @@ type store interface {
 	// a app; ok=false se a origem nao esta na lista.
 	AssociatedOrigin(origin string) (service string, ok bool, err error)
 	CurrentServiceID() (string, error)
+	ServiceInCatalog(serviceID string) (bool, error) // SISMEMBER services:announced
 	BindKeys(serviceID string) ([]string, error)
 
 	// C.6.8 respondida pela borda
@@ -404,6 +408,11 @@ func (s *redisStore) AssociatedOrigin(origin string) (string, bool, error) {
 func (s *redisStore) CurrentServiceID() (string, error) {
 	v, _, err := s.c.get(keyCurrentService)
 	return v, err
+}
+
+func (s *redisStore) ServiceInCatalog(id string) (bool, error) {
+	n, err := s.c.intCmd("SISMEMBER", keyAnnounced, id)
+	return n == 1, err
 }
 
 func (s *redisStore) BindKeys(serviceID string) ([]string, error) {

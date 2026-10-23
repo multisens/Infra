@@ -21,7 +21,7 @@ graph LR
             PL["plugin tv30-auth<br/>(nas duas superfícies)"]
             DOC["httpd :8085<br/>Swagger UI + 2 OpenAPI"]
         end
-        TV3["tv3ws<br/>HTTP :44652 e HTTPS :44653 (não publicadas)<br/>wss:// :45000-45199"]
+        TV3["tv3ws<br/>HTTP :44652 e HTTPS :44653 (não publicadas)<br/>WebSocket :45000-45199"]
         AOP["aop :8080<br/>páginas da TV, host de cada app,<br/>/videoStreamProxy, /mqtt"]
         BC["bcast :8081<br/>pacotes das apps e mídia"]
         MQ["mqtt-broker (serviço mosquitto)<br/>MQTT :1883, WebSocket :9001<br/>plugin C: esquema e teste de latência"]
@@ -37,10 +37,11 @@ graph LR
     TV -->|"HTTP 8080"| AOP
     TV -->|"WebSocket /mqtt"| AOP
     RD -->|"wss:// 45000-45199<br/>(ws:// com TV3WS_WS_TLS=false)"| TV3
+    APPE -->|"ws:// 45000-45199<br/>(ponto de entrada local)"| TV3
 
     KI -->|"HTTP tv3ws:44652"| TV3
     KE -->|"HTTPS tv3ws:44653"| TV3
-    PL -.->|"lê clients:*, origins:associated, session:*<br/>e bind-context:*; grava bind-context:* (FCALL)"| RE
+    PL -.->|"lê clients:*, origins:associated, session:*,<br/>services:announced e bind-context:*;<br/>grava bind-context:* (FCALL)"| RE
 
     AOP -->|"proxy HTTP bcast:8081<br/>(apps e vídeo)"| BC
     AOP -->|"repassa o WebSocket<br/>a mosquitto:9001"| MQ
@@ -48,15 +49,15 @@ graph LR
     TV3 <-->|"MQTT 1883"| MQ
     BC -->|"MQTT 1883: tlm/lls, tlm/sls,<br/>video/event"| MQ
 
-    AOP -.->|"lê e grava perfis e<br/>origins:associated (FCALL)"| RE
+    AOP -.->|"lê e grava perfis, origins:associated<br/>e services:announced (FCALL)"| RE
     TV3 -.->|"lê perfis, origens e clientes; grava session:*,<br/>client(s):*, atributos de emissora (FCALL);<br/>espelho remote-devices:* (direto)"| RE
 ```
 
 Setas cheias: HTTP, WebSocket, MQTT ou SSDP. Setas tracejadas: Redis. O plugin `tv30-auth` roda dentro dos dois processos KrakenD e responde ele mesmo a C.6.8 (`/tv3/bind-context`) e a C.6.7.8/C.6.7.9 (`/tv3/api-info`); as demais rotas vão ao tv3ws ([04](04-pipeline-http.md)). O `PL` está separado no desenho só para mostrar o acesso ao Redis.
 
 Pontos que o desenho não mostra:
-- **Certificado do receptor.** O one-shot `tls-init` gera na primeira subida um certificado autoassinado em `.tv30/tls` da raiz. A borda o usa no TLS (Transport Layer Security) da 44643; o tv3ws, no HTTPS da 44653, no `serverCert` do pareamento e nos pontos de entrada `wss://` (`tv3ws/src/tls.ts`). Sem certificado (tv3ws no host, sem configuração), o tv3ws sobe só em HTTP, e as rotas que a 44643 repassa respondem 404 `{"error":200}`.
-- **Quem fala com o broker sem estar no desenho.** Os tópicos `aop/services`, `aop/{serviceId}/currentApp`, `aop/{serviceId}/{appId}/path` e `.../doc/*`, que o tv3ws assina, não têm publicador neste repositório ([08](08-mqtt-map.md)).
+- **Certificado do receptor.** O one-shot `tls-init` gera na primeira subida um certificado autoassinado em `.tv30/tls` da raiz. A borda o usa no TLS (Transport Layer Security) da 44643; o tv3ws, no HTTPS da 44653, no `serverCert` do pareamento e no ponto de entrada `wss://` do dispositivo remoto (`tv3ws/src/tls.ts`); o ponto de entrada local sai sempre em `ws://`. Sem certificado (tv3ws no host, sem configuração), o tv3ws sobe só em HTTP, e as rotas que a 44643 repassa respondem 404 `{"error":200}`.
+- **Quem fala com o broker sem estar no desenho.** Os tópicos `aop/{serviceId}/currentApp`, `aop/{serviceId}/{appId}/path` e `.../doc/*`, que o tv3ws assina, não têm publicador neste repositório ([08](08-mqtt-map.md)).
 - **One-shots da raiz.** `preflight` (rede e PID do host; confere portas; a borda só sobe depois dele), `userfiles-seed` (semeia `./user-files`), `tls-init` (certificado do receptor; a borda e o tv3ws só sobem depois dele) e `sysctl-init` (profile `linux`). Ver [02](02-rede-docker.md).
 - **Ninguém fala HTTP com o tv3ws por dentro.** O AoP lê e grava o Redis direto e não usa a porta HTTP do tv3ws (comentário do serviço `aop` no compose da raiz); clientes só chegam ao tv3ws pela borda.
 
@@ -68,7 +69,7 @@ Pontos que o desenho não mostra:
 | `edgegateway` | 44643 (externa) | 44643, fixa por padrão (`EDGE_EXT_PUBLISH=44643:44643`); só o número dá porta livre |
 | `edgegateway` | 8085 (documentação) | livre, escolhida pelo Docker (`docker port edgegateway 8085`) |
 | `tv3ws` | 44652, 44653 | não publicadas |
-| `tv3ws` | 45000–45199 (`wss://`) | as mesmas, fixas |
+| `tv3ws` | 45000–45199 (`wss://` do dispositivo remoto, `ws://` do local) | as mesmas, fixas |
 | `aop` | 8080 | `AOP_PUBLIC_PORT`, padrão 8080, fixa |
 | `bcast` | 8081 | livre por padrão (`BCAST_PUBLISH`) |
 | `mqtt-broker` | 1883 | 1883, fixa |

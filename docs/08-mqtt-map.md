@@ -25,11 +25,20 @@ A coluna **Esquema** diz se o tópico tem esquema em `infra/mqtt-broker/plugin/c
 | Direção | Arquivo | Detalhe |
 |---|---|---|
 | **PUB** | `aop/src/core.js` | `setCurrentUser()`: grava antes o `lastAccess` do perfil; payload: id do perfil |
-| **PUB** | `tv3ws/src/api/user/service.ts` | `setCurrentUser()` (C.6.14.4): grava antes `session:current-user` |
+| **PUB** | `tv3ws/src/api/user/service.ts` | `setCurrentUser()` (C.6.14.4): confere antes o serviço em uso, o perfil e a visibilidade dele (300, 305, 405) e grava `session:current-user` |
 | **SUB** | `aop/src/core.js` | assinado no `connect` (mapa `_topics`); `loadCurrentUser()`: grava o `lastAccess` do perfil (`touchLastAccess`) |
+| **PUB** | `aop/src/core.js` | `profileRemoved()`: payload `''`, quando o perfil removido pelo telespectador era o corrente; o corrente passa a ser o escolhido no seletor |
 | **SUB** | `tv3ws/src/api/user/service.ts` | `updateCurrentUser()`: `session:current-user` (`tv30_sessao_usuario`) |
 
 O payload é o id do perfil (UUID) em texto puro. O plugin do broker valida como string o payload que não é um texto JSON inteiro ([09](09-schema-validation.md)).
+
+### `aop/removedUser` — não retido; esquema: string de 1 a 64 caracteres
+
+| Direção | Arquivo | Detalhe |
+|---|---|---|
+| **PUB** | `aop/src/core.js` | `profileRemoved()`: o id do perfil que o telespectador removeu no seletor, depois de removidos o perfil, a visibilidade, os atributos de emissora e o arquivo do avatar |
+
+Nenhum serviço deste repositório assina.
 
 ### `aop/currentService` — retido; esquema: string de até 256 caracteres
 
@@ -41,11 +50,12 @@ O payload é o id do perfil (UUID) em texto puro. O plugin do broker valida como
 | **SUB** | `tv3ws/src/api/user/service.ts` | `updateCurrentService()`: `session:current-service-id` (`tv30_sessao_servico_id`) |
 | **SUB** | `tv3ws/src/core.ts` | `currentService()`: `session:current-service` (`tv30_sessao_servico`) e assinatura de `aop/{serviceId}/currentApp` |
 
-### `aop/services` — sem publicador neste repositório
+### `aop/services` — retido; esquema: array de `{"serviceContextId"}`
 
 | Direção | Arquivo | Detalhe |
 |---|---|---|
-| **SUB** | `tv3ws/src/core.ts` | `loadServiceData()`: lista de serviços em JSON |
+| **PUB** | `aop/src/modules/transport-layer-metadata-lls/index.js` | unidade `aop-transport-layer-metadata-lls`, no processo do AoP: os serviços anunciados na LLS, `[{"serviceContextId": "<globalServiceId>"}, ...]`, um por BAM, sem repetição (`[]` = nenhum). Sai depois de gravar o mesmo conteúdo em `services:announced` (`tv30_servicos_anunciados`), a cada BAMT recebida ou retirada e na partida; falha do Redis tenta de novo antes de publicar |
+| **SUB** | `tv3ws/src/core.ts` | `loadServiceData()`: guarda os `serviceContextId`; mensagem vazia = nenhum serviço, e a que não é JSON é ignorada, com log. Nenhuma resposta da API usa a lista: sem SLT, não há `serviceId` nem `serviceName` |
 
 ---
 
@@ -131,7 +141,7 @@ A página trata as mensagens de pop-up em `handlePopupMessage` (`aop/public/js/p
 | Direção | Arquivo | Detalhe |
 |---|---|---|
 | **PUB** | `bcast/src/index.ts` | BAMT em JSON, no `connect` do cliente MQTT; `''` na limpeza (`clean_topics()`) |
-| **SUB** | `aop/src/core.js` | `tlm/lls/#`, assinado no `connect` (mapa `_topics`): `loadLLSMetadata()`, que só trata o último nível `bamt`; com payload vazio, limpa a lista de serviços e assina de novo |
+| **SUB** | `aop/src/core.js` → `aop/src/modules/transport-layer-metadata-lls/index.js` | `tlm/lls/#`, assinado no `connect` (mapa `_topics`), entregue a `receive()` da unidade `aop-transport-layer-metadata-lls`: só trata `tlm/lls/<bsid>/bamt`; payload vazio retira o fluxo `<bsid>`; serviço repetido entre fluxos vale com o BAM da BAMT recebida por último. Cada mudança regrava `services:announced` e publica `aop/services` |
 
 `{bsid}` é o `BSID` do bcast (no compose da raiz, `tv30-default`).
 
@@ -166,20 +176,20 @@ A página trata as mensagens de pop-up em `handlePopupMessage` (`aop/public/js/p
 ```mermaid
 graph TD
     BC["bcast (bcast_svc)<br/>PUB tlm/lls/{bsid}/bamt, tlm/sls/{sid}/esg|bald,<br/>video/event"]
-    AOP["AoP (aop-core)<br/>PUB aop/currentUser, aop/currentService, aop/display/layers/*<br/>SUB aop/currentUser, aop/currentService, tlm/lls/#, tlm/sls/{sid}/#"]
+    AOP["AoP (aop-core)<br/>PUB aop/currentUser, aop/removedUser, aop/currentService,<br/>aop/services, aop/display/layers/*<br/>SUB aop/currentUser, aop/currentService, tlm/lls/#, tlm/sls/{sid}/#"]
     TV3["tv3ws (tv3ws-client)<br/>PUB aop/currentUser, aop/devices/{class}, popup/yesno|qrcode|pin|info, tópicos de nó<br/>SUB aop/currentUser, aop/currentService, aop/services,<br/>aop/{sid}/currentApp, .../path, .../doc/*, popup/yesno/response"]
     PG["página da TV (rp-display)<br/>PUB popup/yesno/response<br/>SUB aop/display/layers/+, video/+, popup/+/message, popup/+, video/event"]
     RE[("Redis")]
 
     BC -->|"sinalização"| AOP
     BC -->|"video/event"| PG
-    AOP -->|"usuário e serviço correntes"| TV3
+    AOP -->|"usuário e serviço correntes,<br/>serviços anunciados"| TV3
     TV3 -->|"usuário corrente (C.6.14.4)"| AOP
     AOP -->|"camadas da tela"| PG
     TV3 -->|"pop-ups"| PG
     PG -->|"resposta do pop-up"| TV3
     TV3 -.->|"session:* (espelho)"| RE
-    AOP -.->|"lastAccess do perfil"| RE
+    AOP -.->|"lastAccess do perfil,<br/>services:announced"| RE
 ```
 
 ## Retenção
@@ -188,7 +198,8 @@ graph TD
 |---|---|---|
 | `aop/currentUser` | `true` | AoP e tv3ws |
 | `aop/currentService` | `true` | AoP |
+| `aop/services` | `true` | AoP (`aop-transport-layer-metadata-lls`) |
 | `aop/devices/{devclass}` | `true` | tv3ws |
 | `tlm/lls/{bsid}/bamt`, `tlm/sls/{serviceId}/esg`, `tlm/sls/{serviceId}/bald` | `true` | bcast |
 | tópicos de nó `.../user` e `.../value` | `true` (padrão do `publish` do tv3ws) | tv3ws |
-| camadas da tela, pop-ups e resposta, `eventNotification`, `video/event`, `errors/*`, `PluginResponseTime*` | `false` | AoP, tv3ws, página, bcast e plugin |
+| camadas da tela, pop-ups e resposta, `aop/removedUser`, `eventNotification`, `video/event`, `errors/*`, `PluginResponseTime*` | `false` | AoP, tv3ws, página, bcast e plugin |

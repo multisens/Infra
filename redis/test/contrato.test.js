@@ -141,12 +141,19 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
     // o UUID nulo e a versao fora de 1 a 8 voltam como TV30ESQUEMA, com a parte que falhou
     await assert.rejects(tv.atributosEmissora('00000000-0000-0000-0000-000000000000', 'urn:s', { cor: 'azul' }), { message: /^TV30ESQUEMA .*UUID nulo/ });
     await assert.rejects(tv.atributosEmissora('9d1e2f3a-4b5c-9d6e-8f70-81a2b3c4d5e6', 'urn:s', { cor: 'azul' }), { message: /^TV30ESQUEMA .*versao do UUID deve ser de 1 a 8/ });
-    // sexto perfil: recusado, sem despejo nem arquivo novo
+    // sexto perfil: a funcao que grava recusa pelo teto do esquema, e o AoP
+    // responde a mensagem da tela; sem despejo nem arquivo novo
     const thumbsAntes = fs.readdirSync(THUMBS).sort();
-    await assert.rejects(profiles.createProfile({ nickname: 'Sexto' }), err => err instanceof profiles.ValidationError);
+    await assert.rejects(profiles.createProfile({ nickname: 'Sexto' }),
+        err => err instanceof profiles.ValidationError && err.message === 'O limite de 5 perfis foi atingido. O perfil não foi criado.');
+    const novo = 'c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10';
+    await assert.rejects(aop.perfilGrava(novo, [], {
+        id: novo, nickname: 'Direto', parentalControl: 'false', closedCaptioning: 'false', closedSigning: 'false',
+        audioDescription: 'false', dialogEnhancement: 'false', voiceGuidance: 'false',
+    }), err => aop.tetoDePerfis(err) === 5);
     assert.equal(await r('SCARD', 'users:index'), 5);
     assert.equal(await r('HGET', `user:${ids[0]}:broadcaster-attrs:urn:tv30:service:users-test`, 'cor'), 'azul');
-    assert.deepEqual(fs.readdirSync(THUMBS).sort(), thumbsAntes, 'a recusa nao grava arquivo de avatar');
+    assert.deepEqual(fs.readdirSync(THUMBS).sort(), thumbsAntes, 'a recusa nao deixa arquivo de avatar');
     // no diretorio de miniaturas, so os avatares dos perfis que existem
     const vivos = [];
     for (const id of await r('SMEMBERS', 'users:index')) {
@@ -154,11 +161,61 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
         if (av !== null) vivos.push(av);
     }
     assert.deepEqual(fs.readdirSync(THUMBS).sort(), vivos.sort(), 'arquivos de thumbs/ = avatares dos perfis existentes');
-    // a remocao pelo adaptador do AoP leva os atributos de emissora na mesma
-    // funcao (tv30_perfil_remove)
-    assert.ok(await aop.perfilRemove(ids[0]) >= 4);
-    assert.deepEqual(await r('KEYS', `user:${ids[0]}*`), [], 'a remocao leva os atributos de emissora juntos');
+    // a remocao pelo gestor leva visibilidade e atributos de emissora na mesma
+    // funcao (tv30_perfil_remove) e depois o arquivo do avatar
+    assert.ok(fs.existsSync(arquivoAvatar(ids[0])));
+    await profiles.removeProfile(ids[0]);
+    assert.deepEqual(await r('KEYS', `user:${ids[0]}*`), [], 'a remocao leva visibilidade e atributos de emissora juntos');
     assert.equal(await r('SISMEMBER', 'users:index', ids[0]), 0);
+    assert.equal(fs.existsSync(arquivoAvatar(ids[0])), false, 'o arquivo do avatar nao existe mais');
+    assert.deepEqual(await auditoria(), []);
+    // com quatro, o quinto volta a caber
+    const { user } = await profiles.createProfile({ nickname: 'Depois' });
+    assert.equal(await r('SCARD', 'users:index'), 5);
+    assert.equal(await r('SISMEMBER', 'users:index', user.id), 1);
+    assert.deepEqual(await auditoria(), []);
+});
+
+test('AoP: perfil padrao na base sem perfil cumpre o esquema; o unico perfil nao e removido', async () => {
+    for (const id of await r('SMEMBERS', 'users:index')) await profiles.removeProfile(id).catch(() => aop.perfilRemove(id));
+    assert.equal(await r('SCARD', 'users:index'), 0);
+    const p = await profiles.ensureDefaultProfile();
+    assert.ok(p, 'perfil padrao criado');
+    assert.deepEqual(await r('SMEMBERS', 'users:index'), [p.id]);
+    assert.equal(await r('HGET', `user:${p.id}`, 'nickname'), 'Viewer 1');
+    assert.equal(await r('EXISTS', `user:${p.id}:consent`), 0, 'sem visibilidade');
+    assert.deepEqual(await auditoria(), [], 'o perfil padrao cumpre o esquema');
+    assert.equal(await profiles.ensureDefaultProfile(), null);
+    await assert.rejects(profiles.removeProfile(p.id), err => err instanceof profiles.ValidationError);
+    assert.equal(await r('SISMEMBER', 'users:index', p.id), 1);
+});
+
+test('AoP: aop-transport-layer-metadata-lls de verdade — BAMT -> services:announced pela funcao, o mesmo em aop/services; retirada; recusa', async () => {
+    const lls = require(path.join(AOP, 'src', 'modules', 'transport-layer-metadata-lls'));
+    await r('SADD', 'services:announced', 'urn:tv30:service:da-partida-anterior');
+    const publicados = [];
+    await lls.start((t, m) => publicados.push([t, m]));
+    assert.equal(await r('EXISTS', 'services:announced'), 0, 'a partida tira a lista anterior');
+    const bam = (g, n) => ({ globalServiceId: g, appVersion: 1, appName: n, appIcon: '<svg/>', bannerIcon: '<svg/>', backgroundColor: '#000000', foregroundColor: '#ffffff' });
+    const W = 'urn:tv30:service:webmedia', U = 'urn:tv30:service:uff', X = 'Ação Ü!';
+    await lls.receive(JSON.stringify([bam(W, 'WebMedia'), bam(U, 'UFF')]), 'tlm/lls/bs1/bamt');
+    await lls.receive(JSON.stringify([bam(U, 'UFF'), bam(X, 'X')]), 'tlm/lls/bs2/bamt');
+    assert.deepEqual((await r('SMEMBERS', 'services:announced')).sort(), [W, U, X].sort());
+    assert.deepEqual(publicados.at(-1), ['aop/services', JSON.stringify([W, U, X].map(serviceContextId => ({ serviceContextId })))]);
+    assert.deepEqual((await lls.services()).map(s => s.serviceContextId), [W, U, X]);
+    assert.deepEqual(await auditoria(), []);
+    await lls.receive('', 'tlm/lls/bs1/bamt');
+    assert.deepEqual((await r('SMEMBERS', 'services:announced')).sort(), [U, X].sort());
+    // globalServiceId acima do idServico do esquema: a funcao recusa e o
+    // conjunto anterior fica
+    const errorOrig = console.error;
+    console.error = () => undefined;
+    try {
+        await lls.receive(JSON.stringify([bam('x'.repeat(257), 'Longo')]), 'tlm/lls/bs3/bamt');
+    } finally { console.error = errorOrig; }
+    assert.deepEqual((await r('SMEMBERS', 'services:announced')).sort(), [U, X].sort());
+    assert.deepEqual(publicados.at(-1), ['aop/services', JSON.stringify([U, X].map(serviceContextId => ({ serviceContextId })))]);
+    await lls.receive('', 'tlm/lls/bs3/bamt');
     assert.deepEqual(await auditoria(), []);
 });
 

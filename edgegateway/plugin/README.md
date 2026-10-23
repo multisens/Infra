@@ -17,12 +17,14 @@ A borda e o plugin são decisões deste testbed. A norma define as regras (C.3.1
 | 5 | Não local por HTTP | 106 | Na interna (`nonlocal_https_only`), o token `non-local` fora das rotas `nonlocal_http`, a C.6.1.2 e a C.6.1.3 |
 | 6 | Access token | 107 | `Authorization: Bearer <jwt>`, HS256 com `JWT_SECRET`, `exp` obrigatório e válido, `nbf` respeitado, `iss` = `JWT_ISSUER`, `sub` em `clients:authorized` e fora de `clients:blocked` (C.4.2.2) |
 | 7 | Serviço selecionado | 300 | Rota com `no_service: 300` (C.6.4.7, C.6.14.1 a C.6.14.6) sem serviço DTV selecionado. Vem antes do bind-token, porque sem serviço não há chave registrada |
-| 8 | Bind-token | 104 / 108 | Nas rotas `token+bind`. Sem o cabeçalho `bind-token`, 104. O token precisa de assinatura válida por uma chave registrada para o **contexto de serviço da rota**: o `{serviceContextId}` do caminho, ou o serviço corrente em `current-service` e nas rotas sem o parâmetro. Sem isso, 108. Sem serviço selecionado na C.6.16.3, 108 |
-| 9 | Versão | 100 / 101 | `negotiateVersion` (`edge.go`), contra o `versions` da rota. Sem `Accept-Version`, vale a 2.0; fora do formato X.Y, 101; versão que a rota não serve, 100 |
+| 8 | Serviço no catálogo | 304 | Rota com `not_in_catalog: 304` (as duas `/tv3/{serviceContextId}/users/{userid}`, C.6.14.2 e C.6.14.5): o `{serviceContextId}` explícito fora de `services:announced`, os serviços anunciados na LLS que o AoP grava (`requireCatalog`; `ServiceInCatalog`, em `redis.go`). `current-service` não confere. Vale para todo cliente, inclusive o associado. O `routes.json` só aceita o campo em rota `token+bind` com `{serviceContextId}` |
+| 9 | Bind-token | 104 / 108 | Nas rotas `token+bind`. Sem o cabeçalho `bind-token`, 104. O token precisa de assinatura válida por uma chave registrada para o **contexto de serviço da rota**: o `{serviceContextId}` do caminho, ou o serviço corrente em `current-service` e nas rotas sem o parâmetro. Sem isso, 108. Sem serviço selecionado na C.6.16.3, 108 |
+| 10 | Versão | 100 / 101 | `negotiateVersion` (`edge.go`), contra o `versions` da rota. Sem `Accept-Version`, vale a 2.0; fora do formato X.Y, 101; versão que a rota não serve, 100 |
 
-- **O local associado** usa sem access token as rotas que o admitem. No **próprio** contexto de serviço (o valor de `origins:associated` para a origem dele), dispensa também o bind-token. Fora dele, segue a regra geral: 104, 108 ou atendimento com bind-token válido daquele contexto (C.4.1.1).
-- **O que segue o modo.** Só as recusas de credencial seguem `AUTH_ENFORCE` (`followsMode`): 104, 107 e 108. Em `warn`, viram o log `[tv30-auth] WARN` e o cabeçalho `X-TV30-Auth-Warn: <código>`, e a requisição segue. Os erros 100, 101, 106, 300 e 200 saem nos dois modos.
+- **O local associado** usa sem access token as rotas que o admitem. No **próprio** contexto de serviço (o valor de `origins:associated` para a origem dele), dispensa também o bind-token. Fora dele, segue a regra geral: 104, 108 ou atendimento com bind-token válido daquele contexto (C.4.1.1). O access token de classe `local-associated` segue a regra geral, sem tratamento próprio.
+- **O que segue o modo.** Só as recusas de credencial seguem `AUTH_ENFORCE` (`followsMode`): 104, 107 e 108. Em `warn`, viram o log `[tv30-auth] WARN` e o cabeçalho `X-TV30-Auth-Warn: <código>`, e a requisição segue. Os erros 100, 101, 106, 300, 304 e 200 saem nos dois modos.
 - **O que vai ao serviço.** O plugin passa a versão negociada em `X-TV30-API-Version` e o `Host` original do cliente em `X-TV30-Host`, usado pelo `/manifest`. Os dois apagam o que vier do cliente. O tv3ws responde na versão recebida.
+- **Caminho interno das extensões.** Nas versões de 100 em diante (extensões do testbed), o plugin troca o caminho por `/v<X.Y>` + o caminho público antes do roteador (`internalPath` e `toInternalPath`, em `edge.go`). O `generate.js` gera, pela mesma regra, um endpoint do KrakenD por par rota × versão, com destino no mesmo caminho do backend da superfície; o tv3ws registra os tratadores da 100.0 sob `/v100.0/tv3/...`. Caminho declarado com esse prefixo é recusado (`newRoute`, em `routes.go`), e `/v...` vindo do cliente não casa com rota nenhuma: 100.
 - **Rotas da borda.** A rota com campo `edge` é respondida pelo plugin (`edge.go`). As demais seguem para o roteador do KrakenD, que as repassa ao tv3ws.
 
 ### Bind-token (C.4.1.3, C.4.1.4)
@@ -73,7 +75,7 @@ As chaves ficam em `bind-context:{serviceId}`, um LIST de JSON `{"alg","key","re
 
 O bloco do plugin é gerado pelo `../generate.js`, a partir do `../routes.json`, no build da imagem:
 - a superfície;
-- as rotas, com `auth`, `classes`, `edge`, `surface_error`, `nonlocal_http`, `no_service` e `versions`;
+- as rotas, com `auth`, `classes`, `edge`, `surface_error`, `nonlocal_http`, `no_service`, `not_in_catalog` e `versions`;
 - `nonlocal_https_only`;
 - as APIs;
 - os cabeçalhos CORS.
@@ -93,9 +95,10 @@ Ambiente do container (`infra/docker-compose.yml`):
 - `AUTH_ENFORCE` diferente de `warn` e `enforce` (vazio vale `enforce`);
 - porta ou timeout inválidos;
 - `surface` ausente, ou lista de rotas vazia;
-- rota inválida;
+- rota inválida, inclusive caminho com o prefixo `/v<X.Y>`, reservado ao caminho interno;
 - `surface_error` diferente de 106;
 - `no_service` diferente de 300, ou fora de rota `token+bind`;
+- `not_in_catalog` diferente de 304, ou fora de rota `token+bind` com `{serviceContextId}`;
 - `versions` vazio, fora do formato X.Y ou com versão repetida;
 - `current_service_context_id` presente (o `serviceContextId` é o `globalServiceId` do serviço);
 - CORS ou lista de APIs inválidos.
@@ -117,7 +120,7 @@ docker run --rm -v "$PWD":/src -w /src krakend/builder:2.7.2 \
 **Testes de unidade (`*_test.go`):**
 - `jwt_test.go`, `keys_test.go`: JWT e formatos de chave;
 - `routes_test.go`: casamento de rota;
-- `handler_test.go`: a decisão por classe, rota e modo; o associado excluído, o não local por HTTP, o bind-token no contexto da rota e o serviço selecionado; versão negociada por rota; cabeçalhos internos;
+- `handler_test.go`: a decisão por classe, rota e modo; o associado excluído, o não local por HTTP, o bind-token no contexto da rota (também com token de classe `local-associated`), o serviço selecionado e o serviço fora do catálogo (304); versão negociada por rota; caminho interno das extensões; cabeçalhos internos;
 - `surface_test.go`: o 106 da superfície externa;
 - `bindcontext_test.go`, `apiinfo_test.go`: as APIs da borda;
 - `redis_test.go`: o cliente RESP;
@@ -133,5 +136,4 @@ O gerador tem testes próprios: `node --test ../generate.test.js`.
 - **Associado pelo `Origin`:** fora do navegador, o `Origin` é forjável. A chamada sem `Origin` fica fora do 106 do associado excluído (etapa 3).
 - **Não implementado:**
   - liberar os recursos compartilhados (C.4.4) ao revogar uma chave, ao remover a autorização ou ao fechar a app associada;
-  - o 304 a serviço fora do Application Catalog, porque o catálogo não tem publicador;
-  - a escolha do serviço de destino pela versão, porque hoje toda rota tem um backend só.
+  - a escolha do serviço de destino pela versão: o destino é sempre o backend da superfície, e a versão só muda o caminho interno.

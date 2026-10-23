@@ -42,6 +42,7 @@ func testExtra() map[string]interface{} {
 	// campos que o generate.js deriva para a superficie interna
 	httpNL := func(m map[string]interface{}) map[string]interface{} { m["nonlocal_http"] = true; return m }
 	semServ := func(m map[string]interface{}) map[string]interface{} { m["no_service"] = float64(300); return m }
+	catalogo := func(m map[string]interface{}) map[string]interface{} { m["not_in_catalog"] = float64(304); return m }
 	vers := func(m map[string]interface{}, vs ...string) map[string]interface{} {
 		l := []interface{}{}
 		for _, v := range vs {
@@ -83,7 +84,8 @@ func testExtra() map[string]interface{} {
 			vers(r("GET", "/tv3/remote-device/devices/{classId}", authToken, classAssociated, classAutonomous), "2.0", "100.0"),
 			vers(r("GET", "/tv3/remote-device/device/{handle}", authToken, classAssociated, classAutonomous), "100.0"),
 			// sem POST /tv3/{serviceContextId}/users: fora da norma, da 100
-			semServ(r("GET", "/tv3/{serviceContextId}/users/{userid}", authTokenBind)),
+			catalogo(semServ(r("GET", "/tv3/{serviceContextId}/users/{userid}", authTokenBind))),
+			catalogo(semServ(r("POST", "/tv3/{serviceContextId}/users/{userid}", authTokenBind))),
 		},
 	}
 }
@@ -123,7 +125,9 @@ func baseStore() *fakeStore {
 		authorized: map[string]bool{"cli-1": true, "cli-2": true, "cli-3": true},
 		associated: map[string]string{tAssoc: tSvc},
 		current:    tSvc,
-		keys:       map[string][]string{tSvc: {storedJSON("HS256", "chave-webmedia")}, "urn:outra": {storedJSON("HS256", "chave-outra")}},
+		// services:announced; tSCID fica de fora
+		catalog: map[string]bool{tSvc: true, "urn:outra": true, "urn:sem-chave": true},
+		keys:    map[string][]string{tSvc: {storedJSON("HS256", "chave-webmedia")}, "urn:outra": {storedJSON("HS256", "chave-outra")}},
 	}
 }
 
@@ -193,7 +197,9 @@ func TestDecisao(t *testing.T) {
 		{"token lixo", "GET", "/tv3/current-service", hdr{"Authorization": "Bearer lixo"}, 107},
 		{"cliente bloqueado", "GET", "/tv3/current-service", hdr{"Authorization": blocked}, 107},
 		{"bloqueado com token de classe associado", "GET", "/tv3/current-service/users/current-user", hdr{"Authorization": blockedAssoc}, 107},
-		{"token de associado dispensa bind", "GET", "/tv3/current-service/users/current-user", hdr{"Authorization": assocTok}, 0},
+		// o claim class nao muda a regra do bind-token
+		{"token de classe associado sem bind", "GET", "/tv3/current-service/users/current-user", hdr{"Authorization": assocTok}, 104},
+		{"token de classe associado com bind valido", "GET", "/tv3/current-service/users/current-user", hdr{"Authorization": assocTok, "bind-token": bindOK}, 0},
 		// sub fora de clients:authorized = 107
 		{"fora de clients:authorized", "GET", "/tv3/current-service", hdr{"Authorization": fora}, 107},
 		{"fora de clients:authorized, rota token+bind", "GET", "/tv3/current-service/users/current-user", hdr{"Authorization": fora, "bind-token": bindOK}, 107},
@@ -214,13 +220,24 @@ func TestDecisao(t *testing.T) {
 		{"bind nao-JWT", "GET", "/tv3/current-service/users/current-user", hdr{"Authorization": auto, "bind-token": "abc"}, 108},
 		{"bind sem token: 107 vem antes", "GET", "/tv3/current-service/users/current-user", hdr{"bind-token": bindOK}, 107},
 		{"associado dispensa bind", "GET", "/tv3/current-service/users/current-user", hdr{"Origin": tAssoc}, 0},
-		// o scid e o globalServiceId; qualquer servico e aceito, e o
-		// bind-token vale contra as chaves daquele servico
+		// o scid e o globalServiceId; servico do catalogo segue para o
+		// bind-token, que vale contra as chaves daquele servico
 		{"scid = globalServiceId do corrente", "GET", "/tv3/" + tSvc + "/users/u1", hdr{"Authorization": auto, "bind-token": bindOK}, 0},
 		{"scid current-service", "GET", "/tv3/current-service/users/u1", hdr{"Authorization": auto, "bind-token": bindOK}, 0},
 		{"scid de outro servico com bind-token dele", "GET", "/tv3/urn:outra/users/u1", hdr{"Authorization": auto, "bind-token": bindOutra}, 0},
 		{"scid de outro servico com bind-token do corrente", "GET", "/tv3/urn:outra/users/u1", hdr{"Authorization": auto, "bind-token": bindOK}, 108},
-		{"scid sem chave registrada", "GET", "/tv3/" + tSCID + "/users/u1", hdr{"Authorization": auto, "bind-token": bindOK}, 108},
+		{"scid do catalogo sem chave registrada", "GET", "/tv3/urn:sem-chave/users/u1", hdr{"Authorization": auto, "bind-token": bindOK}, 108},
+		// fora do Application Catalog (Tabelas C.71 e C.74): 304, e nao 108,
+		// depois do 107 e antes do bind-token
+		{"scid fora do catalogo com bind-token valido de outro servico", "GET", "/tv3/" + tSCID + "/users/u1", hdr{"Authorization": auto, "bind-token": bindOK}, 304},
+		{"scid fora do catalogo sem bind-token (304 antes do 104)", "GET", "/tv3/" + tSCID + "/users/u1", hdr{"Authorization": auto}, 304},
+		{"scid fora do catalogo com bind-token invalido", "GET", "/tv3/" + tSCID + "/users/u1", hdr{"Authorization": auto, "bind-token": "abc"}, 304},
+		{"scid fora do catalogo sem access token (107 antes do 304)", "GET", "/tv3/" + tSCID + "/users/u1", hdr{"bind-token": bindOK}, 107},
+		{"C.6.14.5 fora do catalogo", "POST", "/tv3/" + tSCID + "/users/u1", hdr{"Authorization": auto, "bind-token": bindOK}, 304},
+		{"C.6.14.5 no catalogo", "POST", "/tv3/" + tSvc + "/users/u1", hdr{"Authorization": auto, "bind-token": bindOK}, 0},
+		{"C.6.14.5 em current-service (fora da conferencia do catalogo)", "POST", "/tv3/current-service/users/u1", hdr{"Authorization": auto, "bind-token": bindOK}, 0},
+		{"associado em servico fora do catalogo", "GET", "/tv3/" + tSCID + "/users/u1", hdr{"Origin": tAssoc}, 304},
+		{"associado em servico fora do catalogo com bind-token", "GET", "/tv3/" + tSCID + "/users/u1", hdr{"Origin": tAssoc, "bind-token": bindOK}, 304},
 		// o associado so dispensa o bind-token no proprio contexto (o servico
 		// que lancou a app, origins:associated)
 		{"associado no proprio contexto (scid explicito)", "GET", "/tv3/" + tSvc + "/users/u1", hdr{"Origin": tAssoc}, 0},
@@ -322,6 +339,7 @@ func TestDecisaoSemServicoCorrente(t *testing.T) {
 		{"C.6.14.3 sem access token (107 antes do 300)", "GET", "/tv3/current-service/users/current-user", nil, 107},
 		{"C.6.14.1", "POST", "/tv3/current-service/users", hdr{"Authorization": auto}, 300},
 		{"C.6.14.2 com scid no caminho", "GET", "/tv3/" + tSvc + "/users/u1", hdr{"Authorization": auto, "bind-token": bind}, 300},
+		{"C.6.14.2 com scid fora do catalogo (300 antes do 304)", "GET", "/tv3/" + tSCID + "/users/u1", hdr{"Authorization": auto, "bind-token": bind}, 300},
 		{"C.6.14.3 pelo associado (Origin)", "GET", "/tv3/current-service/users/current-user", hdr{"Origin": tAssoc}, 300},
 		{"C.6.14.3 com token de classe associado", "GET", "/tv3/current-service/users/current-user", hdr{"Authorization": accessFor(t, "cli-3", classAssociated)}, 300},
 		{"C.6.16.3: a tabela nao lista o 300", "POST", "/tv3/sensory-effect-renderers/r1", hdr{"Authorization": auto, "bind-token": bind}, 108},
@@ -443,6 +461,68 @@ func TestWarnNaoAliviaForaDaCredencial(t *testing.T) {
 	}
 }
 
+// 304 (Tabelas C.71 e C.74): {serviceContextId} fora de services:announced,
+// nos dois modos, sem chegar ao backend; o servico do catalogo segue para o
+// bind-token; current-service nao consulta o catalogo; Redis fora => 200.
+func TestServicoForaDoCatalogo(t *testing.T) {
+	auto := accessFor(t, "cli-1", classAutonomous)
+	bindOK := signJWT(t, "HS256", []byte("chave-webmedia"), timeClaims(t0, t0, t0.Add(time.Hour)))
+	fora := "/tv3/" + tSCID + "/users/u1"
+	cred := map[string]string{"Authorization": auto, "bind-token": bindOK}
+	for _, mode := range []string{modeWarn, modeEnforce} {
+		called := false
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true })
+		h := newTestHandler(t, mode, baseStore(), next)
+		rec := serve(h, "GET", fora, cred)
+		checkC32(t, rec, 304)
+		if d := c32Description(rec); !strings.HasPrefix(d, "DTV service not found: servico "+tSCID) {
+			t.Errorf("%s: descricao %q", mode, d)
+		}
+		if rec.Header().Get(warnHeader) != "" || called {
+			t.Errorf("%s: aviso %q, backend chamado %v", mode, rec.Header().Get(warnHeader), called)
+		}
+	}
+
+	// o mesmo pedido com o servico no catalogo segue para o bind-token
+	st := baseStore()
+	h := newTestHandler(t, modeEnforce, st, nil)
+	st.catalog[tSCID] = true
+	if v := h.evaluate(withHeaders(httptest.NewRequest("GET", fora, nil), cred)); v.Code != 108 {
+		t.Fatalf("no catalogo, sem chave registrada: %d %q", v.Code, v.Detail)
+	}
+	st.keys[tSCID] = []string{storedJSON("HS256", "chave-webmedia")}
+	if v := h.evaluate(withHeaders(httptest.NewRequest("GET", fora, nil), cred)); v.Code != 0 {
+		t.Fatalf("no catalogo, com a chave: %d %q", v.Code, v.Detail)
+	}
+	delete(st.catalog, tSCID) // retirado da LLS
+	if v := h.evaluate(withHeaders(httptest.NewRequest("GET", fora, nil), cred)); v.Code != 304 {
+		t.Fatalf("retirado do catalogo: %d %q", v.Code, v.Detail)
+	}
+
+	// Redis fora na consulta do catalogo: 200, tambem em warn; current-service
+	// nao a faz
+	for _, mode := range []string{modeWarn, modeEnforce} {
+		st := baseStore()
+		st.catalogErr = errors.New("conexao recusada")
+		h := newTestHandler(t, mode, st, nil)
+		rec := serve(h, "GET", "/tv3/"+tSvc+"/users/u1", cred)
+		checkC32(t, rec, 200)
+		if rec.Header().Get(warnHeader) != "" {
+			t.Errorf("%s: aviso %q no 200", mode, rec.Header().Get(warnHeader))
+		}
+		if v := h.evaluate(withHeaders(httptest.NewRequest("POST", "/tv3/current-service/users/u1", nil), cred)); v.Code != 0 {
+			t.Errorf("%s: current-service consultou o catalogo: %d %q", mode, v.Code, v.Detail)
+		}
+	}
+}
+
+func withHeaders(r *http.Request, h map[string]string) *http.Request {
+	for k, v := range h {
+		r.Header.Set(k, v)
+	}
+	return r
+}
+
 func TestRotaNaoDeclaradaNosDoisModos(t *testing.T) {
 	for _, mode := range []string{modeWarn, modeEnforce} {
 		called := false
@@ -498,37 +578,48 @@ func TestAPIVersionDasRespostasDaBorda(t *testing.T) {
 }
 
 // A borda negocia a versao em toda rota e repassa a negociada em
-// X-TV30-API-Version, que apaga o que vier do cliente. 100 (versao que a rota
-// nao serve) e 101 (malformado) saem nos dois modos e nao chegam ao servico.
+// X-TV30-API-Version, que apaga o que vier do cliente; a extensao do testbed
+// vai tambem no caminho, com o prefixo /v<X.Y>. 100 (versao que a rota nao
+// serve, ou caminho /v<X.Y> vindo do cliente) e 101 (malformado) saem nos dois
+// modos e nao chegam ao servico.
 func TestVersaoNegociadaPorRota(t *testing.T) {
 	auto := accessFor(t, "cli-1", classAutonomous)
 	for _, mode := range []string{modeWarn, modeEnforce} {
-		var got string
+		var got, gotPath, gotEscaped string
 		calls := 0
 		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			calls++
 			got = r.Header.Get(internalVersionHeader)
+			gotPath, gotEscaped = r.URL.Path, r.URL.EscapedPath()
 			w.WriteHeader(200)
 		})
 		h := newTestHandler(t, mode, baseStore(), next)
+		v100 := map[string]string{"Authorization": auto, "Accept-Version": "100.0"}
 		for _, c := range []struct {
 			name, path string
 			hdr        map[string]string
 			code       int    // 0 = repassa
 			version    string // o que o servico recebe
+			internal   string // caminho que o roteador recebe ("" = o mesmo)
 		}{
-			{"rota so 2.0, sem Accept-Version", "/tv3/current-service", map[string]string{"Authorization": auto}, 0, "2.0"},
-			{"rota so 2.0, pede 100.0", "/tv3/current-service", map[string]string{"Authorization": auto, "Accept-Version": "100.0"}, 100, ""},
-			{"rota so 2.0, pede 2.1", "/tv3/current-service", map[string]string{"Authorization": auto, "Accept-Version": "2.1"}, 100, ""},
-			{"Accept-Version malformado", "/tv3/current-service", map[string]string{"Authorization": auto, "Accept-Version": "x"}, 101, ""},
-			{"cabecalho interno do cliente e apagado", "/tv3/current-service", map[string]string{"Authorization": auto, internalVersionHeader: "100.0"}, 0, "2.0"},
-			{"C.6.15.5 sem Accept-Version", "/tv3/remote-device/devices/x", map[string]string{"Authorization": auto}, 0, "2.0"},
-			{"C.6.15.5 com 100.0", "/tv3/remote-device/devices/x", map[string]string{"Authorization": auto, "Accept-Version": "100.0"}, 0, "100.0"},
-			{"handle sem Accept-Version (so 100.0)", "/tv3/remote-device/device/h1", map[string]string{"Authorization": auto}, 100, ""},
-			{"handle com 2.0", "/tv3/remote-device/device/h1", map[string]string{"Authorization": auto, "Accept-Version": "2.0"}, 100, ""},
-			{"handle com 100.0", "/tv3/remote-device/device/h1", map[string]string{"Authorization": auto, "Accept-Version": "100.0"}, 0, "100.0"},
+			{"rota so 2.0, sem Accept-Version", "/tv3/current-service", map[string]string{"Authorization": auto}, 0, "2.0", ""},
+			{"rota so 2.0, pede 100.0", "/tv3/current-service", map[string]string{"Authorization": auto, "Accept-Version": "100.0"}, 100, "", ""},
+			{"rota so 2.0, pede 2.1", "/tv3/current-service", map[string]string{"Authorization": auto, "Accept-Version": "2.1"}, 100, "", ""},
+			{"Accept-Version malformado", "/tv3/current-service", map[string]string{"Authorization": auto, "Accept-Version": "x"}, 101, "", ""},
+			{"cabecalho interno do cliente e apagado", "/tv3/current-service", map[string]string{"Authorization": auto, internalVersionHeader: "100.0"}, 0, "2.0", ""},
+			{"C.6.15.5 sem Accept-Version", "/tv3/remote-device/devices/x", map[string]string{"Authorization": auto}, 0, "2.0", ""},
+			{"C.6.15.5 com 2.0", "/tv3/remote-device/devices/x", map[string]string{"Authorization": auto, "Accept-Version": "2.0"}, 0, "2.0", ""},
+			{"C.6.15.5 com 100.0", "/tv3/remote-device/devices/x", v100, 0, "100.0", "/v100.0/tv3/remote-device/devices/x"},
+			{"handle sem Accept-Version (so 100.0)", "/tv3/remote-device/device/hx", map[string]string{"Authorization": auto}, 100, "", ""},
+			{"handle com 2.0", "/tv3/remote-device/device/hx", map[string]string{"Authorization": auto, "Accept-Version": "2.0"}, 100, "", ""},
+			{"handle com 100.0", "/tv3/remote-device/device/hx", v100, 0, "100.0", "/v100.0/tv3/remote-device/device/hx"},
+			{"handle com 100.0 e barra final", "/tv3/remote-device/device/hx/", v100, 0, "100.0", "/v100.0/tv3/remote-device/device/hx"},
+			{"handle com 100.0 e escape no caminho", "/tv3/remote-device/device/x%41", v100, 0, "100.0", "/v100.0/tv3/remote-device/device/xA"},
+			// o caminho interno nao e rota declarada
+			{"caminho /v100.0 vindo do cliente", "/v100.0/tv3/remote-device/device/hx", v100, 100, "", ""},
+			{"caminho /v100.0 da C.6.15.5", "/v100.0/tv3/remote-device/devices/x", v100, 100, "", ""},
 		} {
-			calls, got = 0, ""
+			calls, got, gotPath, gotEscaped = 0, "", "", ""
 			rec := serve(h, "GET", c.path, c.hdr)
 			if c.code != 0 {
 				checkC32(t, rec, c.code)
@@ -543,6 +634,33 @@ func TestVersaoNegociadaPorRota(t *testing.T) {
 			if calls != 1 || got != c.version {
 				t.Errorf("%s %s: repasses %d, %s=%q, esperado %q", mode, c.name, calls, internalVersionHeader, got, c.version)
 			}
+			want := c.internal
+			if want == "" {
+				want = c.path
+			}
+			if gotPath != want {
+				t.Errorf("%s %s: caminho no roteador %q, esperado %q", mode, c.name, gotPath, want)
+			}
+			if strings.Contains(c.path, "%41") && gotEscaped != "/v100.0/tv3/remote-device/device/x%41" {
+				t.Errorf("%s %s: caminho escapado no roteador %q", mode, c.name, gotEscaped)
+			}
+		}
+	}
+}
+
+// internalPath: o prefixo so de 100 em diante, com a versao inteira (X.Y,
+// C.3.6.2).
+func TestCaminhoInterno(t *testing.T) {
+	for _, c := range []struct{ path, version, want string }{
+		{"/tv3/current-service", "2.0", "/tv3/current-service"},
+		{"/tv3/current-service", "99.9", "/tv3/current-service"},
+		{"/tv3/remote-device/device/hx", "100.0", "/v100.0/tv3/remote-device/device/hx"},
+		{"/tv3/remote-device/device/hx", "101.12", "/v101.12/tv3/remote-device/device/hx"},
+		{"/tv3/remote-device/device/hx/", "100.0", "/v100.0/tv3/remote-device/device/hx"},
+		{"/health", "100.0", "/v100.0/health"},
+	} {
+		if got := internalPath(c.path, c.version); got != c.want {
+			t.Errorf("internalPath(%q, %q) = %q, esperado %q", c.path, c.version, got, c.want)
 		}
 	}
 }
@@ -745,6 +863,9 @@ func TestConfigInvalida(t *testing.T) {
 		return m
 	}
 	oneRoute := func(rt map[string]interface{}) []interface{} { return []interface{}{rt} }
+	oneRoute304 := func(path, auth string, code float64) map[string]interface{} {
+		return map[string]interface{}{"surface": "x", "routes": oneRoute(map[string]interface{}{"method": "GET", "path": path, "auth": auth, "not_in_catalog": code})}
+	}
 	for name, extra := range map[string]interface{}{
 		"sem bloco":   nil,
 		"sem surface": with("surface", nil),
@@ -765,6 +886,7 @@ func TestConfigInvalida(t *testing.T) {
 		// APIs respondidas pela borda
 		"edge desconhecido": map[string]interface{}{"surface": "x", "routes": oneRoute(map[string]interface{}{"method": "GET", "path": "/a", "edge": "proxy"})},
 		"edge nao texto":    map[string]interface{}{"surface": "x", "routes": oneRoute(map[string]interface{}{"method": "GET", "path": "/a", "edge": true})},
+		"caminho interno":   map[string]interface{}{"surface": "x", "routes": oneRoute(map[string]interface{}{"method": "GET", "path": "/v100.0/tv3/a"})},
 		"constante de scid": with("current_service_context_id", tSCID),
 		"api-info sem apis": with("apis", nil),
 		"apis nao lista":    with("apis", "tv3ws-api-info"),
@@ -776,6 +898,10 @@ func TestConfigInvalida(t *testing.T) {
 			map[string]interface{}{"id": "tv3ws-api-info", "version": "2.0"},
 			map[string]interface{}{"id": "tv3ws-api-info", "version": "2.0"},
 		}),
+		// 304 do servico fora do catalogo: so 304, so em rota token+bind com {serviceContextId}
+		"not_in_catalog 300":                    oneRoute304("/tv3/{serviceContextId}/users/{userid}", authTokenBind, 300),
+		"not_in_catalog sem {serviceContextId}": oneRoute304("/tv3/current-service/users/{userid}", authTokenBind, 304),
+		"not_in_catalog em rota token":          oneRoute304("/tv3/{serviceContextId}/x", authToken, 304),
 	} {
 		if _, err := loadConfig(extra, env(ok)); err == nil {
 			t.Errorf("%s: deveria ser rejeitado", name)
@@ -822,6 +948,12 @@ func TestConfigInvalida(t *testing.T) {
 	}
 	if rt, _ := c.Routes.match("GET", "/tv3/current-service"); rt == nil || rt.Edge != "" {
 		t.Errorf("GET /tv3/current-service nao eh da borda: %+v", rt)
+	}
+	if rt, _ := c.Routes.match("POST", "/tv3/x/users/u"); rt == nil || rt.NotInCatalog != 304 {
+		t.Errorf("POST /tv3/{serviceContextId}/users/{userid}: not_in_catalog %+v", rt)
+	}
+	if rt, _ := c.Routes.match("GET", "/tv3/current-service/users/current-user"); rt == nil || rt.NotInCatalog != 0 {
+		t.Errorf("GET current-user nao confere o catalogo: %+v", rt)
 	}
 	if len(c.APIs.list) != 6 || c.APIs.list[0].ID != "tv3ws-application-authorization" {
 		t.Errorf("catalogo: %+v", c.APIs.list)

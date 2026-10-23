@@ -56,10 +56,12 @@ test('na externa, 106 nas exclusivas do cliente local e na C.6.1.2 (C.4.1.8); na
   const ext = plugin(files, 'external').routes.filter(r => r.surface_error).map(pk).sort();
   assert.deepEqual(ext, com106('external'));
   assert.ok(plugin(files, 'internal').routes.every(r => !r.surface_error));
-  // e o endpoint continua registrado no roteador da externa (o plugin responde antes)
+  // e os endpoints continuam registrados no roteador da externa (o plugin responde antes)
   for (const v of Object.keys(t.backends.external)) {
     const eps = files[`krakend-external.${v}.json`].endpoints.map(e => `${e.method} ${e.endpoint}`);
-    for (const k of com106('external')) assert.ok(eps.includes(k), `${k} (${v})`);
+    for (const r of t.routes.filter(r => g.surfaceErrorOf(r, 'external') === 106)) {
+      for (const p of g.internalPathsOf(r)) assert.ok(eps.includes(`${r.method} ${p}`), `${r.method} ${p} (${v})`);
+    }
   }
 });
 
@@ -83,6 +85,23 @@ test('no_service 300 na C.6.4.7 e da C.6.14.1 a C.6.14.6; nao na C.6.16.3', () =
   // validacao: valor e auth
   assert.ok(g.checkTable(mini([{ method: 'GET', path: '/a', auth: 'token+bind', no_service: 108 }])).some(e => /no_service 108 invalido/.test(e)));
   assert.ok(g.checkTable(mini([{ method: 'GET', path: '/a', auth: 'token', no_service: 300 }])).some(e => /so vale em rota token\+bind/.test(e)));
+});
+
+test('not_in_catalog 304 so na C.6.14.2 e na C.6.14.5 com {serviceContextId}; nao em current-service', () => {
+  const t = real();
+  assert.deepEqual(keys(t.routes.filter(r => r.not_in_catalog === 304)), ['GET /tv3/{serviceContextId}/users/{userid}', 'POST /tv3/{serviceContextId}/users/{userid}']);
+  assert.ok(!t.routes.find(r => key(r) === 'GET /tv3/current-service/users/{userid}').not_in_catalog);
+  const files = g.generate(t);
+  for (const s of ['external', 'internal']) {
+    assert.deepEqual(plugin(files, s).routes.filter(r => r.not_in_catalog === 304).map(pk).sort(), ['GET /tv3/{serviceContextId}/users/{userid}', 'POST /tv3/{serviceContextId}/users/{userid}'], s);
+    assert.match(files[`openapi-${s}.json`].paths['/tv3/{serviceContextId}/users/{userid}'].get.description, /fora do Application Catalog: 304/);
+  }
+  // validacao: valor, auth e o parametro no caminho
+  const one = r => g.checkTable(mini([{ method: 'GET', auth: 'token+bind', ...r }]));
+  assert.ok(one({ path: '/tv3/{serviceContextId}/x', not_in_catalog: 300 }).some(e => /not_in_catalog 300 invalido/.test(e)));
+  assert.ok(one({ path: '/tv3/{serviceContextId}/x', auth: 'token', not_in_catalog: 304 }).some(e => /so vale em rota token\+bind com \{serviceContextId\}/.test(e)));
+  assert.ok(one({ path: '/tv3/current-service/x', not_in_catalog: 304 }).some(e => /so vale em rota token\+bind com \{serviceContextId\}/.test(e)));
+  assert.deepEqual(one({ path: '/tv3/{serviceContextId}/x', not_in_catalog: 304 }), []);
 });
 
 // POST /tv3/{serviceContextId}/users nao esta na Tabela C.2: nenhuma
@@ -139,18 +158,59 @@ test('arquivos gerados: 2 variantes x 2 superficies + 2 OpenAPI', () => {
   assert.equal(want.length, 6);
 });
 
-test('em cada config KrakenD, endpoints = rotas do plugin = rotas da superficie', () => {
+test('em cada config KrakenD, rotas do plugin = rotas da superficie, e um endpoint por par rota x versao', () => {
   const t = real();
   const files = g.generate(t);
   for (const [name, cfg] of Object.entries(files)) {
     if (!name.startsWith('krakend-')) continue;
-    const surface = name.split('-')[1].split('.')[0];
+    const [surface, variant] = name.replace(/^krakend-|\.json$/g, '').split('.');
     const plugin = cfg.extra_config['plugin/http-server']['tv30-auth'];
     const esperadas = keys(g.routesOf(t, surface));
     assert.equal(plugin.surface, surface, name);
     assert.equal(cfg.port, t.surfaces[surface].port, name);
-    assert.deepEqual(cfg.endpoints.map(e => `${e.method} ${e.endpoint}`).sort(), esperadas, `${name}: endpoints`);
     assert.deepEqual(keys(plugin.routes), esperadas, `${name}: rotas do plugin`);
+    const pares = g.routesOf(t, surface).flatMap(r => g.internalPathsOf(r).map(p => `${r.method} ${p}`)).sort();
+    assert.deepEqual(cfg.endpoints.map(e => `${e.method} ${e.endpoint}`).sort(), pares, `${name}: endpoints`);
+    // destino: o backend da variante, no mesmo caminho interno
+    for (const e of cfg.endpoints) {
+      assert.deepEqual(e.backend, [{ url_pattern: e.endpoint, host: [t.backends[surface][variant]], encoding: 'no-op' }], `${name}: ${e.method} ${e.endpoint}`);
+    }
+  }
+});
+
+test('caminho interno: /v<X.Y> antes do publico de 100 em diante; abaixo de 100, o publico', () => {
+  assert.equal(g.internalPathOf('/tv3/remote-device/devices/{classId}', '2.0'), '/tv3/remote-device/devices/{classId}');
+  assert.equal(g.internalPathOf('/tv3/remote-device/devices/{classId}', '99.9'), '/tv3/remote-device/devices/{classId}');
+  assert.equal(g.internalPathOf('/tv3/remote-device/devices/{classId}', '100.0'), '/v100.0/tv3/remote-device/devices/{classId}');
+  assert.equal(g.internalPathOf('/tv3/x', '101.12'), '/v101.12/tv3/x');
+  // as versoes da norma dividem o caminho publico; cada extensao tem o seu
+  assert.deepEqual(g.internalPathsOf({ path: '/tv3/x', versions: ['101.0', '2.1', '2.0', '100.0'] }), ['/tv3/x', '/v100.0/tv3/x', '/v101.0/tv3/x']);
+  assert.deepEqual(g.internalPathsOf({ path: '/tv3/x', versions: ['100.0'] }), ['/v100.0/tv3/x']);
+  assert.deepEqual(g.internalPathsOf({ path: '/tv3/x' }), ['/tv3/x']);
+
+  const files = g.generate(real());
+  const eps = files['krakend-internal.linux.json'].endpoints.map(e => `${e.method} ${e.endpoint}`);
+  for (const k of ['GET /tv3/remote-device/devices/{classId}', 'GET /v100.0/tv3/remote-device/devices/{classId}',
+    'GET /v100.0/tv3/remote-device/device/{handle}', 'DELETE /v100.0/tv3/remote-device/device/{handle}']) {
+    assert.ok(eps.includes(k), k);
+  }
+  // rota so da 100.0 nao tem endpoint no caminho publico
+  assert.ok(!eps.includes('GET /tv3/remote-device/device/{handle}'));
+  assert.ok(!eps.includes('DELETE /tv3/remote-device/device/{handle}'));
+  assert.equal(eps.filter(k => k.includes(' /v')).length, 3);
+  // o plugin e o OpenAPI so conhecem o caminho publico: /v... vindo do cliente da 100
+  for (const s of ['external', 'internal']) {
+    assert.ok(plugin(files, s).routes.every(r => r.path.startsWith('/tv3/') || ['/health', '/manifest'].includes(r.path)), s);
+    assert.ok(Object.keys(files[`openapi-${s}.json`].paths).every(p => !p.startsWith('/v')), `openapi-${s}`);
+  }
+});
+
+test('caminho declarado com o prefixo /v<X.Y> e recusado', () => {
+  for (const p of ['/v100.0/tv3/x', '/v2.0/tv3/x', '/v100.0']) {
+    assert.ok(g.checkTable(mini([{ method: 'GET', path: p }])).some(e => /reservado ao caminho interno/.test(e)), p);
+  }
+  for (const p of ['/v', '/video/x', '/v100/tv3/x', '/tv3/v100.0/x']) {
+    assert.deepEqual(g.checkTable(mini([{ method: 'GET', path: p }])), [], p);
   }
 });
 

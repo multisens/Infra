@@ -350,6 +350,7 @@ func TestRedisComandos(t *testing.T) {
 		f.strs[keyCurrentService] = tSvc
 		f.sets[keyBlocked] = map[string]bool{"cli-bloq": true}
 		f.sets[keyAuthorized] = map[string]bool{"cli-ok": true}
+		f.sets[keyAnnounced] = map[string]bool{tSvc: true}
 		f.hashes[keyAssociated] = map[string]string{tAssoc: tSvc}
 		// segundo elemento com CRLF dentro: o bulk tem que ser lido pelo tamanho
 		f.lists[keyBindPrefix+tSvc] = []string{storedJSON("HS256", "a"), "x\r\ny"}
@@ -372,6 +373,18 @@ func TestRedisComandos(t *testing.T) {
 	if b, err := s.IsAuthorized("cli-bloq"); err != nil || b {
 		t.Fatalf("SISMEMBER fora do conjunto: %v %v", b, err)
 	}
+	// SISMEMBER services:announced
+	if b, err := s.ServiceInCatalog(tSvc); err != nil || !b {
+		t.Fatalf("SISMEMBER servico anunciado: %v %v", b, err)
+	}
+	if b, err := s.ServiceInCatalog(tSCID); err != nil || b {
+		t.Fatalf("SISMEMBER servico fora do catalogo: %v %v", b, err)
+	}
+	f.with(func() {
+		if f.cmds["SISMEMBER"] != 6 {
+			t.Errorf("SISMEMBER enviado %d vezes, esperado 6", f.cmds["SISMEMBER"])
+		}
+	})
 	// o valor da origem e o servico que lancou a app
 	if svc, ok, err := s.AssociatedOrigin(tAssoc); err != nil || !ok || svc != tSvc {
 		t.Fatalf("HGET: %q %v %v", svc, ok, err)
