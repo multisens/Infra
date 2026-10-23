@@ -1,7 +1,6 @@
 # users-test — App de teste da plataforma TV30 (TypeScript)
 # Build context: ./users-test
 
-# syntax=docker/dockerfile:1.6
 FROM node:23-alpine AS builder
 WORKDIR /app
 COPY package*.json tsconfig.json ./

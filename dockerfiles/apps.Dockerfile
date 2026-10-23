@@ -1,7 +1,6 @@
 # Broadcaster App (Node JS)
 # Build context: ./apps
 
-# syntax=docker/dockerfile:1.6
 FROM node:23-alpine
 WORKDIR /app
 ENV NODE_ENV=production

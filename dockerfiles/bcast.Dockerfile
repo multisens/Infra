@@ -1,7 +1,6 @@
 # Broadcaster Service (TypeScript + EJS templates)
 # Build context: ./bcast
 
-# syntax=docker/dockerfile:1.6
 FROM node:23-alpine AS builder
 WORKDIR /app
 COPY package*.json tsconfig.json ./

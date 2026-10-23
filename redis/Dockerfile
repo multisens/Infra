@@ -2,7 +2,6 @@
 # build (aplicada por redis-cli --pipe) e redis-commander (debug). O build roda
 # confere-imagem.sh: biblioteca que nao carrega ou carga fora do esquema nao vira imagem.
 # Build context: infra/ (template de userData e migrate_to_redis.py do mqtt-broker)
-# syntax=docker/dockerfile:1.6
 
 FROM python:3.11-alpine AS seedgen
 WORKDIR /gen

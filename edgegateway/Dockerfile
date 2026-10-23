@@ -1,7 +1,6 @@
 # tv30-edgegateway: as duas superficies KrakenD (externa 44643, interna 44642),
 # geradas no build de routes.json, com o plugin tv30-auth, e a documentacao
 # (Swagger UI + os dois OpenAPI) em 8085. Build context: infra/edgegateway/
-# syntax=docker/dockerfile:1.6
 
 # Um .so de Go so carrega num binario com o mesmo Go, a mesma libc e a mesma
 # arquitetura. amd64: o builder oficial (so existe para amd64). arm64: o Go

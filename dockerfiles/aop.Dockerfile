@@ -4,7 +4,6 @@
 #   tv30-data    -> infra/user-files-template
 #   tv30-scripts -> infra/dockerfiles
 
-# syntax=docker/dockerfile:1.6
 FROM node:23-alpine
 WORKDIR /app
 COPY package*.json ./
