@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Gera no build o seed do Redis em RESP (para `redis-cli --pipe`): uma chamada
-FCALL tv30_perfil_grava por perfil, com os argumentos de perfil_fcall_args
-(migrate_to_redis.py, o mesmo da migracao manual).
+Generates the Redis seed in RESP, for `redis-cli --pipe`: one FCALL
+tv30_perfil_grava per profile, with the arguments of perfil_fcall_args
+(migrate_to_redis.py).
 
-Uso: emit_seed.py <userData.json> <saida.resp>
+Usage: emit_seed.py <userData.json> <output.resp>
 """
 import json
 import sys
 
-from migrate_to_redis import perfil_fcall_args  # mesma regra da migracao manual
+from migrate_to_redis import perfil_fcall_args
 
 
 def resp(*args) -> bytes:

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 /*
- * Gera, de routes.json, as configs KrakenD das duas superficies (uma por
- * variante de backend) e os dois OpenAPI: node generate.js build.
- * Testes: node --test generate.test.js.
+ * Builds, from routes.json, the KrakenD configurations of the two surfaces
+ * (one per backend variant) and the two OpenAPI files:
+ * node generate.js build. Tests: node --test generate.test.js.
  */
 const fs = require('fs');
 const path = require('path');
@@ -14,64 +14,64 @@ const GEN = path.join(HERE, 'generated');
 const readJson = f => JSON.parse(fs.readFileSync(f, 'utf8'));
 
 const PLUGIN_NAME = 'tv30-auth';
-// TLS da 44643 terminado na borda, que precisa ler os cabecalhos; certificado
-// do servico tls-init (.tv30/tls da raiz, montado aqui)
+// Directory of the TLS certificate of the external surface.
 const TLS_DIR = '/etc/tv30/tls';
 const PLUGIN_FOLDER = '/opt/krakend/plugins/';
 const AUTH_VALUES = ['none', 'token', 'token+bind'];
 const CLASS_VALUES = ['local-associated', 'local-autonomous', 'non-local'];
-// handlers do plugin (plugin/edge.go): o mesmo conjunto, para o build falhar
-// antes do container (o plugin tambem recusa nome desconhecido ao subir)
+// Names of the edge handlers of the plugin.
 const EDGE_HANDLERS = ['bind-context-register', 'bind-context-list', 'bind-context-remove', 'api-info', 'api-list'];
-// formatos da Tabela C.2 / C.3.6.2 (os mesmos do plugin, apiinfo.go)
+// Formats of the API ids (Table C.2), sections and versions (C.3.6.2).
 const API_ID = /^[a-z0-9]+(-[a-z0-9]+)+$/;
 const API_SUBSYSTEMS = ['ncl', 'nclua', 'tv3ws'];
 const API_SECTION = /^C(\.[0-9]+)+$/;
 const API_VERSION = /^[1-9][0-9]*\.[0-9]+$/;
-// cabecalhos internos escritos pelo plugin (versao negociada e Host original do
-// cliente); o KrakenD so repassa ao backend o que esta em input_headers
+// Internal headers written by the plugin, the negotiated version and the
+// original Host of the client; KrakenD passes on to the backend only the
+// headers in input_headers.
 const INTERNAL_VERSION_HEADER = 'X-TV30-API-Version';
 const INTERNAL_HOST_HEADER = 'X-TV30-Host';
 const INTERNAL_HEADERS = [INTERNAL_VERSION_HEADER, INTERNAL_HOST_HEADER];
-// versions da rota: as versoes "X.Y" servidas (C.3.6.2); ausente => so a 2.0, a
-// "current version" da C.3.6.3. De 100 em diante, extensoes do testbed.
+// versions of a route: the "X.Y" versions served (C.3.6.2); when absent, only
+// 2.0 (C.3.6.3). From 100 on, testbed extensions.
 const DEFAULT_VERSIONS = ['2.0'];
 const compareVersions = (a, b) => {
   const [am, an] = a.split('.').map(Number), [bm, bn] = b.split('.').map(Number);
   return am - bm || an - bn;
 };
 const versionsOf = r => [...(r.versions || DEFAULT_VERSIONS)].sort(compareVersions);
-// Caminho do salto borda -> servico (o mesmo internalPath do plugin, edge.go):
-// extensao do testbed leva o prefixo /v<X.Y> antes do caminho publico; versao
-// da norma, o publico. O cliente so usa o publico, com Accept-Version.
+// Path from the edge to the service: for a testbed extension, /v<X.Y>
+// followed by the public path; otherwise, the public path. The client uses
+// only the public path, with Accept-Version.
 const EXTENSION_MAJOR = 100;
 const isExtensionVersion = v => Number(v.split('.')[0]) >= EXTENSION_MAJOR;
 const internalPathOf = (p, v) => (isExtensionVersion(v) ? `/v${v}${p}` : p);
 const INTERNAL_PREFIX = /^\/v[0-9]+\.[0-9]+(\/|$)/;
-// caminhos internos da rota, um por par rota x versao (as versoes da norma
-// dividem o caminho publico)
+// Internal paths of a route, one per route and version pair; the versions of
+// the standard share the public path.
 const internalPathsOf = r => [...new Set(versionsOf(r).map(v => internalPathOf(r.path, v)))];
 
 const authOf = r => r.auth || 'token';
-// classes: as que podem usar a rota (ausente => todas); as demais recebem 106.
-// Na C.6.15.5, o nao local recebe 106.
+// classes: those that may use the route, all when absent; the others get
+// 106.
 const classesOf = r => r.classes || CLASS_VALUES;
 
-// C.4.1.8: a C.6.1.2 "can only be accessed via the HTTP protocol"
+// C.4.1.8: C.6.1.2 "can only be accessed via the HTTP protocol".
 const HTTP_ONLY_SECTIONS = ['C.6.1.2'];
-// C.4.1.6: o nao local por HTTP so usa as APIs "authorization-related
-// (C.6.1.2 and C.6.1.3)"; nas demais, 106.
+// C.4.1.6: a non-local client over HTTP only uses the "authorization-related
+// (C.6.1.2 and C.6.1.3)" APIs; on the others, 106.
 const NONLOCAL_HTTP_SECTIONS = ['C.6.1.2', 'C.6.1.3'];
-// no_service: codigo da rota token+bind sem servico DTV selecionado, quando a
-// tabela da API lista o 300; sem o campo, segue o bind-token e da 108
+// no_service: the code of a token+bind route when no DTV service is
+// selected, for an API whose table lists 300; without the field, the
+// bind-token check gives 108.
 const NO_SERVICE_VALUES = [300];
-// not_in_catalog: codigo da rota token+bind com {serviceContextId} quando o
-// servico do caminho esta fora do Application Catalog (Tabelas C.71 e C.74)
+// not_in_catalog: the code of a token+bind route with {serviceContextId}
+// when the service of the path is not in the Application Catalog (Tables
+// C.71 and C.74).
 const NOT_IN_CATALOG_VALUES = [304];
 
-// Superficies, com as chaves de surfaces e backends do routes.json; secure = a
-// do Server-SecureBaseURL. Duas superficies sao do testbed: a C.3.4 so
-// define o Server-BaseURL (http, porta fixa 44642) e o Server-SecureBaseURL.
+// Surfaces, with the keys of surfaces and backends of routes.json; secure is
+// the Server-SecureBaseURL surface.
 const SURFACE_RULES = {
   external: {
     secure: true,
@@ -83,15 +83,15 @@ const SURFACE_RULES = {
   },
 };
 
-// superficies em que a rota existe: todas
+// surfacesOf returns the surfaces where a route exists: all of them.
 function surfacesOf() {
   return Object.keys(SURFACE_RULES);
 }
 
 const routesOf = t => t.routes;
 
-// surfaceErrorOf: o codigo que a rota responde a QUALQUER requisicao nesta
-// superficie (0 = nenhum). So a externa tem: 106 da C.4.1.8.
+// surfaceErrorOf returns the code the route answers to any request on this
+// surface, 0 for none: 106 of C.4.1.8, only on the external surface.
 function surfaceErrorOf(r, surface) {
   if (!SURFACE_RULES[surface].secure) return 0;
   const exclusivaDoLocal = !classesOf(r).includes('non-local');
@@ -99,10 +99,11 @@ function surfaceErrorOf(r, surface) {
   return exclusivaDoLocal || soHTTP ? 106 : 0;
 }
 
-// rota que o nao local usa por HTTP (C.4.1.6)
+// Whether the route is one a non-local client uses over HTTP (C.4.1.6).
 const nonLocalHTTP = r => !!r.api && NONLOCAL_HTTP_SECTIONS.includes(r.api.section);
 
-// ordem da Tabela C.2 = ordem das secoes (C.6.1.2 < C.6.1.3 < ... < C.6.16.3)
+// compareSections orders sections numerically (C.6.1.2 < C.6.1.3 < ... <
+// C.6.16.3), the order of Table C.2.
 function compareSections(a, b) {
   const pa = a.split('.').slice(1).map(Number), pb = b.split('.').slice(1).map(Number);
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
@@ -112,8 +113,8 @@ function compareSections(a, b) {
   return 0;
 }
 
-// APIs implementadas numa superficie (C.6.7.8/C.6.7.9): {id, version}, sem
-// repeticao, na ordem da Tabela C.2.
+// apisOf returns the APIs implemented on a surface (C.6.7.8, C.6.7.9):
+// {id, version}, without repetition, in the order of Table C.2.
 function apisOf(routes) {
   const byId = new Map();
   for (const r of routes) if (r.api && !byId.has(r.api.id)) byId.set(r.api.id, r.api);
@@ -122,14 +123,13 @@ function apisOf(routes) {
     .map(a => ({ id: a.id, version: a.version }));
 }
 
-// Erro na tabela derruba o build: config gerada errada viraria politica
-// errada na borda, em silencio. checkTable devolve a lista de erros (vazia =
-// tabela valida); validate encerra o processo se houver algum.
+// checkTable returns the list of errors of the table, empty for a valid
+// table; validate exits the process if there is any.
 function checkTable(t) {
   const errs = [];
   const seen = new Set();
   const apiSeen = new Map();
-  // superficies: as mesmas de SURFACE_RULES, com porta e backends
+  // Surfaces: the same as SURFACE_RULES, with port and backends.
   const known = Object.keys(SURFACE_RULES);
   const declared = Object.keys(t.surfaces || {});
   for (const s of declared) if (!known.includes(s)) errs.push(`surfaces.${s}: superficie sem regra em SURFACE_RULES (${known.join(', ')})`);
@@ -139,7 +139,8 @@ function checkTable(t) {
     const b = (t.backends || {})[s];
     if (!b || typeof b !== 'object' || !Object.keys(b).length) errs.push(`backends.${s}: sem variante de backend`);
   }
-  // cors: so o que o plugin usa; ACAO e ACAM sao fixos em * (padrao da C.4.1.9.3)
+  // cors: only what the plugin uses; ACAO and ACAM are fixed at *, the
+  // default of C.4.1.9.3.
   const cors = t.cors;
   if (!cors || typeof cors !== 'object' || Array.isArray(cors)) errs.push('cors: bloco ausente');
   else {
@@ -190,7 +191,8 @@ function checkTable(t) {
       if (!EDGE_HANDLERS.includes(r.edge)) errs.push(`${id}: edge "${r.edge}" invalido (${EDGE_HANDLERS.join(', ')})`);
       if (r.timeout !== undefined) errs.push(`${id}: timeout nao se aplica a rota respondida pela borda (edge)`);
     }
-    // api: a linha da Tabela C.2 que a rota implementa (rota fora da norma nao tem)
+    // api: the row of Table C.2 the route implements; a route outside the
+    // standard has none.
     if (r.api !== undefined) {
       const a = r.api;
       if (!a || typeof a !== 'object' || Array.isArray(a)) { errs.push(`${id}: api nao eh objeto {id, section, version}`); continue; }
@@ -201,8 +203,8 @@ function checkTable(t) {
       }
       if (!API_SECTION.test(a.section || '')) errs.push(`${id}: api.section "${a.section}" invalida (ex.: C.6.3.1)`);
       if (!API_VERSION.test(a.version || '')) errs.push(`${id}: api.version "${a.version}" invalida (X.Y, C.3.6.2)`);
-      // a C.6.7.8 informa uma versao so, a "latest supported version"
-      // (Tabela C.47): a mais recente das que a rota serve
+      // C.6.7.8 reports a single version, the "latest supported version"
+      // (Table C.47): the latest one the route serves.
       else if (Array.isArray(versionsOf(r)) && versionsOf(r).every(v => API_VERSION.test(v))) {
         const ultima = versionsOf(r).slice(-1)[0];
         if (a.version !== ultima) errs.push(`${id}: api.version ${a.version} diferente da mais recente que a rota serve (${ultima})`);
@@ -214,7 +216,7 @@ function checkTable(t) {
       if (!prev) apiSeen.set(a.id, { section: a.section, version: a.version, route: id });
     }
   }
-  // superficie sem rota: o plugin recusa lista vazia e derrubaria a borda
+  // A surface without a route is an error.
   if (!errs.length) {
     for (const s of known) if (!routesOf(t, s).length) errs.push(`surfaces.${s}: nenhuma rota (regra: ${SURFACE_RULES[s].doc})`);
   }
@@ -229,8 +231,8 @@ function validate(t) {
   }
 }
 
-// Cabecalhos repassados ao tv3ws: os declarados + bind-token nas rotas
-// token+bind (a borda valida, e o tv3ws continua recebendo).
+// headersOf returns the headers passed on to the backend: the declared ones,
+// the bind-token on token+bind routes, and the internal headers.
 function headersOf(r) {
   const h = [...(r.headers || [])];
   if (authOf(r) === 'token+bind' && !h.includes('bind-token')) h.push('bind-token');
@@ -238,31 +240,29 @@ function headersOf(r) {
   return h;
 }
 
-// Um endpoint por caminho interno da rota, com destino no mesmo caminho do
-// backend da superficie.
+// endpointsFor returns one endpoint per internal path of the route, with the
+// same path on the backend of the surface.
 function endpointsFor(r, host) {
   return internalPathsOf(r).map(p => {
     const e = { endpoint: p, method: r.method };
     const headers = headersOf(r);
     if (headers.length) e.input_headers = headers;
     if (r.query) e.input_query_strings = r.query;
-    // no-op: sem isso o KrakenD troca o erro do tv3ws (404 + corpo C.3.2) por
-    // 500 sem corpo
+    // no-op: without it, KrakenD replaces a backend error (404 and a C.3.2
+    // body) with a 500 without body.
     e.output_encoding = 'no-op';
-    // Sem "timeout" vale o padrao do KrakenD (2s): um tv3ws travado vira o erro
-    // 200 em 2 s. O /tv3/authorize espera o pop-up (ate 10 s no tv3ws): 15s.
+    // Without "timeout", the KrakenD default of 2 s applies.
     if (r.timeout) e.timeout = r.timeout;
-    // Rota com "edge": o plugin responde antes e o backend nunca e chamado; o
-    // endpoint so registra o caminho no roteador (caminho fora da arvore do Gin
-    // pode cair no panic de KNOWN-ISSUES.md).
+    // For a route with "edge", the plugin answers first and the backend is
+    // never called; the endpoint keeps the path in the router.
     e.backend = [{ url_pattern: p, host: [host], encoding: 'no-op' }];
     return e;
   });
 }
 
-// Bloco do plugin tv30-auth: a politica da superficie (metodo+caminho com
-// padroes {param}, auth, classes e os campos derivados abaixo). Caminho nao
-// listado aqui => erro 100 no plugin, sem chegar ao roteador.
+// pluginConfig returns the tv30-auth block of the surface: method and path
+// with {param} patterns, auth, classes and the derived fields below. A path
+// not listed gets error 100 from the plugin, without reaching the router.
 function pluginConfig(t, surface) {
   const routes = routesOf(t, surface);
   const secure = SURFACE_RULES[surface].secure;
@@ -271,30 +271,33 @@ function pluginConfig(t, surface) {
     routes: routes.map(r => {
       const p = { method: r.method, path: r.path, auth: authOf(r) };
       if (r.classes) p.classes = r.classes;
-      if (r.edge) p.edge = r.edge; // respondida pelo plugin (edge.go)
+      // Answered by the plugin (edge.go).
+      if (r.edge) p.edge = r.edge;
       const se = surfaceErrorOf(r, surface);
-      if (se) p.surface_error = se; // 106 a qualquer requisicao (C.4.1.8)
-      if (!secure && nonLocalHTTP(r)) p.nonlocal_http = true; // C.4.1.6
+      // 106 to any request (C.4.1.8).
+      if (se) p.surface_error = se;
+      // C.4.1.6
+      if (!secure && nonLocalHTTP(r)) p.nonlocal_http = true;
       if (r.no_service) p.no_service = r.no_service;
       if (r.not_in_catalog) p.not_in_catalog = r.not_in_catalog;
       p.versions = versionsOf(r);
       return p;
     }),
-    // as duas superficies listam todas as APIs: a C.6.7.9 descreve "all APIs
-    // of a given category" (Tabela C.48), e a restricao aparece pelo 106 no uso
+    // Both surfaces list every API.
     apis: apisOf(routes),
   };
-  // C.4.1.6: na superficie HTTP o nao local so usa as rotas nonlocal_http
+  // C.4.1.6: on the HTTP surface a non-local client only uses the
+  // nonlocal_http routes.
   if (!secure) c.nonlocal_https_only = true;
-  // CORS (C.4.1.9), respondido pelo plugin: allow_headers em todo OPTIONS,
-  // max_age no preflight, expose_headers em toda resposta
+  // CORS (C.4.1.9), answered by the plugin: allow_headers on every OPTIONS,
+  // max_age on the preflight, expose_headers on every response.
   if (t.cors && Array.isArray(t.cors.allow_headers)) c.cors_allow_headers = t.cors.allow_headers;
   if (t.cors && Array.isArray(t.cors.expose_headers)) c.cors_expose_headers = t.cors.expose_headers;
   if (t.cors && typeof t.cors.max_age === 'string') c.cors_max_age = t.cors.max_age;
   return c;
 }
 
-// Corpo de erro da norma (C.3.2): toda falha responde 404 com este corpo.
+// Error body of the standard (C.3.2): every failure answers 404 with it.
 const ERROR_SCHEMA = {
   type: 'object',
   required: ['error', 'description'],
@@ -310,8 +313,8 @@ const AUTH_DOC = {
   'token+bind': 'access token + bind-token (Security requirements = shall)',
 };
 
-// generate monta todos os arquivos de uma tabela JA validada, sem gravar:
-// { '<nome>.json': objeto }. build() grava; generate.test.js confere.
+// generate builds every file of an already validated table, without writing
+// them: { '<name>.json': object }.
 function generate(t) {
   const files = {};
   for (const surface of Object.keys(t.surfaces)) {
@@ -326,15 +329,15 @@ function generate(t) {
         ...(SURFACE_RULES[surface].secure ? { tls: { public_key: `${TLS_DIR}/cert.pem`, private_key: `${TLS_DIR}/key.pem`, min_version: 'TLS12' } } : {}),
         allow_insecure_connections: true,
         plugin: { pattern: '.so', folder: PLUGIN_FOLDER },
-        // sem 'security/cors': o modulo CORS do KrakenD envolve o plugin e
-        // responderia o preflight antes dele
+        // No 'security/cors': the KrakenD CORS module wraps the plugin and
+        // would answer the preflight before it.
         extra_config: {
           'plugin/http-server': { name: [PLUGIN_NAME], [PLUGIN_NAME]: pluginConfig(t, surface) },
         },
         endpoints: routes.flatMap(r => endpointsFor(r, host)),
       };
     }
-    // OpenAPI da superficie (metodos mesclados por path)
+    // OpenAPI of the surface, methods merged by path.
     const paths = {};
     for (const r of routes) {
       const auth = authOf(r);

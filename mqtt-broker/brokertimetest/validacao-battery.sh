@@ -1,5 +1,5 @@
 #!/bin/bash
-# 5 repeticoes: broker com plugin, topico com validacao de schema
+# 5 repetitions: broker with the plugin, topic with schema validation.
 B=/mnt/d/Proj_CEFET/TV30/infra/mqtt-broker/brokertimetest
 OUT=$B/validacao-only.jsonl
 : > "$OUT"

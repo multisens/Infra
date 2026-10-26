@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// Mensagens SSDP (HTTPU), no formato do node-ssdp: dois tipos anunciados (o
-// URN do servico e o UDN do dispositivo raiz), USN "<UDN>::<URN>" e "<UDN>".
+// SSDP messages (HTTPU): two announced types (the URN of the service and the
+// UDN of the root device), USN "<UDN>::<URN>" and "<UDN>".
 
 const (
 	ssdpGroup  = "239.255.255.250"
@@ -46,7 +46,7 @@ func notify(u usn, location string, alive bool) string {
 	return b.String()
 }
 
-// response: resposta unicast ao M-SEARCH, com o max-age do NOTIFY.
+// response: the unicast reply to an M-SEARCH, with the max-age of the NOTIFY.
 func response(st string, u usn, location string, now time.Time) string {
 	var b strings.Builder
 	b.WriteString("HTTP/1.1 200 OK\r\n")
@@ -61,8 +61,8 @@ func response(st string, u usn, location string, now time.Time) string {
 	return b.String()
 }
 
-// parseMSearch devolve o ST de um M-SEARCH valido (MAN "ssdp:discover", MX e
-// ST presentes) ou "" se a mensagem nao for um.
+// parseMSearch returns the ST of a valid M-SEARCH (MAN "ssdp:discover", MX
+// and ST present), or "" if the message is not one.
 func parseMSearch(msg string) string {
 	sc := bufio.NewScanner(strings.NewReader(msg))
 	if !sc.Scan() || !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(sc.Text())), "M-SEARCH * HTTP/1.1") {
@@ -84,8 +84,8 @@ func parseMSearch(msg string) string {
 	return strings.Trim(h["ST"], `"`)
 }
 
-// answers: respostas a um ST (ssdp:all responde por todos os tipos, com o ST
-// de cada um; outro ST responde so se for um dos anunciados).
+// answers returns the replies to an ST: ssdp:all answers for every type,
+// with the ST of each; another ST is answered only if it is announced.
 func answers(st, udn, location string, now time.Time) []string {
 	var out []string
 	for _, u := range usns(udn) {

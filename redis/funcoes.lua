@@ -1,12 +1,13 @@
--- Corpo da biblioteca "tv30" do Redis; o biblioteca.sh antepoe "#!lua name=tv30"
--- e ESQUEMA_JSON (o esquema.json). Toda escrita do projeto nas familias do esquema
--- passa por uma funcao daqui; dado fora do esquema -> erro TV30ESQUEMA, nada gravado.
+-- Body of the "tv30" Redis library; biblioteca.sh prepends "#!lua name=tv30"
+-- and ESQUEMA_JSON (esquema.json). Every write of the project to the families
+-- of the schema goes through a function here; data outside the schema gives
+-- a TV30ESQUEMA error, and nothing is written.
 
--- cjson so existe dentro das chamadas (na carga o Redis recusa o global), por
--- isso o esquema e decodificado na primeira chamada
+-- cjson exists only inside the calls (at load time Redis refuses the
+-- global), so the schema is decoded on the first call.
 local E
 
--- erro de esquema; o registra() o converte em resposta TV30ESQUEMA
+-- Schema error; registra() turns it into a TV30ESQUEMA reply.
 local function falha(msg)
   error({ tv30 = msg }, 0)
 end
@@ -18,13 +19,14 @@ local function ordenadas(t)
   return out
 end
 
--- pontos de codigo UTF-8, nao bytes (Tabela 7: 20 caracteres no nickname)
+-- UTF-8 code points, not bytes (Table 7: 20 characters in nickname).
 local function nchars(s)
   local _, n = string.gsub(s, '[^\128-\191]', '')
   return n
 end
 
--- curta e sem caractere de controle: a resposta de erro do Redis e uma linha so
+-- Short and without control characters: the Redis error reply is a single
+-- line.
 local function amostra(v)
   v = tostring(v)
   if #v > 48 then v = string.sub(v, 1, 45) .. '...' end
@@ -56,7 +58,7 @@ local function conjuntoDe(lista)
   return s
 end
 
--- em lotes: unpack tem limite de pilha
+-- In batches: unpack has a stack limit.
 local function emLotes(cmd, chave, lista)
   local passo = 400
   for i = 1, #lista, passo do
@@ -66,8 +68,9 @@ local function emLotes(cmd, chave, lista)
   end
 end
 
--- "{x}" no meio da chave casa [^:]+; a ultima parte casa o resto, salvo se a
--- regra dela nao admite ':' (assim user:{id} nao engole user:{id}:consent)
+-- "{x}" in the middle of the key matches [^:]+; the last part matches the
+-- rest, unless its rule does not admit ':' (so user:{id} does not take
+-- user:{id}:consent).
 local function compila(tpl, partes)
   local pat, nomes, pos = '^', {}, 1
   while true do
@@ -86,7 +89,7 @@ local function compila(tpl, partes)
   return pat .. '$', nomes
 end
 
--- conferidas na auditoria; o esquema.json tem de declarar exatamente estas
+-- Checked by the audit; esquema.json must declare exactly these.
 local INVARIANTES = {
   ['perfil-indexado'] = true,
   ['perfil-dependentes'] = true,
@@ -169,7 +172,8 @@ local function idiomaOk(v)
   return i > 0
 end
 
--- Padrao literal, e nao string.rep: na carga o Redis nao expoe as bibliotecas.
+-- A literal pattern, not string.rep: at load time Redis does not expose the
+-- libraries.
 local UUID_FORMATO = '^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$'
 local UUID_NULO = '00000000-0000-0000-0000-000000000000'
 local UUID_MAXIMO = 'ffffffff-ffff-ffff-ffff-ffffffffffff'
@@ -180,7 +184,8 @@ local function motivoUuid(v)
       'c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10; veio ' .. amostra(v) .. ')'
   end
   if string.find(v, '%u') then return 'UUID deve estar em minusculas (veio ' .. amostra(v) .. ')' end
-  -- nulo e maximo antes da versao: a mensagem diz o que o valor e
+  -- Nil and max before the version, so that the message says what the value
+  -- is.
   if v == UUID_NULO then
     return 'UUID nulo (Nil UUID da RFC 9562, todo 0) nao serve de id de perfil (versao 0 e variante 0)'
   end
@@ -199,10 +204,11 @@ local function motivoUuid(v)
   return nil
 end
 
--- Avatar: nome de arquivo do diretorio de miniaturas, como
--- ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(svg|png|jpg|jpeg|webp)$. Padrao Lua nao tem
--- alternativa nem repeticao contada: a conferencia e por partes, e a extensao e
--- o que vem depois do ultimo ponto. So ASCII passa, entao #base conta caracteres.
+-- Avatar: name of a file of the thumbnail directory, as
+-- ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(svg|png|jpg|jpeg|webp)$. A Lua pattern
+-- has no alternation or counted repetition: the check is by parts, and the
+-- extension is what comes after the last dot. Only ASCII passes, so #base
+-- counts characters.
 local EXEMPLO_AVATAR = 'como c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10.svg'
 
 local function motivoNomeArquivo(regra, v)
@@ -259,8 +265,8 @@ local function motivoOrigem(v)
   return nil
 end
 
--- nil se v cumpre a regra, senao o motivo. emJson: v veio de um objeto JSON
--- (inteiro e number; o resto, string JSON).
+-- nil if v satisfies the rule, otherwise the reason. emJson: v came from a
+-- JSON object (integer and number; the rest, JSON string).
 local motivo
 motivo = function(regra, v, emJson)
   local t = regra.tipo
@@ -347,9 +353,9 @@ local function motivosPartes(fam, partes)
   return out
 end
 
--- h = estado resultante. escritos nil confere o registro inteiro; um conjunto
--- confere so esses campos (o que ja estava fora do esquema nao trava a escrita;
--- a auditoria o mostra). O teto vale sempre, no resultado.
+-- h = resulting state. escritos nil checks the whole record; a set checks
+-- only those fields (what was already outside the schema does not block the
+-- write; the audit shows it). The size limit always applies, to the result.
 local function motivosHash(fam, partes, h, escritos)
   local out = {}
   local function add(m) out[#out + 1] = m end
@@ -406,7 +412,7 @@ local function exige(chave, motivos)
   end
 end
 
--- ausente ou do tipo do esquema; true se existe
+-- Absent or of the schema type; true if it exists.
 local function exigeTipo(fam, chave)
   local t = tipoNoRedis(chave)
   if t ~= 'none' and t ~= fam.tipo then
@@ -448,8 +454,8 @@ local function plano(h)
   return out
 end
 
--- confere campos novos num hash que pode existir: registro novo confere tudo,
--- existente so os escritos (nao grava)
+-- Checks new fields on a hash that may exist: a new record checks
+-- everything, an existing one only the written fields. Does not write.
 local function mergeHash(fam, partes, chave, novos)
   local existe = exigeTipo(fam, chave)
   local h = existe and hashDe(chave) or {}
@@ -459,12 +465,13 @@ local function mergeHash(fam, partes, chave, novos)
   exige(chave, motivosHash(fam, partes, h, escritos))
 end
 
--- O Redis nao desfaz o que a funcao ja gravou se ela falha no meio (7.4.11): toda
--- operacao confere tudo, inclusive o tipo de cada chave, antes da primeira escrita.
+-- Redis does not roll back what a function already wrote if it fails midway:
+-- every operation checks everything, including the type of each key, before
+-- the first write.
 
 local OP = {}
 
--- sessao (dono: tv3ws)
+-- Session.
 
 local function sessaoString(nomeFamilia, args, uso)
   exigeArgs(args, 1, uso)
@@ -494,7 +501,7 @@ OP.tv30_sessao_servico = function(args)
   return 1
 end
 
--- perfis (dono: AoP)
+-- Profiles.
 
 OP.tv30_perfil_grava = function(args)
   local uso = 'tv30_perfil_grava <id> <n> <servico 1..n> <campo> <valor> [...]'
@@ -520,7 +527,7 @@ OP.tv30_perfil_grava = function(args)
   exigeTipo(fIndice, fIndice.chave)
   exigeTipo(fPerfil, chave)
   exigeTipo(fVis, chaveVis)
-  -- regravar perfil existente nao conta como novo
+  -- Rewriting an existing profile does not count as new.
   if fIndice.maxMembros and redis.call('SISMEMBER', fIndice.chave, id) == 0
       and redis.call('SCARD', fIndice.chave) >= fIndice.maxMembros then
     falha(fIndice.chave .. ' teto de ' .. fIndice.maxMembros .. ' perfis atingido (' .. fIndice.maxMembrosFonte ..
@@ -539,7 +546,8 @@ OP.tv30_perfil_ultimo_acesso = function(args)
   local id, ms = args[1], args[2]
   local fIndice, fPerfil = familia('users:index'), familia('user:{id}')
   if tipoNoRedis(fIndice.chave) ~= 'set' or redis.call('SISMEMBER', fIndice.chave, id) == 0 then
-    return 0 -- perfil inexistente ou despejado: nao cria hash avulso
+    -- Profile missing or evicted: no stray hash is created.
+    return 0
   end
   local partes = { id = id }
   local chave = chaveDe(fPerfil, partes)
@@ -581,7 +589,7 @@ OP.tv30_perfil_remove = function(args)
   return n
 end
 
--- atributos de emissora (grava o tv3ws; o AoP remove em tv30_perfil_remove)
+-- Broadcaster attributes.
 
 OP.tv30_atributos_emissora = function(args)
   local uso = 'tv30_atributos_emissora <id> <scid> <campo> <valor> [...] (valor vazio remove o campo)'
@@ -607,7 +615,8 @@ OP.tv30_atributos_emissora = function(args)
       h[k] = v
       escritos[k] = true
     end
-    -- nome conferido mesmo na remocao (atributo basico nunca e da emissora)
+    -- The name is checked even on removal (a basic attribute never belongs to
+    -- the broadcaster).
     local m = motivo(fAttr.outrosCampos.nome, k)
     if m then falha(chave .. ' nome de campo: ' .. m) end
     if fAttr.proibidos[k] then
@@ -622,7 +631,7 @@ OP.tv30_atributos_emissora = function(args)
   return #apagar + #flat / 2
 end
 
--- clientes (dono: tv3ws)
+-- Clients.
 
 local function idClienteValido(id)
   local fReg = familia('client:{id}')
@@ -685,7 +694,7 @@ OP.tv30_cliente_inclui_autorizado = function(args)
   return redis.call('SADD', fAut.chave, id)
 end
 
--- origens das aplicacoes associadas (dono: AoP)
+-- Origins of the associated applications.
 
 OP.tv30_origem_registra = function(args)
   exigeArgs(args, 2, 'tv30_origem_registra <origem> <id do servico>')
@@ -709,7 +718,7 @@ OP.tv30_origens_limpa = function(args)
   return redis.call('DEL', familia('origins:associated').chave)
 end
 
--- servicos anunciados na LLS (dono: aop-transport-layer-metadata-lls, no AoP)
+-- Services announced in the LLS.
 
 OP.tv30_servicos_anunciados = function(args)
   local fam = familia('services:announced')
@@ -723,7 +732,7 @@ OP.tv30_servicos_anunciados = function(args)
   return redis.call('SCARD', fam.chave)
 end
 
--- bind-context (dono: borda)
+-- bind-context.
 
 OP.tv30_bind_registra = function(args)
   exigeArgs(args, 2, 'tv30_bind_registra <id do servico> <entrada JSON>')
@@ -829,7 +838,7 @@ local function auditoria()
       add(d[1], d[2], 'perfil ' .. amostra(d[3]) .. ' fora de users:index (invariante perfil-dependentes)')
     end
   end
-  -- clientes-disjuntos e autorizado-tem-registro
+  -- clientes-disjuntos and autorizado-tem-registro
   local aut, blq = membros('clients:authorized'), membros('clients:blocked')
   for _, id in ipairs(ordenadas(aut)) do
     if blq[id] then
@@ -844,8 +853,9 @@ end
 
 local PREFIXO = 'TV30ESQUEMA'
 
--- O Redis aplica o ACL de quem chama dentro da funcao (sem @write: "ERR ACL
--- failure in script"): as funcoes nao impedem escrita direta, que a auditoria mostra.
+-- Redis applies the ACL of the caller inside the function (without @write:
+-- "ERR ACL failure in script"): the functions do not prevent direct writes,
+-- which the audit shows.
 local function registra(nome, fn, flags)
   redis.register_function {
     function_name = nome,
@@ -866,8 +876,8 @@ local function registra(nome, fn, flags)
   }
 end
 
--- Na carga o Redis so expoe redis.register_function (nem pairs nem ipairs): lista
--- fixa e laco numerico. Os testes conferem que ela casa com o esquema.json.
+-- At load time Redis exposes only redis.register_function (neither pairs nor
+-- ipairs): a fixed list and a numeric loop.
 local ESCRITA = {
   'tv30_atributos_emissora',
   'tv30_bind_registra',

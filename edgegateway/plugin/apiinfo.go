@@ -8,19 +8,19 @@ import (
 	"strings"
 )
 
-// APIs de informacao de API (C.6.7.8, Tabela C.47; C.6.7.9, Tabela C.48), a
-// partir do campo "apis" do bloco do plugin (ids da Tabela C.2, na ordem dela).
-// Cada API informa uma versao so, a "latest supported version": a mais recente
-// que as rotas dela servem.
+// API information APIs (C.6.7.8, Table C.47; C.6.7.9, Table C.48), answered
+// from the "apis" field of the plugin block: ids of Table C.2, in its order,
+// one version per API.
 
-// Subsistemas da Tabela C.48. O testbed so implementa APIs tv3ws; ncl e
-// nclua sao conhecidos (lista vazia, nao 101).
+// Subsystems of Table C.48. A subsystem with no implemented API gives an
+// empty list.
 var apiSubsystems = []string{"ncl", "nclua", "tv3ws"}
 
-// Formato dos ids da Tabela C.2 ("tv3ws-current-service"): <subsistema>-<nome>.
+// Format of the ids of Table C.2, <subsystem>-<name>, as in
+// "tv3ws-current-service".
 var apiIDPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)+$`)
 
-// Versao no formato "X.Y" (C.3.6.2): X inteiro > 0, Y inteiro >= 0.
+// Version format "X.Y" (C.3.6.2): integer X > 0, integer Y >= 0.
 var apiVersionPattern = regexp.MustCompile(`^[1-9][0-9]*\.[0-9]+$`)
 
 type apiEntry struct {
@@ -47,8 +47,8 @@ func subsystemOf(id string) string {
 	return s
 }
 
-// loadAPICatalog le o campo "apis" do bloco do plugin. Qualquer valor
-// invalido eh erro (morre-inteiro, como o resto da config).
+// loadAPICatalog reads the "apis" field of the plugin block. Returns an
+// error for any invalid value.
 func loadAPICatalog(raw interface{}) (*apiCatalog, error) {
 	list, ok := raw.([]interface{})
 	if !ok {
@@ -78,9 +78,8 @@ func loadAPICatalog(raw interface{}) (*apiCatalog, error) {
 	return cat, nil
 }
 
-// C.6.7.8: 101 "If <api-id> does not correspond to a valid API identification
-// string", tambem para id da Tabela C.2 nao implementado (a Tabela C.47 nao
-// preve outro erro, e nao ha versao de uma API que o receptor nao tem).
+// C.6.7.8 - Querying individual API information. Answers 101 for an id that
+// is not an implemented API, including an id of Table C.2.
 func (h *authHandler) apiInfo(_ *http.Request, params map[string]string) edgeReply {
 	id := params["apiId"]
 	e, ok := h.cfg.APIs.byID[id]
@@ -92,9 +91,9 @@ func (h *authHandler) apiInfo(_ *http.Request, params map[string]string) edgeRep
 	}{e}}
 }
 
-// C.6.7.9: com subsystem, so as daquele subsistema (desconhecido ou vazio =>
-// 101). Sem subsystem, que a Tabela C.48 deixa opcional sem dizer o que
-// listar, lista todas.
+// C.6.7.9 - Querying the list of APIs in a subsystem. With subsystem, lists
+// the APIs of that subsystem, and answers 101 if it is unknown or empty;
+// without it, lists all APIs.
 func (h *authHandler) apiList(r *http.Request, _ map[string]string) edgeReply {
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
@@ -114,7 +113,8 @@ func (h *authHandler) apiList(r *http.Request, _ map[string]string) edgeReply {
 		}
 	}
 	if out == nil {
-		out = []apiEntry{} // "receiverApis": [] e nao null
+		// Encodes "receiverApis" as [], not null.
+		out = []apiEntry{}
 	}
 	return edgeReply{Body: struct {
 		ReceiverAPIs []apiEntry `json:"receiverApis"`

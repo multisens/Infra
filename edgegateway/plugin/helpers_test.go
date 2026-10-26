@@ -17,13 +17,13 @@ import (
 	"time"
 )
 
-// Instante fixo dos testes (o mesmo iat das fixtures do jsonwebtoken).
+// Fixed instant of the tests, the iat of the jsonwebtoken fixtures.
 var t0 = time.Unix(1790000000, 0)
 
 func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 
-// signJWT monta um JWS compacto. key: []byte (HS*) ou *rsa.PrivateKey (RS*).
-// alg "none" gera assinatura vazia.
+// signJWT builds a compact JWS. key: []byte (HS*) or *rsa.PrivateKey (RS*).
+// alg "none" gives an empty signature.
 func signJWT(t *testing.T, alg string, key interface{}, claims map[string]interface{}) string {
 	t.Helper()
 	return signJWTHeader(t, map[string]interface{}{"alg": alg, "typ": "JWT"}, alg, key, claims)
@@ -100,21 +100,31 @@ func storedJSON(alg, key string) string {
 	return string(b)
 }
 
-// fakeStore: Redis em memoria para os testes da decisao e das APIs da borda.
+// fakeStore is an in-memory Redis for the tests of the decision and of the
+// edge APIs.
 type fakeStore struct {
-	blocked    map[string]bool
-	authorized map[string]bool   // clients:authorized
-	associated map[string]string // origins:associated: origem -> servico que lancou a app
+	blocked map[string]bool
+	// clients:authorized
+	authorized map[string]bool
+	// origins:associated: origin to the service that launched the application.
+	associated map[string]string
 	current    string
-	catalog    map[string]bool     // services:announced
-	keys       map[string][]string // bind-context:{serviceId}
-	svcHash    map[string]string   // session:current-service
-	wrongType  map[string]bool     // bind-context:{serviceId} de outro tipo (WRONGTYPE)
-	err        error
-	authzErr   error // so no SISMEMBER clients:authorized
-	catalogErr error // so no SISMEMBER services:announced
-	writeErr   error // so nas escritas (a funcao do Redis recusando o dado)
-	calls      int
+	// services:announced
+	catalog map[string]bool
+	// bind-context:{serviceId}
+	keys map[string][]string
+	// session:current-service
+	svcHash map[string]string
+	// bind-context:{serviceId} of another type (WRONGTYPE).
+	wrongType map[string]bool
+	err       error
+	// Only on SISMEMBER clients:authorized.
+	authzErr error
+	// Only on SISMEMBER services:announced.
+	catalogErr error
+	// Only on the writes, as the Redis function refusing the data.
+	writeErr error
+	calls    int
 }
 
 func (f *fakeStore) IsBlocked(id string) (bool, error) {
@@ -183,7 +193,8 @@ func (f *fakeStore) RemoveBindKey(id, raw string) (int64, error) {
 		kept = append(kept, e)
 	}
 	if len(kept) == 0 {
-		delete(f.keys, id) // como no Redis: lista vazia some
+		// As in Redis, an empty list is removed.
+		delete(f.keys, id)
 	} else {
 		f.keys[id] = kept
 	}

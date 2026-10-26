@@ -1,8 +1,7 @@
 #!/bin/sh
-# tls-init: certificado autoassinado do receptor (a C.4.1.1 o admite), gerado
-# so se ainda nao existe em $TLS_DIR; usado pela borda (44643) e pelo tv3ws. O
-# cliente nao local confia nele porque o recebe no pareamento (Tabela C.4).
-# Os arquivos ficam com o dono do diretorio: o tv3ws no host (dev-host) os le.
+# Generates the receiver's self-signed certificate (cert.pem, key.pem) in
+# $TLS_DIR, default /tls, only if either file is missing or empty. The files
+# get the owner of the directory.
 set -eu
 DIR=${TLS_DIR:-/tls}
 mkdir -p "$DIR"

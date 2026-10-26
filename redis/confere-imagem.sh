@@ -1,7 +1,7 @@
 #!/bin/sh
-# Conferencia no build da imagem: num redis-server temporario, carrega a
-# biblioteca, aplica o seed.resp e exige carga sem erro e auditoria vazia.
-# Nada fica na imagem (sem RDB nem AOF).
+# Check at image build time: on a temporary redis-server, loads the library,
+# applies seed.resp and requires a load without errors and an empty audit.
+# Nothing stays in the image (no RDB or AOF).
 set -eu
 P=6390
 LIB=/opt/tv30-redis

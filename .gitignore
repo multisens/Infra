@@ -1,12 +1,12 @@
-# Repositório git independente — ignorado para não virar submódulo
+# Independent git repository, ignored so that it does not become a submodule.
 GingaDistrib/
 
-# Documentos e arquivos locais
+# Local documents and files.
 ABNT_NBR_25608.md
 files infra tv30 docs.zip
 prompt.md
 redis-persistence-strategy.md
 
-# Cache do Python (o migrate_to_redis.py da imagem do broker)
+# Python cache (migrate_to_redis.py of the broker image).
 __pycache__/
 *.pyc

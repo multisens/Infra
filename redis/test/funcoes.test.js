@@ -1,7 +1,8 @@
-// Testes da biblioteca "tv30" num Redis real (rode por infra/redis/test/run.sh).
-// Os casos de recusa sao gerados do esquema.json: cada regra recebe valores que a
-// violam, e a funcao tem de responder TV30ESQUEMA sem gravar nada. Regra nova
-// ganha caso sem editar este arquivo, se o tipo de regra for conhecido.
+// Tests of the "tv30" library on a real Redis (run by
+// infra/redis/test/run.sh). The refusal cases are generated from
+// esquema.json: each rule gets values that violate it, and the function must
+// answer TV30ESQUEMA without writing anything. A new rule gets cases without
+// editing this file, if the kind of rule is known.
 'use strict';
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
@@ -21,7 +22,7 @@ const fcallRo = (nome, ...args) => r('FCALL_RO', nome, 0, ...args);
 const plano = h => Object.entries(h).flat();
 const auditoria = () => fcallRo('tv30_auditoria');
 
-// ------------------------------------------------------------ esquema JS --
+// ------------------------------------------------------------ JS schema --
 function resolve(regra) {
     if (!regra || typeof regra !== 'object' || regra.ref === undefined) return regra;
     const base = ESQ.definicoes[regra.ref];
@@ -35,13 +36,14 @@ const familia = nome => {
     return f;
 };
 
-// ----------------------------------------------------------------- dados --
+// ------------------------------------------------------------------ data --
 const P1 = '0b6e3c1a-7f2d-4e8b-9a5c-3d1f2e4a6b8c';
 const P2 = '5a9d2f4e-1c3b-4d6a-8e7f-9b0c1d2e3f4a';
 const FANTASMA = 'f0f0f0f0-0000-4000-8000-000000000001';
 const ORFAO = 'f0f0f0f0-0000-4000-8000-000000000002';
 const SEM_HASH = 'f0f0f0f0-0000-4000-8000-000000000003';
-// versao do UUID: 1o digito do 3o grupo; variante: 1o digito do 4o grupo
+// UUID version: first digit of the third group; variant: first digit of the
+// fourth group.
 const UUID_VERSAO = 14;
 const UUID_VARIANTE = 19;
 const comDigito = (u, i, d) => u.slice(0, i) + d + u.slice(i + 1);
@@ -53,7 +55,7 @@ const PERFIL = {
     closedCaptioning: 'true', closedSigning: 'true', closedSigningSide: 'right', closedSigningWidth: '28',
     audioDescription: 'false', dialogEnhancement: 'false', voiceGuidance: 'false', lastAccess: '1760000000000',
 };
-// perfil minimo: so os obrigatorios (condicoes falsas)
+// Minimal profile: only the required fields (false conditions).
 const PERFIL_MIN = {
     id: P1, nickname: 'Viewer 1', parentalControl: 'false', closedCaptioning: 'false', closedSigning: 'false',
     audioDescription: 'false', dialogEnhancement: 'false', voiceGuidance: 'false',
@@ -92,7 +94,8 @@ async function snapshot() {
     return JSON.stringify(out);
 }
 
-// recusa: erro TV30ESQUEMA <funcao>: com os trechos esperados, e nada gravado
+// Refusal: error TV30ESQUEMA <function>: with the expected excerpts, and
+// nothing written.
 async function recusa(desc, nome, args, trechos = []) {
     const antes = await snapshot();
     let erro = null;
@@ -110,8 +113,8 @@ async function limpo() {
 }
 beforeEach(limpo);
 
-// ----------------------------------------------- violacoes de cada regra --
-// [valor, trecho esperado no motivo, descricao]
+// ----------------------------------------------- violations of each rule --
+// [value, expected excerpt of the reason, description]
 function violacoes(regra, emJson = false) {
     const out = [];
     const t = regra.tipo;
@@ -159,18 +162,19 @@ function violacoes(regra, emJson = false) {
             ]) out.push([v, 'RFC 9562', d]);
             out.push([ok.toUpperCase(), 'minusculas', 'maiusculas']);
             out.push(['C' + ok.slice(1), 'minusculas', 'uma maiuscula']);
-            // versao 1 a 8 e variante da RFC 9562; a mensagem diz a parte e o digito
+            // Version 1 to 8 and the variant of RFC 9562; the message gives the
+            // part and the digit.
             for (const d of '09f') {
                 out.push([comDigito(ok, UUID_VERSAO, d), ['versao do UUID deve ser de 1 a 8', `veio ${d} em`], `versao ${d}`]);
             }
             for (const d of '01234567cdef') {
                 out.push([comDigito(ok, UUID_VARIANTE, d), ['variante do UUID deve ser a da RFC 9562', `veio ${d} em`], `variante ${d}`]);
             }
-            // as duas erradas juntas: a versao e conferida antes
+            // Both wrong: the version is checked first.
             out.push([comDigito(comDigito(ok, UUID_VERSAO, '0'), UUID_VARIANTE, 'c'), ['versao do UUID', 'veio 0 em'], 'versao 0 e variante c']);
             out.push(['00000000-0000-0000-0000-000000000000', ['UUID nulo', 'nao serve de id de perfil'], 'nulo (Nil UUID)']);
             out.push(['ffffffff-ffff-ffff-ffff-ffffffffffff', ['UUID maximo', 'nao serve de id de perfil'], 'maximo (Max UUID)']);
-            // a caixa e conferida antes: variante valida em maiuscula (B)
+            // The case is checked first: a valid variant in uppercase (B).
             out.push([comDigito(ok, UUID_VARIANTE, 'B'), 'minusculas', 'variante B maiuscula']);
             break;
         }
@@ -227,7 +231,7 @@ function violacoes(regra, emJson = false) {
     return out;
 }
 
-// valores que cumprem a regra, inclusive as fronteiras
+// Values that satisfy the rule, the boundaries included.
 function aceitacoes(regra) {
     switch (regra.tipo) {
         case 'texto': {
@@ -247,17 +251,18 @@ function aceitacoes(regra) {
         }
         case 'enum': return regra.valores.slice();
         case 'idioma': return ['pt-BR', 'en', 'pt', 'zh-Hant-TW', 'x-tv30', 'i-default', 'es-419'];
-        // a carga inicial (v4, variante 9), um crypto.randomUUID() (o que o AoP
-        // gera), as versoes 1 e 7 e cada versao de 1 a 8 com cada variante 8, 9, a e b
+        // The initial load (v4, variant 9), a crypto.randomUUID() (what the AoP
+        // generates), versions 1 and 7 and each version from 1 to 8 with each
+        // variant 8, 9, a and b.
         case 'uuid': {
             const out = ['c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10', require('crypto').randomUUID(), 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6',
                 '017f22e2-79b0-7cc3-98c4-dc0c0c07398f'];
             for (const v of '12345678') for (const va of '89ab') out.push(comDigito(comDigito(P1, UUID_VERSAO, v), UUID_VARIANTE, va));
             return out;
         }
-        // o avatar da carga, o que o AoP grava, cada extensao, os tamanhos de
-        // fronteira e os ".", "_" e "-" no meio do nome ("a..b.svg": sem "/", ".."
-        // nao sobe de diretorio)
+        // The avatar of the load, what the AoP writes, each extension, the
+        // boundary sizes and ".", "_" and "-" inside the name ("a..b.svg":
+        // without "/", ".." does not go up a directory).
         case 'nomeArquivo': return [
             'c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10.svg', `${require('crypto').randomUUID()}.svg`,
             ...regra.extensoes.map(e => `a.${e}`), 'Z.png', '0.jpg',
@@ -274,9 +279,10 @@ function jsonValido(regra) {
     return { ...ENTRADA };
 }
 
-// ------------------------------------------- montagem das chamadas por slot --
-// Para cada familia: os "slots" (lugares onde uma regra se aplica) e como
-// montar uma chamada valida com o valor do slot trocado. prep roda antes.
+// --------------------------------------------- calls assembled per slot --
+// For each family: the "slots" (places where a rule applies) and how to
+// assemble a valid call with the value of the slot replaced. prep runs
+// first.
 const indexaP1 = () => fcall('tv30_perfil_grava', ...perfilArgs(P1, [], PERFIL));
 const SLOTS = {
     'session:current-user': [{ rotulo: 'valor', regra: f => f.valor, chamada: v => ['tv30_sessao_usuario', [v]], trecho: 'valor:' }],
@@ -285,8 +291,8 @@ const SLOTS = {
     'users:index': [{ rotulo: 'membro', regra: f => f.membros, chamada: v => ['tv30_perfil_grava', perfilArgs(v, [], { ...PERFIL, id: v })], trecho: '{id} da chave:' }],
     'user:{id}': [
         { rotulo: '{id}', regra: f => f.partes.id, chamada: v => ['tv30_perfil_grava', perfilArgs(v, [], { ...PERFIL, id: v })], trecho: '{id} da chave:' },
-        // o campo id tem a mesma regra da parte {id} (slot acima) e tem de ser
-        // igual a ela (teste proprio abaixo): fica fora dos slots por campo
+        // The id field has the same rule as the {id} part (slot above) and must
+        // equal it (own test below): left out of the per-field slots.
         ...campoSlots(campo => v => ['tv30_perfil_grava', perfilArgs(P1, [], { ...PERFIL, [campo]: v })], ['id']),
     ],
     'user:{id}:consent': [
@@ -294,13 +300,15 @@ const SLOTS = {
         { rotulo: '{id}', regra: f => f.partes.id, chamada: v => ['tv30_perfil_grava', perfilArgs(v, ['urn:x'], { ...PERFIL, id: v })], trecho: '{id} da chave:' },
     ],
     'user:{id}:broadcaster-attrs:{scid}': [
-        // o perfil do valor tem de existir para a aceitacao; com valor invalido a
-        // criacao falha e a recusa vem da parte {id} da chave
+        // The profile of the value must exist for the acceptance; with an
+        // invalid value the creation fails and the refusal comes from the {id}
+        // part of the key.
         { rotulo: '{id}', regra: f => f.partes.id, prep: v => fcall('tv30_perfil_grava', ...perfilArgs(v, [], { ...PERFIL, id: v })).catch(() => undefined), chamada: v => ['tv30_atributos_emissora', [v, 'urn:s:1', 'cor', 'azul']], trecho: '{id} da chave:' },
         { rotulo: '{scid}', regra: f => f.partes.scid, prep: indexaP1, chamada: v => ['tv30_atributos_emissora', [P1, v, 'cor', 'azul']], trecho: '{scid} da chave:' },
         { rotulo: 'nome de campo', regra: f => f.outrosCampos.nome, prep: indexaP1, chamada: v => ['tv30_atributos_emissora', [P1, 'urn:s:1', v, 'azul']], trecho: 'nome de campo:' },
-        // outrosCampos.valor (texto, min 1): vazio na funcao REMOVE o campo, entao
-        // nao ha valor gravavel que viole a regra; a auditoria cobre (abaixo)
+        // outrosCampos.valor (text, min 1): empty REMOVES the field in the
+        // function, so no writable value violates the rule; the audit covers it
+        // (below).
     ],
     'client:{id}': [
         { rotulo: '{id}', regra: f => f.partes.id, chamada: v => ['tv30_cliente_grava', [v, ...plano(CLIENTE)]], trecho: '{id} da chave:' },
@@ -318,7 +326,8 @@ const SLOTS = {
         { rotulo: 'entrada', regra: f => f.itens, chamada: v => ['tv30_bind_registra', ['urn:tv30:service:a', v]], trecho: 'entrada:' },
     ],
 };
-// um slot por campo declarado; a familia vem na hora de gerar
+// One slot per declared field; the family comes when the cases are
+// generated.
 function campoSlots(montar, exceto = []) {
     return [{ porCampo: true, montar, exceto }];
 }
@@ -333,7 +342,7 @@ function expandeSlots(f) {
     return out;
 }
 
-// ------------------------------------------------------------------ carga --
+// ------------------------------------------------------------------ load --
 test('biblioteca carregada: exatamente as funcoes do esquema.json, flags certas', async () => {
     const lista = await r('FUNCTION', 'LIST', 'LIBRARYNAME', ESQ.biblioteca);
     assert.equal(lista.length, 1, 'uma biblioteca tv30');
@@ -352,7 +361,7 @@ test('biblioteca carregada: exatamente as funcoes do esquema.json, flags certas'
         assert.ok(flags.includes('no-cluster'), `${f.nome}: no-cluster`);
         assert.equal(flags.includes('no-writes'), !!f.somenteLeitura, `${f.nome}: no-writes so nas somente leitura`);
     }
-    // cada funcao citada numa familia existe; cada familia tem quem a grave
+    // Each function named in a family exists; each family has a writer.
     const nomes = new Set(ESQ.funcoes.map(f => f.nome));
     for (const fam of ESQ.familias) {
         assert.ok(fam.funcoes.length > 0, `${fam.familia}: funcoes`);
@@ -372,7 +381,7 @@ test('FCALL_RO so roda as somente leitura; numkeys > 0 e argumentos errados sao 
     await assert.rejects(fcallRo('tv30_auditoria', 'x'), new RegExp(`${PREFIXO} tv30_auditoria: uso:`));
 });
 
-// -------------------------------------------- recusa de cada regra (gerado) --
+// --------------------------------------- refusal of each rule (generated) --
 for (const fam of ESQ.familias) {
     test(`recusa de cada regra: ${fam.familia}`, async (t) => {
         let casos = 0;
@@ -395,7 +404,7 @@ for (const fam of ESQ.familias) {
                 aceitos++;
             }
         }
-        // campos obrigatorios, condicionais e nao previstos
+        // Required, conditional and unexpected fields.
         if (fam.campos) {
             const [base, chamar] = {
                 'session:current-service': [SVC, h => ['tv30_sessao_servico', plano(h)]],
@@ -444,16 +453,17 @@ test('broadcaster-attrs: atributos basicos proibidos e teto de 20 MB no resultad
         await recusa(`redefinir ${nome}`, 'tv30_atributos_emissora', [P1, 'urn:s:1', nome, 'x'], [`campo ${nome}: atributo basico`]);
         await recusa(`remover ${nome}`, 'tv30_atributos_emissora', [P1, 'urn:s:1', nome, ''], [`campo ${nome}: atributo basico`]);
     }
-    // exatamente no teto: aceito; um byte acima: recusado (soma de nomes e valores)
+    // Exactly at the limit: accepted; one byte above: refused (sum of names
+    // and values).
     const nome = 'grande';
     await fcall('tv30_atributos_emissora', P1, 'urn:s:1', nome, 'x'.repeat(f.maxBytes - nome.length));
     await recusa('acima do teto', 'tv30_atributos_emissora', [P1, 'urn:s:1', 'b', 'y'], [`acima do teto de ${f.maxBytes}`]);
-    // remover libera
+    // Removing frees room.
     assert.equal(await fcall('tv30_atributos_emissora', P1, 'urn:s:1', nome, '', 'b', 'y'), 2);
     assert.deepEqual(await r('HGETALL', `user:${P1}:broadcaster-attrs:urn:s:1`), ['b', 'y']);
 });
 
-// ----------------------------------------------------- efeitos (aceitacao) --
+// ---------------------------------------------------- effects (acceptance) --
 test('sessao: SET dos dois espelhos (vazio vale) e o hash regravado inteiro', async () => {
     assert.equal(await fcall('tv30_sessao_usuario', P1), 1);
     assert.equal(await r('GET', 'session:current-user'), P1);
@@ -494,8 +504,8 @@ test('perfil: grava os tres juntos, visibilidade acumula, ultimo acesso so em pe
     assert.equal(await fcall('tv30_perfil_remove', P1), 5);
     assert.deepEqual((await r('KEYS', `user:${P1}*`)), []);
     assert.equal(await r('EXISTS', `user:${P2}:broadcaster-attrs:urn:y`), 1, 'remover P1 nao alcanca P2');
-    // o glob do id e escapado: um id com curinga (nunca e UUID, entao nunca e
-    // perfil) que, sem escape, casaria com P2 nao alcanca P2
+    // The glob of the id is escaped: an id with a wildcard (never a UUID, so
+    // never a profile) that, unescaped, would match P2 does not reach P2.
     assert.equal(await fcall('tv30_perfil_remove', P2.slice(0, 9) + '*'), 0);
     assert.equal(await r('EXISTS', `user:${P2}:broadcaster-attrs:urn:y`), 1);
     assert.equal(await r('EXISTS', `user:${P2}`), 1);
@@ -504,7 +514,7 @@ test('perfil: grava os tres juntos, visibilidade acumula, ultimo acesso so em pe
     assert.deepEqual(await auditoria(), []);
 });
 
-// a conferencia do teto e da propria funcao: nenhuma leitura antes da chamada
+// The limit check is the function's own: no read before the call.
 test('perfil: teto de users:index na gravacao; id novo alem dele recusado, regravar existente aceito, remover libera', async () => {
     const f = familia('users:index');
     assert.ok(Number.isInteger(f.maxMembros) && f.maxMembros > 0, 'teto declarado no esquema');
@@ -519,13 +529,15 @@ test('perfil: teto de users:index na gravacao; id novo alem dele recusado, regra
     assert.ok(!msg.includes('\n'), 'mensagem numa linha so');
     assert.equal(await r('EXISTS', `user:${novo}`), 0);
 
-    // regravar um dos que estao no teto: aceito, com o conjunto do mesmo tamanho
+    // Rewriting one of those at the limit: accepted, with a set of the same
+    // size.
     assert.equal(await fcall('tv30_perfil_grava', ...perfilArgs(ids[2], ['urn:c'], { ...PERFIL_MIN, id: ids[2], nickname: 'Regravado' })), 1);
     assert.equal(await r('HGET', `user:${ids[2]}`, 'nickname'), 'Regravado');
     assert.deepEqual((await r('SMEMBERS', `user:${ids[2]}:consent`)).sort(), ['urn:a', 'urn:c']);
     assert.equal(await r('SCARD', 'users:index'), f.maxMembros);
 
-    // removido um, o novo entra; e o seguinte volta a ser recusado
+    // With one removed, the new one goes in; and the next one is refused
+    // again.
     await fcall('tv30_perfil_remove', ids[0]);
     assert.equal(await fcall('tv30_perfil_grava', ...perfilArgs(novo, [], { ...PERFIL_MIN, id: novo })), 1);
     assert.equal(await r('SCARD', 'users:index'), f.maxMembros);
@@ -537,18 +549,19 @@ test('perfil: teto conta o que esta no Redis, inclusive membro gravado a mao', a
     const f = familia('users:index');
     const ids = Array.from({ length: f.maxMembros + 1 }, (_, i) => `5a9d2f4e-1c3b-4d6a-8e7f-${String(i + 1).padStart(12, '0')}`);
     for (const id of ids.slice(0, f.maxMembros)) await fcall('tv30_perfil_grava', ...perfilArgs(id, [], { ...PERFIL_MIN, id }));
-    // um a mais, por fora das funcoes: a auditoria aponta o excesso
+    // One more, outside the functions: the audit reports the excess.
     await r('SADD', 'users:index', ids[f.maxMembros]);
     await r('HSET', `user:${ids[f.maxMembros]}`, ...plano({ ...PERFIL_MIN, id: ids[f.maxMembros] }));
     const achados = await auditoria();
     assert.deepEqual(achados, [['users:index', 'users:index', `${f.maxMembros + 1} membros, acima do teto de ${f.maxMembros} (${f.maxMembrosFonte})`]]);
-    // acima do teto: o existente ainda se regrava; id novo, nao
+    // Above the limit: an existing one can still be rewritten; a new id cannot.
     assert.equal(await fcall('tv30_perfil_grava', ...perfilArgs(ids[0], [], { ...PERFIL_MIN, id: ids[0], nickname: 'Ainda' })), 1);
     const novo = 'c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10';
     await recusa('id novo acima do teto', 'tv30_perfil_grava', perfilArgs(novo, [], { ...PERFIL_MIN, id: novo }), [`teto de ${f.maxMembros} perfis`]);
 });
 
-// o ultimo acesso confere so o campo escrito, e a remocao nao confere o id
+// The last access checks only the written field, and the removal does not
+// check the id.
 test('id que nao e UUID, gravado a mao: auditoria aponta, gravacao recusada, remocao passa', async () => {
     const velho = 'user_1760000000000';
     await r('SADD', 'users:index', velho);
@@ -565,7 +578,8 @@ test('id que nao e UUID, gravado a mao: auditoria aponta, gravacao recusada, rem
     assert.deepEqual(await auditoria(), []);
 });
 
-// trocar o avatar pelo nome do arquivo, ou tira-lo, esvazia a auditoria
+// Replacing the avatar with the file name, or removing it, empties the
+// audit.
 test('avatar em SVG em linha, gravado a mao: auditoria aponta, regravacao recusada, o resto segue', async () => {
     await r('SADD', 'users:index', P1);
     await r('HSET', `user:${P1}`, ...plano({ ...PERFIL_MIN, avatar: SVG_EM_LINHA }));
@@ -581,12 +595,13 @@ test('avatar em SVG em linha, gravado a mao: auditoria aponta, regravacao recusa
     await fcall('tv30_perfil_grava', ...perfilArgs(P1, [], PERFIL_MIN));
     assert.equal(await r('HEXISTS', `user:${P1}`, 'avatar'), 0);
     assert.deepEqual(await auditoria(), []);
-    // 1 (SREM) + user:{P1} + 1 broadcaster-attrs (sem consent)
+    // 1 (SREM) + user:{P1} + 1 broadcaster-attrs (no consent)
     assert.equal(await fcall('tv30_perfil_remove', P1), 3);
 });
 
-// pega desvio entre o esquema e a expressao do contrato que os casos gerados do
-// proprio esquema nao pegam (extensao tirada da lista, maxNome trocado)
+// Catches a deviation between the schema and the expression of the contract
+// that the cases generated from the schema itself do not catch (an extension
+// removed from the list, maxNome changed).
 const AVATAR_CONTRATO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(svg|png|jpg|jpeg|webp)$/;
 test('avatar: a regra do esquema decide igual a expressao do contrato', async (t) => {
     const regra = resolve(familia('user:{id}').campos.avatar);
@@ -595,8 +610,8 @@ test('avatar: a regra do esquema decide igual a expressao do contrato', async (t
         ...['svg', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'SVG', 'tiff', 'svgz', 'jpe'].map(e => `x.${e}`),
         'a'.repeat(127) + '.svg', 'a'.repeat(128) + '.webp', 'a'.repeat(129) + '.png', 'a'.repeat(128) + '..svg', 'a'.repeat(127) + '..svg',
     ]);
-    // gerador deterministico (Park-Miller) sobre um alfabeto com as letras das
-    // extensoes e os caracteres que a regra recusa
+    // Deterministic generator (Park-Miller) over an alphabet with the letters
+    // of the extensions and the characters the rule refuses.
     let s = 12345;
     const rnd = n => { s = (s * 16807) % 2147483647; return s % n; };
     const alfabeto = ['a', 'Z', '0', '.', '_', '-', '/', ' ', 'é', 's', 'v', 'g', 'p', 'n', 'j', 'e', 'w', 'b', 'G', '\\', '<'];
@@ -659,7 +674,8 @@ test('clientes: autorizar e bloquear trocam o id de conjunto (disjuntos); grava 
     assert.equal(await r('EXISTS', 'client:c1'), 1, 'o registro fica depois do bloqueio');
     assert.deepEqual(await auditoria(), []);
 
-    // inclusao no boot: bloqueado nao entra; sem registro e recusado; com registro entra
+    // Inclusion on boot: a blocked client does not go in; without a record it
+    // is refused; with a record it goes in.
     assert.equal(await fcall('tv30_cliente_inclui_autorizado', 'c1'), 0);
     await recusa('sem client:{id}', 'tv30_cliente_inclui_autorizado', ['c9'], ['invariante autorizado-tem-registro']);
     await r('HSET', 'client:velho', 'class', 'local-autonomous', 'refreshToken', 'r');
@@ -669,12 +685,12 @@ test('clientes: autorizar e bloquear trocam o id de conjunto (disjuntos); grava 
 });
 
 test('registro existente: campo novo conferido, o resto ja gravado nao trava (a auditoria mostra)', async () => {
-    // booleano "False" gravado a mao, fora do esquema
+    // Boolean "False" written by hand, outside the schema.
     await fcall('tv30_perfil_grava', ...perfilArgs(P1, [], PERFIL_MIN));
     await r('HSET', `user:${P1}`, 'parentalControl', 'False');
     assert.equal(await fcall('tv30_perfil_ultimo_acesso', P1, '99'), 1);
     assert.deepEqual(await auditoria(), [[`user:${P1}`, 'user:{id}', 'campo parentalControl: deve ser "true" ou "false" (veio "False")']]);
-    // cliente novo confere tudo; existente so o escrito
+    // A new client checks everything; an existing one only what is written.
     await recusa('cliente novo incompleto', 'tv30_cliente_grava', ['c1', 'accessToken', 'a'], ['campo class: obrigatorio, ausente']);
 });
 
@@ -692,14 +708,14 @@ test('origens: registra, remove, limpa', async () => {
 test('servicos anunciados: o conjunto regravado inteiro; repetido conta uma vez; sem argumento, apaga', async () => {
     assert.equal(await fcall('tv30_servicos_anunciados', 'urn:tv30:service:a', 'urn:tv30:service:b', 'urn:tv30:service:a'), 2);
     assert.deepEqual((await r('SMEMBERS', 'services:announced')).sort(), ['urn:tv30:service:a', 'urn:tv30:service:b']);
-    // o que saiu da BAMT sai do conjunto
+    // What left the BAMT leaves the set.
     assert.equal(await fcall('tv30_servicos_anunciados', 'urn:tv30:service:b', 'urn:tv30:service:c'), 2);
     assert.deepEqual((await r('SMEMBERS', 'services:announced')).sort(), ['urn:tv30:service:b', 'urn:tv30:service:c']);
     assert.deepEqual(await auditoria(), []);
     assert.equal(await fcall('tv30_servicos_anunciados'), 0);
     assert.equal(await r('EXISTS', 'services:announced'), 0);
     assert.equal(await fcall('tv30_servicos_anunciados'), 0);
-    // mais servicos que um lote do SADD
+    // More services than one SADD batch.
     const muitos = Array.from({ length: 1000 }, (_, i) => `urn:tv30:service:s${i}`);
     assert.equal(await fcall('tv30_servicos_anunciados', ...muitos), 1000);
     assert.deepEqual(await auditoria(), []);
@@ -719,22 +735,24 @@ test('bind-context: RPUSH da entrada exata, LREM de todas as iguais', async () =
     assert.deepEqual(await r('LRANGE', 'bind-context:urn:tv30:service:a', 0, -1), [e2]);
 });
 
-// ------------------------------------------------------------- atomicidade --
+// ------------------------------------------------------------- atomicity --
 test('atomicidade: tipo errado numa chave posterior ou membro invalido no fim nao deixam gravacao parcial', async () => {
-    // perfil: users:index de outro tipo -> user:{id} nao nasce
+    // Profile: users:index of another type, so user:{id} is not created.
     await r('SET', 'users:index', 'x');
     await recusa('users:index STRING', 'tv30_perfil_grava', perfilArgs(P1, [], PERFIL), ['users:index no Redis e string, o esquema pede set']);
     await limpo();
-    // perfil: consent de outro tipo (a ultima chave gravada)
+    // Profile: consent of another type (the last key written).
     await r('SET', `user:${P1}:consent`, 'x');
     await recusa('consent STRING', 'tv30_perfil_grava', perfilArgs(P1, ['urn:a'], PERFIL), [`user:${P1}:consent no Redis e string`]);
     await limpo();
-    // perfil: o ultimo servico invalido derruba a operacao inteira
+    // Profile: the last invalid service brings the whole operation down.
     await recusa('ultimo servico vazio', 'tv30_perfil_grava', perfilArgs(P1, ['urn:a', 'urn:b', ''], PERFIL), [`user:${P1}:consent membro`]);
-    // regravar perfil existente com dado invalido mantem o anterior intacto
+    // Rewriting an existing profile with invalid data keeps the previous one
+    // intact.
     await fcall('tv30_perfil_grava', ...perfilArgs(P1, ['urn:a'], PERFIL));
     await recusa('regravacao invalida', 'tv30_perfil_grava', perfilArgs(P1, ['urn:b'], { ...PERFIL, nickname: '' }), ['campo nickname:']);
-    // cliente: clients:blocked de outro tipo -> client:{id} nem clients:authorized
+    // Client: clients:blocked of another type, so neither client:{id} nor
+    // clients:authorized.
     await limpo();
     await r('LPUSH', 'clients:blocked', 'x');
     await recusa('clients:blocked LIST', 'tv30_cliente_autoriza', ['c1', ...plano(CLIENTE)], ['clients:blocked no Redis e list']);
@@ -742,20 +760,20 @@ test('atomicidade: tipo errado numa chave posterior ou membro invalido no fim na
     await r('SADD', 'clients:blocked', 'c1');
     await recusa('autorizar com classe invalida', 'tv30_cliente_autoriza', ['c1', ...plano({ ...CLIENTE, class: 'outra' })], ['campo class:']);
     assert.deepEqual(await r('SMEMBERS', 'clients:blocked'), ['c1'], 'continua bloqueado');
-    // sessao: hash anterior intacto
+    // Session: the previous hash intact.
     await limpo();
     await fcall('tv30_sessao_servico', ...plano({ ...SVC, serviceName: 'Antes' }));
     await recusa('servico invalido', 'tv30_sessao_servico', plano({ ...SVC, serviceId: 'x' }), ['campo serviceId:']);
-    // atributos: um nome proibido no meio de varios validos
+    // Attributes: a forbidden name among several valid ones.
     await limpo();
     await indexaP1();
     await recusa('um proibido entre validos', 'tv30_atributos_emissora', [P1, 'urn:s', 'a', '1', 'nickname', 'x', 'z', '2'], ['campo nickname:']);
-    // bind-context de outro tipo
+    // bind-context of another type.
     await limpo();
     await r('SET', 'bind-context:urn:a', 'x');
     await recusa('bind-context STRING', 'tv30_bind_registra', ['urn:a', JSON.stringify(ENTRADA)], ['no Redis e string, o esquema pede list']);
     await recusa('bind remove em STRING', 'tv30_bind_remove', ['urn:a', 'x'], ['no Redis e string']);
-    // servicos anunciados: o conjunto anterior fica intacto
+    // Announced services: the previous set intact.
     await limpo();
     await fcall('tv30_servicos_anunciados', 'urn:antes');
     await recusa('ultimo servico vazio', 'tv30_servicos_anunciados', ['urn:a', 'urn:b', ''], ['services:announced membro "": vazio']);
@@ -766,10 +784,10 @@ test('atomicidade: tipo errado numa chave posterior ou membro invalido no fim na
     await recusa('services:announced STRING, sem argumento', 'tv30_servicos_anunciados', [], ['no Redis e string']);
 });
 
-// --------------------------------------------------------------- auditoria --
+// ----------------------------------------------------------------- audit --
 test('auditoria: cada tipo de problema gravado a mao aparece com chave, familia e motivo; limpa, volta vazia', async () => {
     assert.deepEqual(await auditoria(), [], 'banco vazio');
-    // estado valido de todas as familias
+    // Valid state of every family.
     await fcall('tv30_sessao_usuario', P1);
     await fcall('tv30_sessao_servico_id', 'urn:s');
     await fcall('tv30_sessao_servico', ...plano(SVC));
@@ -783,7 +801,7 @@ test('auditoria: cada tipo de problema gravado a mao aparece com chave, familia 
     assert.deepEqual(await auditoria(), [], 'todas as familias validas');
     const valido = await snapshot();
 
-    // escritas manuais (o que o redis-cli/commander permitem), uma de cada tipo
+    // Manual writes (what redis-cli or the commander allow), one of each kind.
     const manuais = [
         [['SET', `user:${P1}:profile`, 'x'], [`user:${P1}:profile`, '-', 'chave sem familia']],
         [['HSET', 'session:x', 'a', '1'], ['session:x', '-', 'chave sem familia']],
@@ -792,7 +810,7 @@ test('auditoria: cada tipo de problema gravado a mao aparece com chave, familia 
         [['HSET', `user:${P1}`, 'parentalControl', 'False'], [`user:${P1}`, 'user:{id}', 'campo parentalControl:']],
         [['HDEL', `user:${P1}`, 'nickname'], [`user:${P1}`, 'user:{id}', 'campo nickname: obrigatorio, ausente']],
         [['HSET', `user:${P1}`, 'extra', '1'], [`user:${P1}`, 'user:{id}', 'campo "extra": nao previsto']],
-        // avatar em SVG em linha e caminho com diretorio
+        // Avatar as an inline SVG, and a path with a directory.
         [['HSET', `user:${P1}`, 'avatar', SVG_EM_LINHA], [`user:${P1}`, 'user:{id}', 'campo avatar: SVG em linha nao serve']],
         [['HSET', `user:${P1}`, 'avatar', '../segredo.svg'], [`user:${P1}`, 'user:{id}', 'campo avatar: so o nome do arquivo, sem diretorio']],
         [['HSET', `user:${P1}:broadcaster-attrs:urn:s`, 'vazio', ''], [`user:${P1}:broadcaster-attrs:urn:s`, 'user:{id}:broadcaster-attrs:{scid}', 'campo "vazio": vazio']],
@@ -806,15 +824,15 @@ test('auditoria: cada tipo de problema gravado a mao aparece com chave, familia 
         [['HSET', 'services:outra', 'a', '1'], ['services:outra', '-', 'chave sem familia']],
         [['SET', 'users:index', 'x'], ['users:index', 'users:index', 'no Redis e string, o esquema pede set']],
         [['SADD', 'users:index', FANTASMA, ORFAO, SEM_HASH, 'f0f0f0f0-0000-4000-8000-000000000004', 'f0f0f0f0-0000-4000-8000-000000000005'], ['users:index', 'users:index', '6 membros, acima do teto de 5']],
-        // ids que nao sao UUID em minusculas
+        // Ids that are not lowercase UUIDs.
         [['SADD', 'users:index', 'user_1760000000000'], ['users:index', 'users:index', 'membro "user_1760000000000": deve ser UUID no formato da RFC 9562']],
         [['HSET', 'user:c3167a18-5dc5', 'id', 'c3167a18-5dc5'], ['user:c3167a18-5dc5', 'user:{id}', '{id} da chave: deve ser UUID']],
         [['SADD', `user:${P1.toUpperCase()}:consent`, 'urn:s'], [`user:${P1.toUpperCase()}:consent`, 'user:{id}:consent', '{id} da chave: UUID deve estar em minusculas']],
-        // UUID nulo, versao e variante fora da RFC 9562
+        // Nil UUID, version and variant outside RFC 9562.
         [['SADD', 'users:index', '00000000-0000-0000-0000-000000000000'], ['users:index', 'users:index', 'membro "00000000-0000-0000-0000-000000000000": UUID nulo']],
         [['SADD', `user:${comDigito(P1, UUID_VERSAO, '9')}:consent`, 'urn:s'], [`user:${comDigito(P1, UUID_VERSAO, '9')}:consent`, 'user:{id}:consent', '{id} da chave: versao do UUID deve ser de 1 a 8 (1o digito do 3o grupo; veio 9']],
         [['HSET', `user:${comDigito(P1, UUID_VARIANTE, 'c')}`, 'id', comDigito(P1, UUID_VARIANTE, 'c')], [`user:${comDigito(P1, UUID_VARIANTE, 'c')}`, 'user:{id}', '{id} da chave: variante do UUID deve ser a da RFC 9562 (1o digito do 4o grupo em 8, 9, a ou b; veio c']],
-        // invariantes
+        // Invariants
         [['HSET', `user:${FANTASMA}`, 'id', FANTASMA, 'nickname', 'F', 'parentalControl', 'false', 'closedCaptioning', 'false', 'closedSigning', 'false', 'audioDescription', 'false', 'dialogEnhancement', 'false', 'voiceGuidance', 'false'],
             [`user:${FANTASMA}`, 'user:{id}', 'id fora de users:index (invariante perfil-indexado)']],
         [['SREM', 'users:index', P1], [`user:${P1}`, 'user:{id}', 'invariante perfil-indexado']],
@@ -826,7 +844,7 @@ test('auditoria: cada tipo de problema gravado a mao aparece com chave, familia 
     ];
     for (const [cmd, [chave, fam, trecho]] of manuais) {
         await r('FLUSHALL');
-        // restaura o estado valido e aplica a escrita manual
+        // Restores the valid state and applies the manual write.
         for (const [k, [t, v]] of Object.entries(JSON.parse(valido))) {
             if (t === 'string') await r('SET', k, v);
             else if (t === 'hash') await r('HSET', k, ...v.flat());
@@ -842,7 +860,7 @@ test('auditoria: cada tipo de problema gravado a mao aparece com chave, familia 
             `${cmd.join(' ').slice(0, 60)}: esperado [${chave}, ${fam}, ...${trecho}...], veio ${JSON.stringify(achados)}`);
         for (const a of achados) assert.equal(a.length, 3, 'cada achado e [chave, familia, motivo]');
     }
-    // limpeza: volta vazia
+    // Cleanup: back to empty.
     await r('FLUSHALL');
     assert.deepEqual(await auditoria(), []);
 });

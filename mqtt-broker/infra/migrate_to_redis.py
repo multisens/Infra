@@ -1,37 +1,35 @@
 #!/usr/bin/env python3
 """
-Migração de dados de arquivo para Redis — TV 3.0
-Grava, por FCALL tv30_perfil_grava (que confere o esquema), as chaves:
-  - users:index                               SET  — todos os IDs de usuário
-  - user:{userId}                             HASH — atributos do perfil (ABNT NBR 25608)
-  - user:{userId}:consent                     SET  — serviços para os quais o perfil é visível
-
-Embarcado na imagem do broker só para depuração manual; a carga inicial é a do
-container redis (emit_seed.py reaproveita normalize_user e perfil_fcall_args).
+Migration of the profiles of a file to Redis. Writes, by FCALL
+tv30_perfil_grava, which checks the schema, the keys:
+  - users:index (SET): every user id;
+  - user:{userId} (HASH): the profile attributes (Table 7);
+  - user:{userId}:consent (SET): services to which the profile is visible.
 """
 
 import json
 
 import sys
 
-# Mapeamento de campos legados para o schema ABNT NBR 25608
+# Legacy field names mapped to the attribute names of Table 7.
 FIELD_MAP = {
     'name':               'nickname',
     'captions':           'closedCaptioning',
-    'subtitle':           'closedCaptioning',     # alias — closedCaptioning prevalece
+    # Alias; closedCaptioning prevails.
+    'subtitle':           'closedCaptioning',
     'signLanguageWindow': 'closedSigning',
     'dialogueEnhancement':'dialogEnhancement',
     'language':           'audioLanguage',
 }
 
-# Campos que não entram no Hash (tratados separadamente ou ignorados)
+# Fields that do not go in the hash.
 EXCLUDED_FIELDS = {'accessConsent', 'consent'}
 
 
 def normalize_user(user: dict) -> dict:
     """
-    Normaliza campos legados para o schema NBR 25608.
-    Campos novos têm precedência sobre campos legados.
+    Renames the legacy fields to the attribute names of Table 7. A new field
+    prevails over a legacy one.
     """
     result = {}
 
@@ -53,20 +51,20 @@ def normalize_user(user: dict) -> dict:
 
 
 def redis_text(v) -> str:
-    """Valor como texto no Redis. Booleano do JSON vira 'true'/'false', como o
-    AoP grava e o esquema exige; o str() do Python daria 'True'/'False'."""
+    """Value as text in Redis. A JSON boolean becomes 'true'/'false', as the
+    schema requires."""
     if isinstance(v, bool):
         return 'true' if v else 'false'
     return str(v)
 
 
 def perfil_fcall_args(user: dict):
-    """Argumentos de FCALL tv30_perfil_grava para um perfil do userData.json, ou
-    None se o perfil não tem id. Formato da função (infra/redis/esquema.json):
-      FCALL tv30_perfil_grava 0 <id> <n> <serviço 1..n> <campo> <valor> ...
-    users:index recebe o id, user:{id} é regravado inteiro e a visibilidade
-    (accessConsent) é ACRESCENTADA a user:{id}:consent (sem apagar a concedida
-    fora do JSON)."""
+    """Arguments of FCALL tv30_perfil_grava for a profile of userData.json, or
+    None if the profile has no id. Format of the function:
+      FCALL tv30_perfil_grava 0 <id> <n> <service 1..n> <field> <value> ...
+    users:index gets the id, user:{id} is rewritten whole and the visibility
+    (accessConsent) is added to user:{id}:consent, without removing what was
+    granted outside the JSON."""
     user_id = user.get('id')
     if not user_id:
         return None
@@ -80,11 +78,11 @@ def migrate(r, user_data_path: str) -> None:
     with open(user_data_path, 'r') as f:
         raw = json.load(f)
 
-    users = raw.get('users', raw)  # suporta tanto {users:[...]} quanto [...]
+    # Either {users: [...]} or [...].
+    users = raw.get('users', raw)
 
-    # Uma chamada da função por perfil (users:index, user:{id} e
-    # user:{id}:consent juntos e atômicos). Merge da visibilidade (sem DEL):
-    # a concedida fora do JSON sobrevive ao re-seed.
+    # One function call per profile, atomic over users:index, user:{id} and
+    # user:{id}:consent. The visibility is merged, without DEL.
     pipe = r.pipeline()
     for user in users:
         args = perfil_fcall_args(user)
@@ -98,7 +96,8 @@ def migrate(r, user_data_path: str) -> None:
 
 
 if __name__ == '__main__':
-    import redis  # so o executor precisa da lib; normalize_user importavel sem ela
+    # Imported here, so that normalize_user can be imported without it.
+    import redis
     r = redis.Redis(host='redis', port=6379, decode_responses=True)
 
     user_data_path = '/mosquitto/config/userData.json'

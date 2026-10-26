@@ -1,6 +1,7 @@
-// Falha se tv3ws, aop, plugin da borda, carga inicial ou migracao manual gravar
-// numa familia do alcance fora do adaptador das funcoes (regras em ./escritas.js).
-// Precisa do TV30 inteiro: node --test infra/redis/test/escritas.test.js
+// Fails if tv3ws, aop, the edge plugin, the initial load or the manual
+// migration writes to a family in scope outside the adapter of the functions
+// (rules in ./escritas.js). Needs the whole TV30:
+//   node --test infra/redis/test/escritas.test.js
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -45,9 +46,10 @@ test('funcoes chamadas pelos adaptadores existem e cobrem as familias de cada do
     for (const cfg of Object.values(MODULOS)) verificaModuloJs(cfg).adaptadorFuncoes.forEach(f => usadas.add(f));
     const go = fs.readFileSync(path.join(INFRA, 'edgegateway', 'plugin', 'redis.go'), 'utf8');
     for (const m of go.matchAll(/"(tv30_[a-z_]+)"/g)) usadas.add(m[1]);
-    usadas.add('tv30_perfil_grava'); // carga inicial (teste acima)
+    // Initial load (test above).
+    usadas.add('tv30_perfil_grava');
     for (const f of usadas) assert.ok(declaradas.has(f), `${f} declarada no esquema.json`);
-    // toda funcao de escrita do esquema tem quem a chame
+    // Every write function of the schema has a caller.
     for (const f of esq.funcoes.filter(x => !x.somenteLeitura)) {
         assert.ok(usadas.has(f.nome), `funcao ${f.nome} sem chamador no codigo`);
     }

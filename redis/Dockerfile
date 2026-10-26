@@ -1,7 +1,8 @@
-# tv30-redis: Redis com a biblioteca de funcoes tv30, carga inicial gerada no
-# build (aplicada por redis-cli --pipe) e redis-commander (debug). O build roda
-# confere-imagem.sh: biblioteca que nao carrega ou carga fora do esquema nao vira imagem.
-# Build context: infra/ (template de userData e migrate_to_redis.py do mqtt-broker)
+# tv30-redis: Redis with the tv30 function library, the initial load
+# generated at build time (applied by redis-cli --pipe) and redis-commander
+# (debug). The build runs confere-imagem.sh: a library that does not load or
+# a load outside the schema fails the build. Build context: infra/ (the
+# userData template and migrate_to_redis.py of mqtt-broker).
 
 FROM python:3.11-alpine AS seedgen
 WORKDIR /gen
@@ -10,9 +11,10 @@ COPY redis/emit_seed.py ./
 COPY user-files-template/userData.json ./
 RUN python emit_seed.py userData.json /seed.resp
 
-# redis-commander com versao fixada: o login da UI depende de HTTP_USER e
-# HTTP_PASSWORD, que a 0.9.0 mapeia; sem eles a UI sobe aberta, sem aviso.
-# Antes de trocar a versao, confira o mapeamento (scripts/test-consolidacao.sh).
+# redis-commander with a pinned version: the UI login depends on HTTP_USER
+# and HTTP_PASSWORD, which 0.9.0 maps; without them the UI starts open,
+# without a warning. Before changing the version, check the mapping
+# (scripts/test-consolidacao.sh).
 FROM redis:7-alpine
 RUN apk add --no-cache nodejs npm dumb-init && \
     npm install -g --omit=dev redis-commander@0.9.0 && \

@@ -8,9 +8,9 @@ import (
 	"time"
 )
 
-// Contrato entre o redisStore e as funcoes do Redis de verdade. So roda com
-// TV30_REDIS_TESTE=host:porta de um Redis com a biblioteca tv30 carregada
-// (infra/redis/test/run.sh contrato sobe um descartavel); sem ela, pula.
+// Contract between redisStore and the real Redis functions. Runs only with
+// TV30_REDIS_TESTE=host:port of a Redis with the tv30 library loaded;
+// skipped without it.
 func TestContratoFuncoes(t *testing.T) {
 	addr := os.Getenv("TV30_REDIS_TESTE")
 	if addr == "" {
@@ -19,7 +19,8 @@ func TestContratoFuncoes(t *testing.T) {
 	s := &redisStore{c: newRedisClient(addr, 2*time.Second)}
 	const sid = "urn:tv30:test:contrato-go"
 
-	// o que o bindRegister grava (encodeJSON de storedEntry), com PEM de varias linhas
+	// The entry bindRegister writes (encodeJSON of storedEntry), with a
+	// multi-line PEM.
 	entry, err := encodeJSON(storedEntry{Alg: "RS256", Key: "-----BEGIN PUBLIC KEY-----\nMFww\n-----END PUBLIC KEY-----", RegisteredAt: 1760000000000})
 	if err != nil {
 		t.Fatal(err)
@@ -46,8 +47,8 @@ func TestContratoFuncoes(t *testing.T) {
 		t.Fatalf("remocao repetida: %d %v", n, err)
 	}
 
-	// a borda le clients:authorized e clients:blocked como as funcoes do tv3ws
-	// os gravam (autorizar, bloquear, incluir de novo no boot)
+	// clients:authorized and clients:blocked as written by the functions
+	// (authorize, block, add back on boot).
 	const cid = "contrato-go-cliente"
 	must0 := func(nome string, args ...string) {
 		t.Helper()
@@ -75,7 +76,8 @@ func TestContratoFuncoes(t *testing.T) {
 	if a, b := authz(); a || !b {
 		t.Fatalf("bloqueado: autorizado=%v bloqueado=%v", a, b)
 	}
-	if _, err := s.c.do("SREM", keyBlocked, cid); err != nil { // desbloqueio a mao, como o test-auth.sh
+	// Manual unblock.
+	if _, err := s.c.do("SREM", keyBlocked, cid); err != nil {
 		t.Fatal(err)
 	}
 	if a, b := authz(); a || b {
@@ -90,8 +92,8 @@ func TestContratoFuncoes(t *testing.T) {
 		s.c.do("DEL", "client:"+cid)
 	}()
 
-	// API C.6.8 sobre o Redis real: servico corrente e origem associada
-	// gravados pelas funcoes (no lugar do tv3ws e do AoP)
+	// C.6.8 API on the real Redis: current service and associated origin
+	// written by the functions.
 	must := func(nome string, args ...string) {
 		t.Helper()
 		if _, err := s.c.fcall(true, nome, args...); err != nil {
@@ -100,8 +102,8 @@ func TestContratoFuncoes(t *testing.T) {
 	}
 	must("tv30_sessao_servico_id", sid)
 	must("tv30_origem_registra", tAssoc, sid)
-	// o GET da C.6.8.3 pede access token: o cliente dele (cli-1, bindGet) tem
-	// de estar em clients:authorized, como o tv3ws o deixa ao autorizar
+	// The GET of C.6.8.3 requires an access token: its client (cli-1, bindGet)
+	// must be in clients:authorized.
 	must("tv30_cliente_autoriza", "cli-1", "class", "local-autonomous", "refreshToken", "rt")
 	defer func() {
 		s.c.fcall(true, "tv30_origem_remove", tAssoc)
@@ -111,7 +113,8 @@ func TestContratoFuncoes(t *testing.T) {
 	}()
 	h := newTestHandler(t, modeEnforce, nil, nil)
 	h.store = s
-	okReg := `{"serviceContextId":"` + sid + `"}` // o globalServiceId corrente
+	// The current globalServiceId.
+	okReg := `{"serviceContextId":"` + sid + `"}`
 	wantOK(t, "POST", postBind(t, h, regBody("HS512", "segredo-contrato")), okReg)
 	wantOK(t, "POST repetido", postBind(t, h, regBody("HS512", "segredo-contrato")), okReg)
 	if l, _ := s.BindKeys(sid); len(l) != 1 || !strings.HasPrefix(l[0], `{"alg":"HS512","key":"segredo-contrato","registeredAt":`) {
@@ -127,8 +130,7 @@ func TestContratoFuncoes(t *testing.T) {
 		t.Fatalf("lista depois do DELETE: %q", l)
 	}
 
-	// 304 sobre services:announced gravado pela funcao do AoP
-	// (aop-transport-layer-metadata-lls)
+	// 304 on services:announced written by its function.
 	const fora = "urn:tv30:test:contrato-go-fora"
 	must("tv30_servicos_anunciados", sid, "urn:tv30:test:contrato-go-outro")
 	defer s.c.fcall(true, "tv30_servicos_anunciados")

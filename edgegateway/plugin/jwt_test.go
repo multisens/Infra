@@ -37,7 +37,8 @@ func TestBindTokenQuatroAlgoritmos(t *testing.T) {
 		if err := verifyBindToken(tok, bindKeysFor(t, c.alg, c.regKey), t0); err != nil {
 			t.Errorf("%s: esperado valido, veio %v", c.alg, err)
 		}
-		// chave registrada com OUTRO alg nao valida (alg do token = alg da chave)
+		// A key registered with another alg does not validate (alg of the token
+		// = alg of the key).
 		other := map[string]string{"HS256": "HS512", "HS512": "HS256", "RS256": "RS512", "RS512": "RS256"}[c.alg]
 		if err := verifyBindToken(tok, bindKeysFor(t, other, c.regKey), t0); err == nil {
 			t.Errorf("%s: chave registrada como %s nao deveria validar", c.alg, other)
@@ -49,21 +50,22 @@ func TestBindTokenConfusaoDeAlgoritmo(t *testing.T) {
 	k := testRSAKey(t)
 	pem := pubPEM(t, k)
 	claims := timeClaims(t0, t0, t0.Add(time.Hour))
-	// ataque classico: HS256 assinado com a chave PUBLICA RSA como segredo
+	// Classic attack: HS256 signed with the RSA public key as the secret.
 	forged := signJWT(t, "HS256", []byte(pem), claims)
 	if err := verifyBindToken(forged, bindKeysFor(t, "RS256", pem), t0); err == nil {
 		t.Fatal("HS256 assinado com a chave publica RSA foi aceito")
 	}
-	// mesmo que a chave tenha sido registrada como RS256 E exista outra HS256 diferente
+	// Even if the key was registered as RS256 and there is another, different
+	// HS256 key.
 	if err := verifyBindToken(forged, bindKeysFor(t, "RS256", pem, "HS256", "outro"), t0); err == nil {
 		t.Fatal("confusao de algoritmo aceita com lista mista")
 	}
-	// alg none sempre invalido
+	// alg none is always invalid.
 	none := signJWT(t, "none", nil, claims)
 	if err := verifyBindToken(none, bindKeysFor(t, "HS256", "x"), t0); err == nil {
 		t.Fatal("alg none aceito")
 	}
-	// alg fora dos 4 (ex.: ES256) invalido
+	// An alg outside the four (e.g. ES256) is invalid.
 	es := signJWTHeader(t, map[string]interface{}{"alg": "ES256"}, "HS256", []byte("x"), claims)
 	if err := verifyBindToken(es, bindKeysFor(t, "HS256", "x"), t0); err == nil {
 		t.Fatal("alg ES256 aceito")
@@ -116,8 +118,8 @@ func TestBindTokenTempo(t *testing.T) {
 	}
 }
 
-// Ordem C.4.1.4: formato -> assinatura -> nbf/exp -> iat. Token expirado E
-// com assinatura errada reporta a assinatura.
+// Order of C.4.1.4.1: format, signature, nbf and exp, iat. A token both
+// expired and with a wrong signature reports the signature.
 func TestBindTokenOrdemDasFrentes(t *testing.T) {
 	tok := signJWT(t, "HS256", []byte("errada"), timeClaims(t0, t0, t0.Add(-time.Hour)))
 	err := verifyBindToken(tok, bindKeysFor(t, "HS256", "certa"), t0)
@@ -132,11 +134,16 @@ func TestParseJWTFormato(t *testing.T) {
 	bad := []string{
 		"",
 		"abc",
-		parts[0] + "." + parts[1],          // 2 partes
-		good + ".x.y",                      // 5 partes (JWE)
-		"!!!." + parts[1] + "." + parts[2], // base64 invalido
-		b64([]byte("[1,2]")) + "." + parts[1] + "." + parts[2],         // cabecalho nao-objeto
-		b64([]byte(`{"typ":"JWT"}`)) + "." + parts[1] + "." + parts[2], // sem alg
+		// 2 parts.
+		parts[0] + "." + parts[1],
+		// 5 parts (JWE).
+		good + ".x.y",
+		// Invalid base64.
+		"!!!." + parts[1] + "." + parts[2],
+		// Header that is not an object.
+		b64([]byte("[1,2]")) + "." + parts[1] + "." + parts[2],
+		// No alg.
+		b64([]byte(`{"typ":"JWT"}`)) + "." + parts[1] + "." + parts[2],
 		b64([]byte(`{"alg":"HS256","enc":"A128GCM"}`)) + "." + parts[1] + "." + parts[2],
 		b64([]byte(`{"alg":"HS256","crit":["exp"]}`)) + "." + parts[1] + "." + parts[2],
 		parts[0] + "." + b64([]byte("nao-json")) + "." + parts[2],
@@ -187,15 +194,15 @@ func TestAccessToken(t *testing.T) {
 			t.Errorf("%s: deveria ser invalido", name)
 		}
 	}
-	// classe ausente/desconhecida: mesmo padrao do tv3ws (autonomo)
+	// A missing or unknown class: local-autonomous.
 	noClass := signJWT(t, "HS256", secret, mut(func(m map[string]interface{}) { delete(m, "class") }))
 	if c, err := verifyAccessToken("Bearer "+noClass, secret, "GenericIssuer", t0); err != nil || c.Class != classAutonomous {
 		t.Errorf("sem class: esperado %s, veio %+v %v", classAutonomous, c, err)
 	}
 }
 
-// Interoperabilidade: tokens gerados pelo jsonwebtoken (a lib do tv3ws),
-// em testdata/jsonwebtoken.json.
+// Interoperability: tokens made by jsonwebtoken, in
+// testdata/jsonwebtoken.json.
 func TestInteropJsonwebtoken(t *testing.T) {
 	raw, err := os.ReadFile("testdata/jsonwebtoken.json")
 	if err != nil {
@@ -224,7 +231,7 @@ func TestInteropJsonwebtoken(t *testing.T) {
 	if err := verifyBindToken(f.RS512, bindKeysFor(t, "RS512", f.PubPEM), at); err != nil {
 		t.Errorf("RS512 do jsonwebtoken: %v", err)
 	}
-	// a mesma chave publica em base64 de DER (sem cabecalho PEM)
+	// The same public key in base64 of DER, without the PEM header.
 	body := strings.Join(strings.Split(strings.TrimSpace(f.PubPEM), "\n")[1:], "")
 	body = strings.TrimSuffix(body, "-----END PUBLIC KEY-----")
 	if err := verifyBindToken(f.RS256, bindKeysFor(t, "RS256", body), at); err != nil {

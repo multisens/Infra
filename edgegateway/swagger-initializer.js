@@ -1,5 +1,5 @@
-// Swagger UI com as specs das duas superficies, geradas no build e servidas
-// da mesma origem.
+// Swagger UI with the specs of the two surfaces, generated at build time and
+// served from the same origin.
 window.onload = function () {
   window.ui = SwaggerUIBundle({
     urls: [

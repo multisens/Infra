@@ -1,19 +1,19 @@
-// Verificador estatico: fora do adaptador das funcoes, nenhum codigo de servico
-// grava direto numa familia do alcance. Usado por escritas.test.js e pelos testes
-// de escrita do tv3ws e do aop. Tokenizador proprio, sem dependencia.
+// Static checker: outside the adapter of the functions, no service code
+// writes directly to a family in scope. Own tokenizer, without dependencies.
 //
-// JS/TS: metodo de escrita do cliente Redis fora do adaptador e violacao; no
-// adaptador, so call('FCALL'|'FCALL_RO') com funcao do esquema.json. "new Redis("
-// so no redis-client (um segundo cliente furaria o adaptador). Go e Python:
-// nenhum texto do codigo e comando de escrita do Redis (nem, em Python, metodo
-// de escrita do redis-py).
+// JS/TS: a write method of the Redis client outside the adapter is a
+// violation; in the adapter, only call('FCALL'|'FCALL_RO') with a function of
+// esquema.json. "new Redis(" only in redis-client (a second client would
+// bypass the adapter). Go and Python: no string of the code is a Redis write
+// command (nor, in Python, a write method of redis-py).
 'use strict';
 const fs = require('fs');
 const path = require('path');
 
 const ESQUEMA = path.join(__dirname, '..', 'esquema.json');
 
-// comandos do Redis que gravam, rodam script ou mexem em funcoes/transacao
+// Redis commands that write, run scripts or touch functions or
+// transactions.
 const COMANDOS_ESCRITA = `APPEND BITFIELD BITOP BLMOVE BLMPOP BLPOP BRPOP BRPOPLPUSH BZMPOP BZPOPMAX BZPOPMIN
  COPY DECR DECRBY DEL EVAL EVALSHA EVAL_RO EVALSHA_RO EXEC EXPIRE EXPIREAT FLUSHALL FLUSHDB FUNCTION GEOADD
  GETDEL GETEX GETSET HDEL HEXPIRE HINCRBY HINCRBYFLOAT HMSET HPERSIST HPEXPIRE HSET HSETNX INCR INCRBY
@@ -23,14 +23,14 @@ const COMANDOS_ESCRITA = `APPEND BITFIELD BITOP BLMOVE BLMPOP BLPOP BRPOP BRPOPL
  XAUTOCLAIM XCLAIM XDEL XGROUP XTRIM ZADD ZDIFFSTORE ZINCRBY ZINTERSTORE ZMPOP ZPOPMAX ZPOPMIN ZRANGESTORE
  ZREM ZREMRANGEBYLEX ZREMRANGEBYRANK ZREMRANGEBYSCORE ZUNIONSTORE`.split(/\s+/).filter(Boolean);
 
-// metodos do ioredis que gravam (comandos acima em minusculas) mais as portas
-// genericas, que so o adaptador pode usar
+// ioredis methods that write (the commands above in lowercase) plus the
+// generic entry points, which only the adapter may use.
 const METODOS_JS = new Set([
     ...COMANDOS_ESCRITA.map(c => c.toLowerCase()), 'hmset', 'mset', 'multi', 'eval', 'evalsha', 'evalsha_ro', 'eval_ro',
     'call', 'callBuffer', 'sendCommand', 'send_command', 'fcall', 'fcall_ro', 'script', 'function',
 ]);
-// metodos do redis-py que gravam, procurados so em objetos com nome de
-// cliente ou pipeline (lista.append() nao e o APPEND do Redis)
+// redis-py methods that write, looked for only on objects named as a client
+// or pipeline (list.append() is not the Redis APPEND).
 const METODOS_PY = new Set([
     ...COMANDOS_ESCRITA.map(c => c.toLowerCase()), 'delete', 'hmset', 'mset', 'register_script', 'transaction',
 ]);
@@ -40,9 +40,9 @@ function esquema() {
     return JSON.parse(fs.readFileSync(ESQUEMA, 'utf8'));
 }
 
-// ------------------------------------------------------------ tokenizador --
-// Devolve [{t: 'id'|'str'|'tpl'|'p'|'num'|'re', v, linha}] sem comentarios.
-// 'tpl' (template literal) leva o texto ate o primeiro ${ em prefixo.
+// -------------------------------------------------------------- tokenizer --
+// Returns [{t: 'id'|'str'|'tpl'|'p'|'num'|'re', v, linha}] without comments.
+// 'tpl' (template literal) carries the text up to the first ${ in prefixo.
 function tokensJs(src) {
     const out = [];
     let i = 0, linha = 1;
@@ -111,7 +111,7 @@ function tokensJs(src) {
     return out;
 }
 
-// pula do '(' em k ate depois do ')' correspondente
+// Skips from the '(' at k to after the matching ')'.
 function fechaParen(tk, k) {
     let prof = 0;
     for (; k < tk.length; k++) {
@@ -139,7 +139,7 @@ function analisaJs(arquivo, src) {
         }
     }
     const raizes = new Set(clientes);
-    // const p = redis.pipeline() / redis.multi(); apelido: const r = redis
+    // const p = redis.pipeline() / redis.multi(); alias: const r = redis
     for (let pass = 0; pass < 2; pass++) {
         for (let k = 0; k + 3 < tk.length; k++) {
             if (!(tk[k].t === 'id' && tk[k + 1].v === '=' && raizes.has(tk[k + 2].v))) continue;
@@ -147,8 +147,10 @@ function analisaJs(arquivo, src) {
             else if ([';', ',', ')'].includes(tk[k + 3].v) || tk[k + 3].linha > tk[k + 2].linha) raizes.add(tk[k].v);
         }
     }
-    const escritas = [];   // {metodo, linha, arg1}
-    // acesso por colchete (redis['set'](...)) esconde o metodo: so no adaptador
+    // {metodo, linha, arg1}
+    const escritas = [];
+    // Bracket access (redis['set'](...)) hides the method: only in the
+    // adapter.
     for (let k = 0; k + 1 < tk.length; k++) {
         if (tk[k].t === 'id' && raizes.has(tk[k].v) && tk[k + 1].v === '[' && tk[k - 1]?.v !== '.') {
             escritas.push({ metodo: '[...]', linha: tk[k].linha, arg1: tk[k + 2] });
@@ -156,7 +158,8 @@ function analisaJs(arquivo, src) {
     }
     for (let k = 0; k < tk.length; k++) {
         if (!(tk[k].t === 'id' && raizes.has(tk[k].v) && tk[k + 1]?.v === '.')) continue;
-        if (tk[k - 1]?.v === '.') continue; // x.redis.y: nao e a raiz
+        // x.redis.y: not the root.
+        if (tk[k - 1]?.v === '.') continue;
         let j = k + 1;
         while (tk[j]?.v === '.' && tk[j + 1]?.t === 'id') {
             const metodo = tk[j + 1].v;
@@ -188,9 +191,11 @@ function listaArquivos(dir, ext) {
 
 const doAlcance = (esq, v) => esq.prefixosAuditados.some(p => v.startsWith(p));
 
-// opts: { raiz (pasta do modulo), fontes ('src'), adaptador ('src/redis-funcoes.ts'),
-//         clienteRedis ('src/redis-client.ts'), diretasForaDoAlcance: { 'src/x.ts': 'motivo' } }
-// Devolve { violacoes: [texto], escritasPorArquivo: {arquivo: n}, adaptadorFuncoes: [nomes] }
+// opts: { raiz (module folder), fontes ('src'), adaptador
+//   ('src/redis-funcoes.ts'), clienteRedis ('src/redis-client.ts'),
+//   diretasForaDoAlcance: { 'src/x.ts': 'reason' } }
+// Returns { violacoes: [text], escritasPorArquivo: {file: n},
+//   adaptadorFuncoes: [names] }
 function verificaModuloJs(opts) {
     const esq = esquema();
     const funcoes = new Set(esq.funcoes.map(f => f.nome));
@@ -238,10 +243,10 @@ function verificaModuloJs(opts) {
     return { violacoes, escritasPorArquivo, adaptadorFuncoes: [...adaptadorFuncoes].sort(), arquivos: arquivos.length };
 }
 
-// ------------------------------------------------------------- Go e Python --
-// Textos do codigo (sem comentarios). Go: "..." e `...` (fora das declaracoes
-// import, cujo caminho "sort" seria confundido com o comando SORT); Python:
-// '...', "...", '''...''', """...""" (com prefixos r/b/f).
+// ---------------------------------------------------------- Go and Python --
+// Strings of the code, without comments. Go: "..." and `...` (outside the
+// import declarations, whose path "sort" would be taken for the SORT
+// command); Python: '...', "...", '''...''', """...""" (with r/b/f prefixes).
 function textosGo(src) {
     const out = [];
     let i = 0, linha = 1, emImport = false, depoisImport = false;
@@ -327,8 +332,9 @@ function verificaPy(arquivos) {
     return { violacoes, arquivos: arquivos.length };
 }
 
-// Configuracao dos modulos do TV30 (raiz = pasta do TV30). Escrita direta
-// permitida so onde a familia esta fora do alcance (esquema.json, foraDoAlcance).
+// Configuration of the TV30 modules (raiz = TV30 folder). A direct write is
+// allowed only where the family is out of scope (esquema.json,
+// foraDoAlcance).
 function modulosTv30(raiz) {
     return {
         tv3ws: {

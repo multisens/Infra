@@ -1,14 +1,14 @@
-// Ver json_payload.h. Teste: tests/test_json_payload.c, que roda no build da imagem.
+// See json_payload.h. Tests: tests/test_json_payload.c.
 #include "json_payload.h"
 #include <limits.h>
 #include <string.h>
 
-// ws da RFC 8259, secao 2: so estes quatro.
+// The ws of RFC 8259, section 2: only these four.
 static int rfc_ws(unsigned char c) {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r';
 }
 
-// O que o json-c pula como espaco alem dos quatro (isspace no locale C).
+// What json-c skips as space besides the four (isspace in the C locale).
 static int other_space(unsigned char c) {
     return c == '\f' || c == '\v';
 }
@@ -23,8 +23,8 @@ int json_payload_parse(const char *payload, size_t len, json_object **out) {
     while (first < len && rfc_ws(p[first])) first++;
     while (end > first && rfc_ws(p[end - 1])) end--;
     if (first == end) return 0;
-    // O json-c pula \f e \v junto com os ws antes e depois do valor; nenhum
-    // valor JSON comeca ou termina com eles.
+    // json-c skips \f and \v with the ws before and after the value; no JSON
+    // value starts or ends with them.
     if (other_space(p[first]) || other_space(p[end - 1])) return 0;
 
     json_tokener *tok = json_tokener_new();
@@ -34,8 +34,9 @@ int json_payload_parse(const char *payload, size_t len, json_object **out) {
     enum json_tokener_error err = json_tokener_get_error(tok);
     size_t used = json_tokener_get_parse_end(tok);
     if (err == json_tokener_continue) {
-        // Consumiu tudo e ainda espera mais (numero, true, false ou null no
-        // fim, ou valor incompleto): o NUL avisa o fim da entrada.
+        // All input consumed and more expected (a number, true, false or null
+        // at the end, or an incomplete value): the NUL marks the end of the
+        // input.
         o = json_tokener_parse_ex(tok, "", 1);
         err = json_tokener_get_error(tok);
         used = end;

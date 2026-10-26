@@ -1,15 +1,19 @@
 #!/bin/bash
-# Bateria do esquema sensor/comprehensive/test: uma publicacao valida e 19
-# violacoes, uma por palavra-chave do schema_validator.c; cada violacao nao e
-# entregue e gera uma mensagem em errors/test-client com o details esperado.
-# Imagem e broker descartaveis, como em test_errors_json.sh; nao toca a stack.
+# Battery of the sensor/comprehensive/test schema: one valid publication and
+# 19 violations, one per keyword of schema_validator.c; no violation is
+# delivered, and each gives a message on errors/test-client with the
+# expected details. Disposable image and broker, as in test_errors_json.sh;
+# the stack is not touched.
 #
 #   bash infra/mqtt-broker/plugin/tests/test_all_validations.sh
-#   IMG=<imagem> NOBUILD=1 bash ...   usa uma imagem ja construida (e nao a remove)
-#   KEEP_IMG=1 bash ...               nao remove a imagem construida
+#   IMG=<image> NOBUILD=1 bash ...
+#       uses an image already built, and does not remove it
+#   KEEP_IMG=1 bash ...
+#       does not remove the built image
 set -u
 AQUI=$(cd "$(dirname "$0")" && pwd)
-BROKER_DIR=$(cd "$AQUI/../.." && pwd)   # infra/mqtt-broker
+# infra/mqtt-broker
+BROKER_DIR=$(cd "$AQUI/../.." && pwd)
 IMG=${IMG:-tv30-mosquitto:teste-validacoes}
 P=${PREFIXO:-tv30-teste-validacoes}
 NET=$P-net
@@ -43,8 +47,9 @@ for _ in $(seq 1 50); do
 done
 docker logs "$BRK" 2>&1 | grep -E "Schemas loaded|plugin loaded|running" | head -3
 
-# O driver roda num segundo container da mesma imagem (python3 e os clientes
-# mosquitto_pub/mosquitto_sub ja estao la), na rede do broker descartavel.
+# The driver runs in a second container of the same image (python3 and the
+# mosquitto_pub/mosquitto_sub clients are there), on the network of the
+# disposable broker.
 docker run --rm -i --network "$NET" --entrypoint python3 "$IMG" - "$BRK" <<'PY'
 import json, queue, subprocess, sys, threading, time
 
@@ -55,7 +60,7 @@ ERR_TOPIC = 'errors/' + CLIENT
 BASE = ('"string_field": "hello", "number_field": 50, "integer_field": 25, "boolean_field": true, '
         '"enum_field": "option1", "const_field": "fixed_value"')
 
-# (nome, payload, details esperado; None = publicacao valida, entregue)
+# (name, payload, expected details; None for a valid, delivered publication)
 CASES = [
     ('TESTE 1: Mensagem válida completa',
      '{\n  "string_field": "hello",\n  "number_field": 50,\n  "integer_field": 25,\n  "boolean_field": true,\n'
