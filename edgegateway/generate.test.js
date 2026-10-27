@@ -201,11 +201,11 @@ test('caminho interno: /v<X.Y> antes do publico de 100 em diante; abaixo de 100,
     'GET /v100.0/tv3/notifications/{className}',
     'DELETE /v100.0/tv3/notifications/{handle}',
   ];
-  for (const k of ['POST /tv3/remote-device', 'DELETE /tv3/remote-device/{handle}', 'GET /tv3/remote-device/devices/{classId}', ...V100_ENDPOINTS]) {
+  for (const k of ['POST /tv3/remote-device', 'POST /tv3/remote-device/{handle}', 'DELETE /tv3/remote-device/{handle}', 'GET /tv3/remote-device/devices/{classId}', ...V100_ENDPOINTS]) {
     assert.ok(eps.includes(k), k);
   }
   // A route only of 100.0 has no endpoint on the public path.
-  for (const k of ['POST /tv3/remote-device/{handle}', 'GET /tv3/notifications/{className}', 'DELETE /tv3/notifications/{handle}']) {
+  for (const k of ['GET /tv3/notifications/{className}', 'DELETE /tv3/notifications/{handle}']) {
     assert.ok(!eps.includes(k), k);
   }
   assert.deepEqual(eps.filter(k => k.includes(' /v')).sort(), [...V100_ENDPOINTS].sort());
@@ -286,13 +286,13 @@ test('OpenAPI: as duas superficies com todas as rotas; a externa documenta o 106
   assert.equal(int.servers[0].url, 'http://localhost:44642');
 });
 
-test('versoes por rota: registro, cancelamento e listagem servem 2.0 e 100.0; atualizacao e notificacoes so 100.0', () => {
+test('versoes por rota: registro, atualizacao, cancelamento e listagem servem 2.0 e 100.0; notificacoes so 100.0', () => {
   const t = real();
   const files = g.generate(t);
   const pr = plugin(files, 'internal').routes;
   const vers = k => pr.find(r => pk(r) === k).versions;
-  const BOTH = ['POST /tv3/remote-device', 'DELETE /tv3/remote-device/{handle}', 'GET /tv3/remote-device/devices/{classId}'];
-  const ONLY_100 = ['POST /tv3/remote-device/{handle}', 'GET /tv3/notifications/{className}', 'DELETE /tv3/notifications/{handle}'];
+  const BOTH = ['POST /tv3/remote-device', 'POST /tv3/remote-device/{handle}', 'DELETE /tv3/remote-device/{handle}', 'GET /tv3/remote-device/devices/{classId}'];
+  const ONLY_100 = ['GET /tv3/notifications/{className}', 'DELETE /tv3/notifications/{handle}'];
   for (const k of BOTH) {
     assert.deepEqual(vers(k), ['2.0', '100.0'], k);
   }

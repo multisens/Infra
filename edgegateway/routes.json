@@ -327,6 +327,7 @@
         "version": "100.0"
       },
       "versions": [
+        "2.0",
         "100.0"
       ],
       "auth": "token",
