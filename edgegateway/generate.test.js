@@ -85,8 +85,8 @@ test('no_service 300 na C.6.4.7 e da C.6.14.1 a C.6.14.6; nao na C.6.16.3', () =
   const files = g.generate(t);
   for (const s of ['external', 'internal']) assert.equal(plugin(files, s).routes.filter(r => r.no_service === 300).length, 8, s);
   // Validation: value and auth.
-  assert.ok(g.checkTable(mini([{ method: 'GET', path: '/a', auth: 'token+bind', no_service: 108 }])).some(e => /no_service 108 invalido/.test(e)));
-  assert.ok(g.checkTable(mini([{ method: 'GET', path: '/a', auth: 'token', no_service: 300 }])).some(e => /so vale em rota token\+bind/.test(e)));
+  assert.ok(g.checkTable(mini([{ method: 'GET', path: '/a', auth: 'token+bind', no_service: 108 }])).some(e => /no_service 108 invalid/.test(e)));
+  assert.ok(g.checkTable(mini([{ method: 'GET', path: '/a', auth: 'token', no_service: 300 }])).some(e => /only applies to a token\+bind route/.test(e)));
 });
 
 test('not_in_catalog 304 so na C.6.14.2 e na C.6.14.5 com {serviceContextId}; nao em current-service', () => {
@@ -96,13 +96,13 @@ test('not_in_catalog 304 so na C.6.14.2 e na C.6.14.5 com {serviceContextId}; na
   const files = g.generate(t);
   for (const s of ['external', 'internal']) {
     assert.deepEqual(plugin(files, s).routes.filter(r => r.not_in_catalog === 304).map(pk).sort(), ['GET /tv3/{serviceContextId}/users/{userid}', 'POST /tv3/{serviceContextId}/users/{userid}'], s);
-    assert.match(files[`openapi-${s}.json`].paths['/tv3/{serviceContextId}/users/{userid}'].get.description, /fora do Application Catalog: 304/);
+    assert.match(files[`openapi-${s}.json`].paths['/tv3/{serviceContextId}/users/{userid}'].get.description, /outside the Application Catalog: 304/);
   }
   // Validation: value, auth and the parameter in the path.
   const one = r => g.checkTable(mini([{ method: 'GET', auth: 'token+bind', ...r }]));
-  assert.ok(one({ path: '/tv3/{serviceContextId}/x', not_in_catalog: 300 }).some(e => /not_in_catalog 300 invalido/.test(e)));
-  assert.ok(one({ path: '/tv3/{serviceContextId}/x', auth: 'token', not_in_catalog: 304 }).some(e => /so vale em rota token\+bind com \{serviceContextId\}/.test(e)));
-  assert.ok(one({ path: '/tv3/current-service/x', not_in_catalog: 304 }).some(e => /so vale em rota token\+bind com \{serviceContextId\}/.test(e)));
+  assert.ok(one({ path: '/tv3/{serviceContextId}/x', not_in_catalog: 300 }).some(e => /not_in_catalog 300 invalid/.test(e)));
+  assert.ok(one({ path: '/tv3/{serviceContextId}/x', auth: 'token', not_in_catalog: 304 }).some(e => /only applies to a token\+bind route with \{serviceContextId\}/.test(e)));
+  assert.ok(one({ path: '/tv3/current-service/x', not_in_catalog: 304 }).some(e => /only applies to a token\+bind route with \{serviceContextId\}/.test(e)));
   assert.deepEqual(one({ path: '/tv3/{serviceContextId}/x', not_in_catalog: 304 }), []);
 });
 
@@ -126,17 +126,17 @@ test('o campo "surfaces" por rota eh recusado (a superficie eh derivada)', () =>
   const t = mini([{ method: 'GET', path: '/health', auth: 'none', surfaces: ['internal'] }]);
   const errs = g.checkTable(t);
   assert.equal(errs.length, 1, errs.join('\n'));
-  assert.match(errs[0], /GET \/health: o campo "surfaces" nao vale por rota/);
+  assert.match(errs[0], /GET \/health: the "surfaces" field is not valid per route/);
 });
 
 test('superficies e backends tem de casar com SURFACE_RULES', () => {
   const sem = mini([{ method: 'GET', path: '/health', auth: 'none' }]);
   delete sem.surfaces.external;
-  assert.ok(g.checkTable(sem).some(e => e.startsWith('surfaces.external: superficie ausente')));
+  assert.ok(g.checkTable(sem).some(e => e.startsWith('surfaces.external: missing surface')));
 
   const extra = mini([{ method: 'GET', path: '/health', auth: 'none' }]);
   extra.surfaces.dmz = { port: 1, title: 'dmz' };
-  assert.ok(g.checkTable(extra).some(e => e.startsWith('surfaces.dmz: superficie sem regra')));
+  assert.ok(g.checkTable(extra).some(e => e.startsWith('surfaces.dmz: surface with no rule')));
 
   const semBackend = mini([{ method: 'GET', path: '/health', auth: 'none' }]);
   delete semBackend.backends.internal;
@@ -211,7 +211,7 @@ test('caminho interno: /v<X.Y> antes do publico de 100 em diante; abaixo de 100,
 
 test('caminho declarado com o prefixo /v<X.Y> e recusado', () => {
   for (const p of ['/v100.0/tv3/x', '/v2.0/tv3/x', '/v100.0']) {
-    assert.ok(g.checkTable(mini([{ method: 'GET', path: p }])).some(e => /reservado ao caminho interno/.test(e)), p);
+    assert.ok(g.checkTable(mini([{ method: 'GET', path: p }])).some(e => /reserved to the internal path/.test(e)), p);
   }
   for (const p of ['/v', '/video/x', '/v100/tv3/x', '/tv3/v100.0/x']) {
     assert.deepEqual(g.checkTable(mini([{ method: 'GET', path: p }])), [], p);
@@ -266,11 +266,11 @@ test('OpenAPI: as duas superficies com todas as rotas; a externa documenta o 106
   assert.deepEqual(Object.keys(ext.paths['/tv3/bind-context']).sort(), ['delete', 'get', 'post']);
   assert.deepEqual(Object.keys(int.paths['/tv3/bind-context']).sort(), ['delete', 'get', 'post']);
   assert.equal(ext.paths['/tv3/bind-context'].post['x-tv30-surface-error'], 106);
-  assert.match(ext.paths['/tv3/bind-context'].post.description, /responde 106 a qualquer requisicao/);
+  assert.match(ext.paths['/tv3/bind-context'].post.description, /answers 106 to any request/);
   assert.ok(!('x-tv30-surface-error' in int.paths['/tv3/bind-context'].post));
   assert.ok(!('x-tv30-surface-error' in ext.paths['/tv3/bind-context'].get));
-  assert.match(int.paths['/tv3/current-service'].get.description, /nao local recebe 106 nesta superficie/);
-  assert.doesNotMatch(int.paths['/tv3/token'].get.description, /nao local recebe 106/);
+  assert.match(int.paths['/tv3/current-service'].get.description, /non-local client gets 106 on this surface/);
+  assert.doesNotMatch(int.paths['/tv3/token'].get.description, /non-local client gets 106/);
   assert.deepEqual(ext.paths['/health'].get['x-tv30-surfaces'], ['external', 'internal']);
   assert.match(ext.info.description, /C\.4\.1\.8/);
   // TLS on 44643.
@@ -306,11 +306,11 @@ test('versoes por rota: a C.6.15.5 serve 2.0 e 100.0, as rotas por handle so 100
 test('validacao de versions e de api.version (a mais recente da rota)', () => {
   const r = extra => mini([{ method: 'GET', path: '/a', api: { id: 'tv3ws-a', section: 'C.6.1.2', version: '2.0' }, ...extra }]);
   assert.deepEqual(g.checkTable(r({})), []);
-  assert.ok(g.checkTable(r({ versions: [] })).some(e => /versions nao eh lista nao vazia/.test(e)));
-  assert.ok(g.checkTable(r({ versions: ['2'] })).some(e => /fora do formato X\.Y/.test(e)));
-  assert.ok(g.checkTable(r({ versions: ['2.0', '2.0'] })).some(e => /repetida/.test(e)));
-  assert.ok(g.checkTable(r({ versions: ['2.0', '100.0'] })).some(e => /diferente da mais recente que a rota serve \(100\.0\)/.test(e)));
-  assert.ok(g.checkTable(mini([{ method: 'GET', path: '/a', headers: ['Accept-Version', 'X-TV30-API-Version'] }])).some(e => /cabecalho interno da borda/.test(e)));
+  assert.ok(g.checkTable(r({ versions: [] })).some(e => /versions is not a non-empty list/.test(e)));
+  assert.ok(g.checkTable(r({ versions: ['2'] })).some(e => /outside the X\.Y format/.test(e)));
+  assert.ok(g.checkTable(r({ versions: ['2.0', '2.0'] })).some(e => /repeated version/.test(e)));
+  assert.ok(g.checkTable(r({ versions: ['2.0', '100.0'] })).some(e => /differs from the latest version the route serves \(100\.0\)/.test(e)));
+  assert.ok(g.checkTable(mini([{ method: 'GET', path: '/a', headers: ['Accept-Version', 'X-TV30-API-Version'] }])).some(e => /internal header of the edge/.test(e)));
 });
 
 test('TLS so na superficie segura, com o certificado do tls-init', () => {

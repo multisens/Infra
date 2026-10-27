@@ -21,6 +21,9 @@ const USER_DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'tv30-contrato-'));
 const THUMBS = path.join(USER_DATA, 'thumbs');
 fs.mkdirSync(THUMBS);
 process.env.USER_DATA_PATH = USER_DATA;
+// Read when tv3ws issues an access token.
+process.env.JWT_SECRET = 'tv30-test-secret';
+process.env.JWT_ISSUER = 'GenericIssuer';
 // The same format as the nomeArquivo type of esquema.json.
 const AVATAR_FORMATO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(svg|png|jpg|jpeg|webp)$/;
 // An SVG of the palette of the AoP form (aop/src/modules/profile-manager/
@@ -78,7 +81,7 @@ test('tv3ws: espelhos da sessao e o hash do servico corrente', async () => {
 
 test('tv3ws: auth-manager de verdade (autorizar, emitir e rotacionar, bloquear, incluir no boot)', async () => {
     const ok = 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6';
-    await auth.AuthorizeClient(ok, 'standAlone');
+    await auth.authorizeClient(ok, 'standAlone');
     const [token] = await auth.getClientAccessToken(ok);
     await auth.rotateRefreshToken(ok);
     const h = await r('HGETALL', `client:${ok}`);
@@ -86,16 +89,16 @@ test('tv3ws: auth-manager de verdade (autorizar, emitir e rotacionar, bloquear, 
     assert.equal(o.class, 'standAlone');
     assert.equal(o.accessToken, token);
     assert.ok(o.refreshToken);
-    await auth.BlockClient('cliente-recusado');
+    await auth.blockClient('cliente-recusado');
     assert.deepEqual(await r('SMEMBERS', 'clients:blocked'), ['cliente-recusado']);
-    await auth.AuthorizeClient('cliente-associado', 'associated');
-    await auth.AuthorizeClient('cliente-nao-local', 'nonLocal');
+    await auth.authorizeClient('cliente-associado', 'associated');
+    await auth.authorizeClient('cliente-nao-local', 'nonLocal');
     // A record outside clients:authorized, written by hand.
     await r('HSET', 'client:legado', 'class', 'standAlone', 'refreshToken', 'rt');
     assert.equal(await auth.backfillAuthorizedClients(), 1);
     assert.deepEqual(await auditoria(), []);
     // A class outside the list: the function refuses it (C.4.1 has three).
-    await assert.rejects(auth.AuthorizeClient('c-x', 'admin'), esquema);
+    await assert.rejects(auth.authorizeClient('c-x', 'admin'), esquema);
     assert.equal(await r('SISMEMBER', 'clients:authorized', 'c-x'), 0);
 });
 
