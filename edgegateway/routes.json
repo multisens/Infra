@@ -305,8 +305,30 @@
       "api": {
         "id": "tv3ws-remotedevice-register",
         "section": "C.6.15.2",
-        "version": "2.0"
+        "version": "100.0"
       },
+      "versions": [
+        "2.0",
+        "100.0"
+      ],
+      "auth": "token",
+      "headers": [
+        "Authorization",
+        "Accept-Version",
+        "Content-Type"
+      ]
+    },
+    {
+      "path": "/tv3/remote-device/{handle}",
+      "method": "POST",
+      "api": {
+        "id": "tv3ws-remotedevice-register",
+        "section": "C.6.15.2",
+        "version": "100.0"
+      },
+      "versions": [
+        "100.0"
+      ],
       "auth": "token",
       "headers": [
         "Authorization",
@@ -320,8 +342,12 @@
       "api": {
         "id": "tv3ws-remotedevice-cancel",
         "section": "C.6.15.3",
-        "version": "2.0"
+        "version": "100.0"
       },
+      "versions": [
+        "2.0",
+        "100.0"
+      ],
       "auth": "token",
       "headers": [
         "Authorization",
@@ -351,8 +377,13 @@
       ]
     },
     {
-      "path": "/tv3/remote-device/device/{handle}",
+      "path": "/tv3/notifications/{className}",
       "method": "GET",
+      "api": {
+        "id": "tv3ws-register-notifications",
+        "section": "C.6.2.2",
+        "version": "100.0"
+      },
       "versions": [
         "100.0"
       ],
@@ -367,8 +398,13 @@
       ]
     },
     {
-      "path": "/tv3/remote-device/device/{handle}",
+      "path": "/tv3/notifications/{handle}",
       "method": "DELETE",
+      "api": {
+        "id": "tv3ws-deregister-notifications",
+        "section": "C.6.2.3",
+        "version": "100.0"
+      },
       "versions": [
         "100.0"
       ],

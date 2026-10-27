@@ -32,7 +32,9 @@ type verdict struct {
 	Code   int
 	Detail string
 	Class  string
-	Route  string
+	// sub of a valid access token: the clientid.
+	ClientID string
+	Route    string
 	// Matched route; nil if the path is not declared.
 	rt *route
 	// Values of the {param} segments of the path.
@@ -110,12 +112,28 @@ func (h *authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Header.Set(internalVersionHeader, version)
 	r.Header.Set(internalHostHeader, r.Host)
+	setClientHeaders(r, v)
 	if v.rt != nil && v.rt.Edge != "" {
 		h.serveEdge(w, r, v, version)
 		return
 	}
 	toInternalPath(r, version)
 	h.serveNext(w, r)
+}
+
+// setClientHeaders writes the class and the identity of the local client
+// decided by evaluate, removing those sent by the client: associated, only
+// the class; standAlone, the class and the clientid; any other, neither.
+func setClientHeaders(r *http.Request, v verdict) {
+	r.Header.Del(internalClientClassHeader)
+	r.Header.Del(internalClientIDHeader)
+	switch v.Class {
+	case classAssociated:
+		r.Header.Set(internalClientClassHeader, classAssociated)
+	case classStandAlone:
+		r.Header.Set(internalClientClassHeader, classStandAlone)
+		r.Header.Set(internalClientIDHeader, v.ClientID)
+	}
 }
 
 // serveNext passes the request on to the router, and replaces with 404 and
@@ -297,6 +315,7 @@ func (h *authHandler) evaluate(r *http.Request) verdict {
 	if authz != "" {
 		if claims, tokenErr = verifyAccessToken(authz, h.cfg.Secret, h.cfg.Issuer, now); tokenErr == nil {
 			v.Class = claims.Class
+			v.ClientID = claims.Sub
 		}
 	}
 	// Without Authorization, an Origin in origins:associated identifies a

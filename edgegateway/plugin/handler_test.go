@@ -80,10 +80,10 @@ func testExtra() map[string]interface{} {
 			semServ(r("POST", "/tv3/current-service/users", authTokenBind)),
 			// C.6.16.3: no 300; without a service, 108.
 			r("POST", "/tv3/sensory-effect-renderers/{rendererId}", authTokenBind),
-			// C.6.15.5 serves 2.0 and 100.0; the route by handle exists only in
+			// C.6.15.5 serves 2.0 and 100.0; the notifications exist only in
 			// 100.0.
 			vers(r("GET", "/tv3/remote-device/devices/{classId}", authToken, classAssociated, classStandAlone), "2.0", "100.0"),
-			vers(r("GET", "/tv3/remote-device/device/{handle}", authToken, classAssociated, classStandAlone), "100.0"),
+			vers(r("GET", "/tv3/notifications/{className}", authToken, classAssociated, classStandAlone), "100.0"),
 			// No POST /tv3/{serviceContextId}/users: outside the standard, it
 			// gives 100.
 			catalogo(semServ(r("GET", "/tv3/{serviceContextId}/users/{userid}", authTokenBind))),
@@ -624,13 +624,13 @@ func TestVersaoNegociadaPorRota(t *testing.T) {
 			{"C.6.15.5 sem Accept-Version", "/tv3/remote-device/devices/x", map[string]string{"Authorization": auto}, 0, "2.0", ""},
 			{"C.6.15.5 com 2.0", "/tv3/remote-device/devices/x", map[string]string{"Authorization": auto, "Accept-Version": "2.0"}, 0, "2.0", ""},
 			{"C.6.15.5 com 100.0", "/tv3/remote-device/devices/x", v100, 0, "100.0", "/v100.0/tv3/remote-device/devices/x"},
-			{"handle sem Accept-Version (so 100.0)", "/tv3/remote-device/device/hx", map[string]string{"Authorization": auto}, 100, "", ""},
-			{"handle com 2.0", "/tv3/remote-device/device/hx", map[string]string{"Authorization": auto, "Accept-Version": "2.0"}, 100, "", ""},
-			{"handle com 100.0", "/tv3/remote-device/device/hx", v100, 0, "100.0", "/v100.0/tv3/remote-device/device/hx"},
-			{"handle com 100.0 e barra final", "/tv3/remote-device/device/hx/", v100, 0, "100.0", "/v100.0/tv3/remote-device/device/hx"},
-			{"handle com 100.0 e escape no caminho", "/tv3/remote-device/device/x%41", v100, 0, "100.0", "/v100.0/tv3/remote-device/device/xA"},
+			{"notificacoes sem Accept-Version (so 100.0)", "/tv3/notifications/remote-device", map[string]string{"Authorization": auto}, 100, "", ""},
+			{"notificacoes com 2.0", "/tv3/notifications/remote-device", map[string]string{"Authorization": auto, "Accept-Version": "2.0"}, 100, "", ""},
+			{"notificacoes com 100.0", "/tv3/notifications/remote-device", v100, 0, "100.0", "/v100.0/tv3/notifications/remote-device"},
+			{"notificacoes com 100.0 e barra final", "/tv3/notifications/remote-device/", v100, 0, "100.0", "/v100.0/tv3/notifications/remote-device"},
+			{"notificacoes com 100.0 e escape no caminho", "/tv3/notifications/x%41", v100, 0, "100.0", "/v100.0/tv3/notifications/xA"},
 			// The internal path is not a declared route.
-			{"caminho /v100.0 vindo do cliente", "/v100.0/tv3/remote-device/device/hx", v100, 100, "", ""},
+			{"caminho /v100.0 vindo do cliente", "/v100.0/tv3/notifications/remote-device", v100, 100, "", ""},
 			{"caminho /v100.0 da C.6.15.5", "/v100.0/tv3/remote-device/devices/x", v100, 100, "", ""},
 		} {
 			calls, got, gotPath, gotEscaped = 0, "", "", ""
@@ -655,9 +655,56 @@ func TestVersaoNegociadaPorRota(t *testing.T) {
 			if gotPath != want {
 				t.Errorf("%s %s: caminho no roteador %q, esperado %q", mode, c.name, gotPath, want)
 			}
-			if strings.Contains(c.path, "%41") && gotEscaped != "/v100.0/tv3/remote-device/device/x%41" {
+			if strings.Contains(c.path, "%41") && gotEscaped != "/v100.0/tv3/notifications/x%41" {
 				t.Errorf("%s %s: caminho escapado no roteador %q", mode, c.name, gotEscaped)
 			}
+		}
+	}
+}
+
+// The edge passes on the class and the identity of the local client in
+// X-TV30-Client-Class and X-TV30-Client-Id, removing those sent by the
+// client: associated, only the class; standAlone, the class and the
+// clientid; nonLocal, neither.
+func TestCabecalhosDoCliente(t *testing.T) {
+	forged := map[string]string{internalClientClassHeader: classAssociated, internalClientIDHeader: "forjado"}
+	with := func(base map[string]string) map[string]string {
+		m := map[string]string{}
+		for k, v := range forged {
+			m[k] = v
+		}
+		for k, v := range base {
+			m[k] = v
+		}
+		return m
+	}
+	for _, c := range []struct {
+		name, path string
+		hdr        map[string]string
+		class, id  string
+	}{
+		{"standAlone", "/tv3/remote-device/devices/x", map[string]string{"Authorization": accessFor(t, "cli-1", classStandAlone)}, classStandAlone, "cli-1"},
+		{"associado pelo Origin", "/tv3/remote-device/devices/x", map[string]string{"Origin": tAssoc}, classAssociated, ""},
+		{"nonLocal", "/tv3/token", map[string]string{"Authorization": accessFor(t, "cli-2", classNonLocal)}, "", ""},
+		{"standAlone com cabecalhos forjados", "/tv3/remote-device/devices/x", with(map[string]string{"Authorization": accessFor(t, "cli-1", classStandAlone)}), classStandAlone, "cli-1"},
+		{"nonLocal com cabecalhos forjados", "/tv3/token", with(map[string]string{"Authorization": accessFor(t, "cli-2", classNonLocal)}), "", ""},
+	} {
+		var class, id string
+		calls := 0
+		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			class = r.Header.Get(internalClientClassHeader)
+			id = r.Header.Get(internalClientIDHeader)
+			w.WriteHeader(200)
+		})
+		h := newTestHandler(t, modeEnforce, baseStore(), next)
+		rec := serve(h, "GET", c.path, c.hdr)
+		if calls != 1 {
+			t.Errorf("%s: nao chegou ao servico (status %d, %s)", c.name, rec.Code, rec.Body.String())
+			continue
+		}
+		if class != c.class || id != c.id {
+			t.Errorf("%s: classe %q e id %q, esperado %q e %q", c.name, class, id, c.class, c.id)
 		}
 	}
 }
@@ -668,9 +715,9 @@ func TestCaminhoInterno(t *testing.T) {
 	for _, c := range []struct{ path, version, want string }{
 		{"/tv3/current-service", "2.0", "/tv3/current-service"},
 		{"/tv3/current-service", "99.9", "/tv3/current-service"},
-		{"/tv3/remote-device/device/hx", "100.0", "/v100.0/tv3/remote-device/device/hx"},
-		{"/tv3/remote-device/device/hx", "101.12", "/v101.12/tv3/remote-device/device/hx"},
-		{"/tv3/remote-device/device/hx/", "100.0", "/v100.0/tv3/remote-device/device/hx"},
+		{"/tv3/notifications/remote-device", "100.0", "/v100.0/tv3/notifications/remote-device"},
+		{"/tv3/notifications/remote-device", "101.12", "/v101.12/tv3/notifications/remote-device"},
+		{"/tv3/notifications/remote-device/", "100.0", "/v100.0/tv3/notifications/remote-device"},
 		{"/health", "100.0", "/v100.0/health"},
 	} {
 		if got := internalPath(c.path, c.version); got != c.want {

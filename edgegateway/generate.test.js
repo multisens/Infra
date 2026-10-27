@@ -29,8 +29,8 @@ const plugin = (files, s) => files[`krakend-${s}.linux.json`].extra_config['plug
 const pk = r => `${r.method} ${r.path}`;
 const EXCLUSIVAS_DO_LOCAL = [
   'DELETE /tv3/bind-context',
-  'DELETE /tv3/remote-device/device/{handle}',
-  'GET /tv3/remote-device/device/{handle}',
+  'DELETE /tv3/notifications/{handle}',
+  'GET /tv3/notifications/{className}',
   'GET /tv3/remote-device/devices/{classId}',
   'POST /tv3/bind-context',
 ];
@@ -40,7 +40,7 @@ test('as duas superficies tem todas as rotas', () => {
   for (const s of ['external', 'internal']) assert.equal(g.routesOf(t, s).length, t.routes.length, s);
   for (const r of t.routes) assert.deepEqual(g.surfacesOf(r), ['external', 'internal'], key(r));
   const files = g.generate(t);
-  for (const s of ['external', 'internal']) assert.equal(plugin(files, s).routes.length, 26, s);
+  for (const s of ['external', 'internal']) assert.equal(plugin(files, s).routes.length, 27, s);
 });
 
 test('na externa, 106 nas exclusivas do cliente local e na C.6.1.2 (C.4.1.8); na interna, nenhuma', () => {
@@ -193,14 +193,22 @@ test('caminho interno: /v<X.Y> antes do publico de 100 em diante; abaixo de 100,
 
   const files = g.generate(real());
   const eps = files['krakend-internal.linux.json'].endpoints.map(e => `${e.method} ${e.endpoint}`);
-  for (const k of ['GET /tv3/remote-device/devices/{classId}', 'GET /v100.0/tv3/remote-device/devices/{classId}',
-    'GET /v100.0/tv3/remote-device/device/{handle}', 'DELETE /v100.0/tv3/remote-device/device/{handle}']) {
+  const V100_ENDPOINTS = [
+    'POST /v100.0/tv3/remote-device',
+    'POST /v100.0/tv3/remote-device/{handle}',
+    'DELETE /v100.0/tv3/remote-device/{handle}',
+    'GET /v100.0/tv3/remote-device/devices/{classId}',
+    'GET /v100.0/tv3/notifications/{className}',
+    'DELETE /v100.0/tv3/notifications/{handle}',
+  ];
+  for (const k of ['POST /tv3/remote-device', 'DELETE /tv3/remote-device/{handle}', 'GET /tv3/remote-device/devices/{classId}', ...V100_ENDPOINTS]) {
     assert.ok(eps.includes(k), k);
   }
   // A route only of 100.0 has no endpoint on the public path.
-  assert.ok(!eps.includes('GET /tv3/remote-device/device/{handle}'));
-  assert.ok(!eps.includes('DELETE /tv3/remote-device/device/{handle}'));
-  assert.equal(eps.filter(k => k.includes(' /v')).length, 3);
+  for (const k of ['POST /tv3/remote-device/{handle}', 'GET /tv3/notifications/{className}', 'DELETE /tv3/notifications/{handle}']) {
+    assert.ok(!eps.includes(k), k);
+  }
+  assert.deepEqual(eps.filter(k => k.includes(' /v')).sort(), [...V100_ENDPOINTS].sort());
   // The plugin and the OpenAPI know only the public path: a /v... path sent
   // by the client gets 100.
   for (const s of ['external', 'internal']) {
@@ -257,7 +265,7 @@ test('as duas superficies listam todas as APIs, na ordem da Tabela C.2', () => {
   const todas = [...new Set(t.routes.filter(r => r.api).map(r => r.api.id))].sort();
   assert.deepEqual([...apis('internal')].sort(), todas);
   assert.deepEqual(apis('external'), apis('internal'));
-  assert.equal(todas.length, 20);
+  assert.equal(todas.length, 22);
 });
 
 test('OpenAPI: as duas superficies com todas as rotas; a externa documenta o 106 da C.4.1.8', () => {
@@ -278,28 +286,44 @@ test('OpenAPI: as duas superficies com todas as rotas; a externa documenta o 106
   assert.equal(int.servers[0].url, 'http://localhost:44642');
 });
 
-test('versoes por rota: a C.6.15.5 serve 2.0 e 100.0, as rotas por handle so 100.0', () => {
+test('versoes por rota: registro, cancelamento e listagem servem 2.0 e 100.0; atualizacao e notificacoes so 100.0', () => {
   const t = real();
   const files = g.generate(t);
   const pr = plugin(files, 'internal').routes;
   const vers = k => pr.find(r => pk(r) === k).versions;
-  assert.deepEqual(vers('GET /tv3/remote-device/devices/{classId}'), ['2.0', '100.0']);
-  assert.deepEqual(vers('GET /tv3/remote-device/device/{handle}'), ['100.0']);
-  assert.deepEqual(vers('DELETE /tv3/remote-device/device/{handle}'), ['100.0']);
+  const BOTH = ['POST /tv3/remote-device', 'DELETE /tv3/remote-device/{handle}', 'GET /tv3/remote-device/devices/{classId}'];
+  const ONLY_100 = ['POST /tv3/remote-device/{handle}', 'GET /tv3/notifications/{className}', 'DELETE /tv3/notifications/{handle}'];
+  for (const k of BOTH) {
+    assert.deepEqual(vers(k), ['2.0', '100.0'], k);
+  }
+  for (const k of ONLY_100) {
+    assert.deepEqual(vers(k), ['100.0'], k);
+  }
   // The others, only 2.0 (no field in routes.json).
-  for (const r of pr.filter(r => !r.path.startsWith('/tv3/remote-device/device'))) {
-    if (pk(r) !== 'GET /tv3/remote-device/devices/{classId}') assert.deepEqual(r.versions, ['2.0'], pk(r));
+  for (const r of pr.filter(r => !BOTH.includes(pk(r)) && !ONLY_100.includes(pk(r)))) {
+    assert.deepEqual(r.versions, ['2.0'], pk(r));
   }
   // C.6.7.8 reports the latest version of the API.
   const apis = plugin(files, 'external').apis;
-  assert.equal(apis.find(a => a.id === 'tv3ws-remotedevice-communication').version, '100.0');
-  assert.ok(apis.filter(a => a.id !== 'tv3ws-remotedevice-communication').every(a => a.version === '2.0'));
+  const V100_APIS = ['tv3ws-remotedevice-register', 'tv3ws-remotedevice-cancel', 'tv3ws-remotedevice-communication',
+    'tv3ws-register-notifications', 'tv3ws-deregister-notifications'];
+  for (const id of V100_APIS) {
+    assert.equal(apis.find(a => a.id === id).version, '100.0', id);
+  }
+  assert.ok(apis.filter(a => !V100_APIS.includes(a.id)).every(a => a.version === '2.0'));
   // The internal header goes in input_headers of every route, not in the
   // OpenAPI.
+  const INTERNAL = ['X-TV30-API-Version', 'X-TV30-Host', 'X-TV30-Client-Class', 'X-TV30-Client-Id'];
   for (const v of Object.keys(t.backends.internal)) {
-    for (const e of files[`krakend-internal.${v}.json`].endpoints) assert.ok(e.input_headers.includes('X-TV30-API-Version'), `${e.method} ${e.endpoint}`);
+    for (const e of files[`krakend-internal.${v}.json`].endpoints) {
+      for (const h of INTERNAL) {
+        assert.ok(e.input_headers.includes(h), `${e.method} ${e.endpoint}: ${h}`);
+      }
+    }
   }
-  assert.ok(!files['openapi-internal.json'].paths['/tv3/current-service'].get.parameters.some(p => p.name === 'X-TV30-API-Version'));
+  for (const h of INTERNAL) {
+    assert.ok(!files['openapi-internal.json'].paths['/tv3/current-service'].get.parameters.some(p => p.name === h), h);
+  }
   assert.deepEqual(files['openapi-internal.json'].paths['/tv3/remote-device/devices/{classId}'].get['x-tv30-versions'], ['2.0', '100.0']);
 });
 

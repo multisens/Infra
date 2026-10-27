@@ -26,12 +26,15 @@ const API_SUBSYSTEMS = ['ncl', 'nclua', 'tv3ws'];
 const API_SECTION = /^C(\.[0-9]+)+$/;
 const API_VERSION = /^[1-9][0-9]*\.[0-9]+$/;
 const API_KEYS = ['id', 'section', 'version'];
-// Internal headers written by the plugin, the negotiated version and the
-// original Host of the client; KrakenD passes on to the backend only the
-// headers in input_headers.
+// Internal headers written by the plugin: the negotiated version, the
+// original Host of the client, and the class and identity of the local
+// client; KrakenD passes on to the backend only the headers in
+// input_headers.
 const INTERNAL_VERSION_HEADER = 'X-TV30-API-Version';
 const INTERNAL_HOST_HEADER = 'X-TV30-Host';
-const INTERNAL_HEADERS = [INTERNAL_VERSION_HEADER, INTERNAL_HOST_HEADER];
+const INTERNAL_CLIENT_CLASS_HEADER = 'X-TV30-Client-Class';
+const INTERNAL_CLIENT_ID_HEADER = 'X-TV30-Client-Id';
+const INTERNAL_HEADERS = [INTERNAL_VERSION_HEADER, INTERNAL_HOST_HEADER, INTERNAL_CLIENT_CLASS_HEADER, INTERNAL_CLIENT_ID_HEADER];
 // versions of a route: the "X.Y" versions served (C.3.6.2); when absent, only
 // 2.0 (C.3.6.3). From 100 on, testbed extensions.
 const DEFAULT_VERSIONS = ['2.0'];

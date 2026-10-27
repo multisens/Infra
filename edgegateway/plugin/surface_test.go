@@ -58,7 +58,7 @@ func TestExternaTodasAsRotas(t *testing.T) {
 		t.Errorf("externa com %d rotas, esperado %d (todas)", n, all)
 	}
 	want106 := map[string]bool{"GET /tv3/authorize": true, "POST /tv3/bind-context": true, "DELETE /tv3/bind-context": true,
-		"GET /tv3/remote-device/devices/{classId}": true, "GET /tv3/remote-device/device/{handle}": true}
+		"GET /tv3/remote-device/devices/{classId}": true, "GET /tv3/notifications/{className}": true}
 	for _, rt := range h.cfg.Routes.routes {
 		if got := rt.SurfaceError == 106; got != want106[rt.String()] {
 			t.Errorf("%s: surface_error 106 = %v, esperado %v", rt, got, want106[rt.String()])
