@@ -78,20 +78,20 @@ test('tv3ws: espelhos da sessao e o hash do servico corrente', async () => {
 
 test('tv3ws: auth-manager de verdade (autorizar, emitir e rotacionar, bloquear, incluir no boot)', async () => {
     const ok = 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6';
-    await auth.AuthorizeClient(ok, 'local-autonomous');
+    await auth.AuthorizeClient(ok, 'standAlone');
     const [token] = await auth.getClientAccessToken(ok);
     await auth.rotateRefreshToken(ok);
     const h = await r('HGETALL', `client:${ok}`);
     const o = {}; for (let i = 0; i < h.length; i += 2) o[h[i]] = h[i + 1];
-    assert.equal(o.class, 'local-autonomous');
+    assert.equal(o.class, 'standAlone');
     assert.equal(o.accessToken, token);
     assert.ok(o.refreshToken);
     await auth.BlockClient('cliente-recusado');
     assert.deepEqual(await r('SMEMBERS', 'clients:blocked'), ['cliente-recusado']);
-    await auth.AuthorizeClient('cliente-associado', 'local-associated');
-    await auth.AuthorizeClient('cliente-nao-local', 'non-local');
+    await auth.AuthorizeClient('cliente-associado', 'associated');
+    await auth.AuthorizeClient('cliente-nao-local', 'nonLocal');
     // A record outside clients:authorized, written by hand.
-    await r('HSET', 'client:legado', 'class', 'local-autonomous', 'refreshToken', 'rt');
+    await r('HSET', 'client:legado', 'class', 'standAlone', 'refreshToken', 'rt');
     assert.equal(await auth.backfillAuthorizedClients(), 1);
     assert.deepEqual(await auditoria(), []);
     // A class outside the list: the function refuses it (C.4.1 has three).

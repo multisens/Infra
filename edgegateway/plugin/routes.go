@@ -17,13 +17,13 @@ const (
 
 // Client classes, the values of the access token claim `class`.
 const (
-	classAssociated = "local-associated"
-	classAutonomous = "local-autonomous"
-	classNonLocal   = "non-local"
+	classAssociated = "associated"
+	classStandAlone = "standAlone"
+	classNonLocal   = "nonLocal"
 )
 
 func validClass(c string) bool {
-	return c == classAssociated || c == classAutonomous || c == classNonLocal
+	return c == classAssociated || c == classStandAlone || c == classNonLocal
 }
 
 type segment struct {
@@ -78,7 +78,7 @@ func newRoute(method, path, auth string, classes []string) (*route, error) {
 	}
 	for _, c := range classes {
 		if !validClass(c) {
-			return nil, fmt.Errorf("classe %q invalida (%s, %s ou %s)", c, classAssociated, classAutonomous, classNonLocal)
+			return nil, fmt.Errorf("classe %q invalida (%s, %s ou %s)", c, classAssociated, classStandAlone, classNonLocal)
 		}
 	}
 	rt := &route{Method: method, Path: path, Auth: auth, Classes: classes}
@@ -101,7 +101,7 @@ func newRoute(method, path, auth string, classes []string) (*route, error) {
 
 // allows reports whether the class may use the route. An empty class, an
 // unidentified client, is allowed if the route admits any class other than
-// local-associated.
+// associated.
 func (rt *route) allows(class string) bool {
 	if rt.Classes == nil {
 		return true

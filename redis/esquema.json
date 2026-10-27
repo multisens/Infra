@@ -5,7 +5,7 @@
     "Redis, funcoes e este esquema sao do testbed, nao da ABNT NBR 25608;",
     "o campo 'fonte' de cada regra diz de onde ela veio (secao da norma, schemas.json do broker ou codigo)."
   ],
-  "versao": "6",
+  "versao": "7",
   "biblioteca": "tv30",
   "prefixoErro": "TV30ESQUEMA",
 
@@ -147,7 +147,7 @@
       "descricao": "Cliente autorizado (C.6.1): classe e credenciais emitidas. Fica tambem depois de um bloqueio.",
       "partes": { "id": { "ref": "idCliente" } },
       "campos": {
-        "class": { "tipo": "enum", "valores": ["local-associated", "local-autonomous", "non-local"], "obrigatorio": true, "fonte": "classes de cliente do testbed (C.4.1)" },
+        "class": { "tipo": "enum", "valores": ["associated", "standAlone", "nonLocal"], "obrigatorio": true, "fonte": "classes de cliente do testbed (C.4.1)" },
         "refreshToken": { "tipo": "texto", "min": 1, "obrigatorio": true, "fonte": "C.6.1.2/C.6.1.3" },
         "accessToken": { "tipo": "texto", "min": 1, "fonte": "C.6.1.3; ausente ate o primeiro /tv3/token" }
       },

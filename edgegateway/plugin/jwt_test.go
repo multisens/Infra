@@ -163,12 +163,12 @@ func TestAccessToken(t *testing.T) {
 	base := func() map[string]interface{} {
 		return map[string]interface{}{
 			"iat": t0.Unix(), "nbf": t0.Unix(), "exp": t0.Add(24 * time.Hour).Unix(),
-			"iss": "GenericIssuer", "sub": "cli-1", "class": "non-local",
+			"iss": "GenericIssuer", "sub": "cli-1", "class": "nonLocal",
 		}
 	}
 	ok := signJWT(t, "HS256", secret, base())
 	c, err := verifyAccessToken("Bearer "+ok, secret, "GenericIssuer", t0)
-	if err != nil || c.Sub != "cli-1" || c.Class != "non-local" {
+	if err != nil || c.Sub != "cli-1" || c.Class != "nonLocal" {
 		t.Fatalf("token valido rejeitado: %v %+v", err, c)
 	}
 	if _, err := verifyAccessToken("bearer  "+ok, secret, "GenericIssuer", t0); err != nil {
@@ -194,10 +194,16 @@ func TestAccessToken(t *testing.T) {
 			t.Errorf("%s: deveria ser invalido", name)
 		}
 	}
-	// A missing or unknown class: local-autonomous.
+	// A missing or unknown class makes the token invalid.
 	noClass := signJWT(t, "HS256", secret, mut(func(m map[string]interface{}) { delete(m, "class") }))
-	if c, err := verifyAccessToken("Bearer "+noClass, secret, "GenericIssuer", t0); err != nil || c.Class != classAutonomous {
-		t.Errorf("sem class: esperado %s, veio %+v %v", classAutonomous, c, err)
+	if _, err := verifyAccessToken("Bearer "+noClass, secret, "GenericIssuer", t0); err == nil {
+		t.Error("sem class: deveria ser invalido")
+	}
+	for _, old := range []string{"local-autonomous", "local-associated", "non-local", "outra"} {
+		unknown := signJWT(t, "HS256", secret, mut(func(m map[string]interface{}) { m["class"] = old }))
+		if _, err := verifyAccessToken("Bearer "+unknown, secret, "GenericIssuer", t0); err == nil {
+			t.Errorf("class %q: deveria ser invalido", old)
+		}
 	}
 }
 
@@ -215,7 +221,7 @@ func TestInteropJsonwebtoken(t *testing.T) {
 		t.Fatal(err)
 	}
 	c, err := verifyAccessToken("Bearer "+f.Access, []byte("tv30-dev-secret-nao-usar-em-producao"), "GenericIssuer", t0.Add(time.Hour))
-	if err != nil || c.Class != classAutonomous || c.Sub == "" {
+	if err != nil || c.Class != classStandAlone || c.Sub == "" {
 		t.Fatalf("access token do tv3ws rejeitado: %v %+v", err, c)
 	}
 	if _, err := verifyAccessToken("Bearer "+f.Access, []byte("tv30-dev-secret-nao-usar-em-producao"), "GenericIssuer", t0.Add(25*time.Hour)); err == nil {

@@ -62,8 +62,8 @@
       "auth": "none",
       "timeout": "15s",
       "classes": [
-        "local-autonomous",
-        "non-local"
+        "standAlone",
+        "nonLocal"
       ],
       "headers": [
         "Accept-Version",
@@ -86,8 +86,8 @@
       },
       "auth": "none",
       "classes": [
-        "local-autonomous",
-        "non-local"
+        "standAlone",
+        "nonLocal"
       ],
       "headers": [
         "Authorization",
@@ -110,7 +110,7 @@
       "edge": "bind-context-register",
       "auth": "none",
       "classes": [
-        "local-associated"
+        "associated"
       ],
       "headers": [
         "Accept-Version",
@@ -128,8 +128,8 @@
       "edge": "bind-context-list",
       "auth": "token",
       "classes": [
-        "local-autonomous",
-        "non-local"
+        "standAlone",
+        "nonLocal"
       ],
       "headers": [
         "Authorization",
@@ -148,7 +148,7 @@
       "edge": "bind-context-remove",
       "auth": "none",
       "classes": [
-        "local-associated"
+        "associated"
       ],
       "headers": [
         "Accept-Version",
@@ -342,8 +342,8 @@
       ],
       "auth": "token",
       "classes": [
-        "local-associated",
-        "local-autonomous"
+        "associated",
+        "standAlone"
       ],
       "headers": [
         "Authorization",
@@ -358,8 +358,8 @@
       ],
       "auth": "token",
       "classes": [
-        "local-associated",
-        "local-autonomous"
+        "associated",
+        "standAlone"
       ],
       "headers": [
         "Authorization",
@@ -374,8 +374,8 @@
       ],
       "auth": "token",
       "classes": [
-        "local-associated",
-        "local-autonomous"
+        "associated",
+        "standAlone"
       ],
       "headers": [
         "Authorization",

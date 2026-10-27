@@ -65,7 +65,7 @@ const SVC = {
     serviceContextId: 'c08b2c72-fd14-4095-adaf-2e5810850c57', serviceId: '', serviceName: '',
     transportStreamId: 'c08b2c72-fd14-4095-adaf-2e5810850c57', originalNetworkId: '09e59a1d-e2e7-467e-85db-2fb5a572e2fc',
 };
-const CLIENTE = { class: 'local-autonomous', refreshToken: 'rt-1', accessToken: 'at-1' };
+const CLIENTE = { class: 'standAlone', refreshToken: 'rt-1', accessToken: 'at-1' };
 const ENTRADA = { alg: 'HS256', key: 'segredo', registeredAt: 1760000000000 };
 const ORIGEM = 'http://users-test.apps.localhost:8080';
 
@@ -662,12 +662,12 @@ test('atributos de emissora: perfil precisa estar indexado; vazio remove', async
 
 test('clientes: autorizar e bloquear trocam o id de conjunto (disjuntos); grava acrescenta; inclusao no boot', async () => {
     await fcall('tv30_cliente_bloqueia', 'c1');
-    await fcall('tv30_cliente_autoriza', 'c1', 'class', 'local-autonomous', 'refreshToken', 'r1');
+    await fcall('tv30_cliente_autoriza', 'c1', 'class', 'standAlone', 'refreshToken', 'r1');
     assert.deepEqual(await r('SMEMBERS', 'clients:authorized'), ['c1']);
     assert.deepEqual(await r('SMEMBERS', 'clients:blocked'), []);
     await fcall('tv30_cliente_grava', 'c1', 'accessToken', 'a1');
     await fcall('tv30_cliente_grava', 'c1', 'refreshToken', 'r2');
-    assert.deepEqual((await r('HGETALL', 'client:c1')), ['class', 'local-autonomous', 'refreshToken', 'r2', 'accessToken', 'a1']);
+    assert.deepEqual((await r('HGETALL', 'client:c1')), ['class', 'standAlone', 'refreshToken', 'r2', 'accessToken', 'a1']);
     await fcall('tv30_cliente_bloqueia', 'c1');
     assert.deepEqual(await r('SMEMBERS', 'clients:authorized'), []);
     assert.deepEqual(await r('SMEMBERS', 'clients:blocked'), ['c1']);
@@ -678,7 +678,7 @@ test('clientes: autorizar e bloquear trocam o id de conjunto (disjuntos); grava 
     // is refused; with a record it goes in.
     assert.equal(await fcall('tv30_cliente_inclui_autorizado', 'c1'), 0);
     await recusa('sem client:{id}', 'tv30_cliente_inclui_autorizado', ['c9'], ['invariante autorizado-tem-registro']);
-    await r('HSET', 'client:velho', 'class', 'local-autonomous', 'refreshToken', 'r');
+    await r('HSET', 'client:velho', 'class', 'standAlone', 'refreshToken', 'r');
     assert.equal(await fcall('tv30_cliente_inclui_autorizado', 'velho'), 1);
     assert.equal(await fcall('tv30_cliente_inclui_autorizado', 'velho'), 0);
     assert.deepEqual(await auditoria(), []);

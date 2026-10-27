@@ -113,7 +113,7 @@ func TestNewRouteValidacao(t *testing.T) {
 func TestAllows(t *testing.T) {
 	all := mustRoute(t, "GET", "/a", authToken)
 	onlyAssoc := mustRoute(t, "POST", "/b", authNone, classAssociated)
-	notAssoc := mustRoute(t, "GET", "/c", authNone, classAutonomous, classNonLocal)
+	notAssoc := mustRoute(t, "GET", "/c", authNone, classStandAlone, classNonLocal)
 	none := &route{Classes: []string{}}
 	type c struct {
 		rt    *route
@@ -122,7 +122,7 @@ func TestAllows(t *testing.T) {
 	}
 	for i, x := range []c{
 		{all, "", true}, {all, classAssociated, true},
-		{onlyAssoc, classAssociated, true}, {onlyAssoc, classAutonomous, false}, {onlyAssoc, "", false},
+		{onlyAssoc, classAssociated, true}, {onlyAssoc, classStandAlone, false}, {onlyAssoc, "", false},
 		{notAssoc, classAssociated, false}, {notAssoc, classNonLocal, true}, {notAssoc, "", true},
 		{none, "", false}, {none, classNonLocal, false},
 	} {

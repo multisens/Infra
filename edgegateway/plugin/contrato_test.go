@@ -68,7 +68,7 @@ func TestContratoFuncoes(t *testing.T) {
 	if a, b := authz(); a || b {
 		t.Fatalf("antes: autorizado=%v bloqueado=%v", a, b)
 	}
-	must0("tv30_cliente_autoriza", cid, "class", "local-autonomous", "refreshToken", "rt")
+	must0("tv30_cliente_autoriza", cid, "class", "standAlone", "refreshToken", "rt")
 	if a, b := authz(); !a || b {
 		t.Fatalf("autorizado: autorizado=%v bloqueado=%v", a, b)
 	}
@@ -104,7 +104,7 @@ func TestContratoFuncoes(t *testing.T) {
 	must("tv30_origem_registra", tAssoc, sid)
 	// The GET of C.6.8.3 requires an access token: its client (cli-1, bindGet)
 	// must be in clients:authorized.
-	must("tv30_cliente_autoriza", "cli-1", "class", "local-autonomous", "refreshToken", "rt")
+	must("tv30_cliente_autoriza", "cli-1", "class", "standAlone", "refreshToken", "rt")
 	defer func() {
 		s.c.fcall(true, "tv30_origem_remove", tAssoc)
 		s.c.fcall(true, "tv30_sessao_servico_id", "")
@@ -140,7 +140,7 @@ func TestContratoFuncoes(t *testing.T) {
 	if in, err := s.ServiceInCatalog(fora); err != nil || in {
 		t.Fatalf("servico fora: %v %v", in, err)
 	}
-	cred := map[string]string{"Authorization": accessFor(t, "cli-1", classAutonomous), "bind-token": "abc"}
+	cred := map[string]string{"Authorization": accessFor(t, "cli-1", classStandAlone), "bind-token": "abc"}
 	checkC32(t, serve(h, "GET", "/tv3/"+fora+"/users/u1", cred), 304)
 	if v := h.evaluate(withHeaders(httptest.NewRequest("GET", "/tv3/"+sid+"/users/u1", nil), cred)); v.Code != 108 {
 		t.Fatalf("servico do catalogo segue para o bind-token: %d %q", v.Code, v.Detail)

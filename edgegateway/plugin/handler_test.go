@@ -68,10 +68,10 @@ func testExtra() map[string]interface{} {
 		"routes": []interface{}{
 			r("GET", "/health", authNone),
 			r("GET", "/manifest", authNone),
-			httpNL(r("GET", "/tv3/authorize", authNone, classAutonomous, classNonLocal)),
-			httpNL(r("GET", "/tv3/token", authNone, classAutonomous, classNonLocal)),
+			httpNL(r("GET", "/tv3/authorize", authNone, classStandAlone, classNonLocal)),
+			httpNL(r("GET", "/tv3/token", authNone, classStandAlone, classNonLocal)),
 			edge(r("POST", "/tv3/bind-context", authNone, classAssociated), edgeBindRegister),
-			edge(r("GET", "/tv3/bind-context", authToken, classAutonomous, classNonLocal), edgeBindList),
+			edge(r("GET", "/tv3/bind-context", authToken, classStandAlone, classNonLocal), edgeBindList),
 			edge(r("DELETE", "/tv3/bind-context", authNone, classAssociated), edgeBindRemove),
 			edge(r("GET", "/tv3/api-info", authToken), edgeAPIList),
 			edge(r("GET", "/tv3/api-info/{apiId}", authToken), edgeAPIInfo),
@@ -82,8 +82,8 @@ func testExtra() map[string]interface{} {
 			r("POST", "/tv3/sensory-effect-renderers/{rendererId}", authTokenBind),
 			// C.6.15.5 serves 2.0 and 100.0; the route by handle exists only in
 			// 100.0.
-			vers(r("GET", "/tv3/remote-device/devices/{classId}", authToken, classAssociated, classAutonomous), "2.0", "100.0"),
-			vers(r("GET", "/tv3/remote-device/device/{handle}", authToken, classAssociated, classAutonomous), "100.0"),
+			vers(r("GET", "/tv3/remote-device/devices/{classId}", authToken, classAssociated, classStandAlone), "2.0", "100.0"),
+			vers(r("GET", "/tv3/remote-device/device/{handle}", authToken, classAssociated, classStandAlone), "100.0"),
 			// No POST /tv3/{serviceContextId}/users: outside the standard, it
 			// gives 100.
 			catalogo(semServ(r("GET", "/tv3/{serviceContextId}/users/{userid}", authTokenBind))),
@@ -137,18 +137,18 @@ func TestDecisao(t *testing.T) {
 	bindOK := signJWT(t, "HS256", []byte("chave-webmedia"), timeClaims(t0, t0, t0.Add(time.Hour)))
 	bindOutra := signJWT(t, "HS256", []byte("chave-outra"), timeClaims(t0, t0, t0.Add(time.Hour)))
 	bindExp := signJWT(t, "HS256", []byte("chave-webmedia"), timeClaims(t0.Add(-2*time.Hour), t0.Add(-2*time.Hour), t0.Add(-time.Hour)))
-	auto := accessFor(t, "cli-1", classAutonomous)
+	auto := accessFor(t, "cli-1", classStandAlone)
 	nonLocal := accessFor(t, "cli-2", classNonLocal)
 	assocTok := accessFor(t, "cli-3", classAssociated)
-	blocked := accessFor(t, "cli-bloq", classAutonomous)
+	blocked := accessFor(t, "cli-bloq", classStandAlone)
 	blockedAssoc := accessFor(t, "cli-bloq", classAssociated)
 	// Valid tokens of clients not in clients:authorized (unblocked without a
 	// new authorization, or never authorized), and a valid token without sub.
-	fora := accessFor(t, "cli-fora", classAutonomous)
+	fora := accessFor(t, "cli-fora", classStandAlone)
 	foraNL := accessFor(t, "cli-fora", classNonLocal)
 	foraAssoc := accessFor(t, "cli-fora", classAssociated)
 	semSub := "Bearer " + signJWT(t, "HS256", []byte(tSecret), map[string]interface{}{
-		"iat": t0.Unix(), "exp": t0.Add(time.Hour).Unix(), "iss": "GenericIssuer", "class": classAutonomous})
+		"iat": t0.Unix(), "exp": t0.Add(time.Hour).Unix(), "iss": "GenericIssuer", "class": classStandAlone})
 	expired := "Bearer " + signJWT(t, "HS256", []byte(tSecret), map[string]interface{}{"exp": t0.Add(-time.Second).Unix(), "iss": "GenericIssuer", "sub": "x", "class": classNonLocal})
 
 	type hdr map[string]string
@@ -282,16 +282,16 @@ func TestDecisaoClientesAutorizados(t *testing.T) {
 	}
 	st := baseStore()
 	h := newTestHandler(t, modeEnforce, st, nil)
-	if v := h.evaluate(req(accessFor(t, "cli-bloq", classAutonomous))); v.Code != 107 || !strings.Contains(v.Detail, "bloqueado pelo usuario") {
+	if v := h.evaluate(req(accessFor(t, "cli-bloq", classStandAlone))); v.Code != 107 || !strings.Contains(v.Detail, "bloqueado pelo usuario") {
 		t.Fatalf("bloqueado: %d %q", v.Code, v.Detail)
 	}
-	tok := accessFor(t, "cli-volta", classAutonomous)
+	tok := accessFor(t, "cli-volta", classStandAlone)
 	if v := h.evaluate(req(tok)); v.Code != 107 || !strings.Contains(v.Detail, "fora de clients:authorized:") {
 		t.Fatalf("fora do conjunto: %d %q", v.Code, v.Detail)
 	}
 	// Token without sub: 107 without a Redis lookup.
 	semSub := "Bearer " + signJWT(t, "HS256", []byte(tSecret), map[string]interface{}{
-		"exp": t0.Add(time.Hour).Unix(), "iss": "GenericIssuer", "class": classAutonomous})
+		"exp": t0.Add(time.Hour).Unix(), "iss": "GenericIssuer", "class": classStandAlone})
 	antes := st.calls
 	if v := h.evaluate(req(semSub)); v.Code != 107 || !strings.Contains(v.Detail, "sem sub") || st.calls != antes {
 		t.Fatalf("sem sub: %d %q, consultas ao redis %d", v.Code, v.Detail, st.calls-antes)
@@ -308,19 +308,19 @@ func TestDecisaoClientesAutorizados(t *testing.T) {
 	}
 	// Blocked and, by a data defect, still in the set: the block wins.
 	st.authorized["cli-bloq"] = true
-	if v := h.evaluate(req(accessFor(t, "cli-bloq", classAutonomous))); v.Code != 107 || !strings.Contains(v.Detail, "bloqueado") {
+	if v := h.evaluate(req(accessFor(t, "cli-bloq", classStandAlone))); v.Code != 107 || !strings.Contains(v.Detail, "bloqueado") {
 		t.Fatalf("bloqueado no conjunto: %d %q", v.Code, v.Detail)
 	}
 	// Redis failure only on the set lookup: 200.
 	st2 := baseStore()
 	st2.authzErr = errors.New("conexao recusada")
 	h2 := newTestHandler(t, modeEnforce, st2, nil)
-	if v := h2.evaluate(req(accessFor(t, "cli-1", classAutonomous))); v.Code != 200 {
+	if v := h2.evaluate(req(accessFor(t, "cli-1", classStandAlone))); v.Code != 200 {
 		t.Fatalf("redis fora no conjunto: %d %q", v.Code, v.Detail)
 	}
 	// warn: only a warning.
 	hw := newTestHandler(t, modeWarn, baseStore(), nil)
-	rec := serve(hw, "GET", "/tv3/current-service", map[string]string{"Authorization": accessFor(t, "cli-fora", classAutonomous)})
+	rec := serve(hw, "GET", "/tv3/current-service", map[string]string{"Authorization": accessFor(t, "cli-fora", classStandAlone)})
 	if rec.Code != 200 || rec.Header().Get(warnHeader) != "107" {
 		t.Fatalf("warn: status %d, aviso %q", rec.Code, rec.Header().Get(warnHeader))
 	}
@@ -334,7 +334,7 @@ func TestDecisaoSemServicoCorrente(t *testing.T) {
 	st.current = ""
 	h := newTestHandler(t, modeEnforce, st, nil)
 	bind := signJWT(t, "HS256", []byte("chave-webmedia"), timeClaims(t0, t0, t0.Add(time.Hour)))
-	auto := accessFor(t, "cli-1", classAutonomous)
+	auto := accessFor(t, "cli-1", classStandAlone)
 	type hdr map[string]string
 	for _, c := range []struct {
 		name, method, path string
@@ -427,7 +427,7 @@ func TestWarnSoAvisa(t *testing.T) {
 		code string
 	}{
 		{"/tv3/current-service", nil, "107"},
-		{"/tv3/current-service/users/current-user", map[string]string{"Authorization": accessFor(t, "cli-1", classAutonomous)}, "104"},
+		{"/tv3/current-service/users/current-user", map[string]string{"Authorization": accessFor(t, "cli-1", classStandAlone)}, "104"},
 	} {
 		rec := serve(h, "GET", c.path, c.hdr)
 		if rec.Code != 200 || rec.Body.String() != "backend" {
@@ -438,7 +438,7 @@ func TestWarnSoAvisa(t *testing.T) {
 		}
 	}
 	// A valid request gets no warning.
-	rec := serve(h, "GET", "/tv3/current-service", map[string]string{"Authorization": accessFor(t, "cli-1", classAutonomous)})
+	rec := serve(h, "GET", "/tv3/current-service", map[string]string{"Authorization": accessFor(t, "cli-1", classStandAlone)})
 	if rec.Header().Get(warnHeader) != "" {
 		t.Error("requisicao valida recebeu aviso")
 	}
@@ -458,7 +458,7 @@ func TestWarnNaoAliviaForaDaCredencial(t *testing.T) {
 		{"106 ao associado em /authorize", "GET", "/tv3/authorize", map[string]string{"Origin": tAssoc}, 106},
 		{"106 ao nao associado no POST da C.6.8", "POST", "/tv3/bind-context", nil, 106},
 		{"106 ao nao local por HTTP", "GET", "/tv3/current-service", map[string]string{"Authorization": accessFor(t, "cli-1", classNonLocal)}, 106},
-		{"300 sem servico na C.6.14.3", "GET", "/tv3/current-service/users/current-user", map[string]string{"Authorization": accessFor(t, "cli-1", classAutonomous)}, 300},
+		{"300 sem servico na C.6.14.3", "GET", "/tv3/current-service/users/current-user", map[string]string{"Authorization": accessFor(t, "cli-1", classStandAlone)}, 300},
 	} {
 		rec := serve(h, c.method, c.path, c.hdr)
 		checkC32(t, rec, c.code)
@@ -473,7 +473,7 @@ func TestWarnNaoAliviaForaDaCredencial(t *testing.T) {
 // on to the bind-token; current-service does not look up the catalog; a
 // Redis failure gives 200.
 func TestServicoForaDoCatalogo(t *testing.T) {
-	auto := accessFor(t, "cli-1", classAutonomous)
+	auto := accessFor(t, "cli-1", classStandAlone)
 	bindOK := signJWT(t, "HS256", []byte("chave-webmedia"), timeClaims(t0, t0, t0.Add(time.Hour)))
 	fora := "/tv3/" + tSCID + "/users/u1"
 	cred := map[string]string{"Authorization": auto, "bind-token": bindOK}
@@ -594,7 +594,7 @@ func TestAPIVersionDasRespostasDaBorda(t *testing.T) {
 // the route does not serve, or a /v<X.Y> path sent by the client) and 101
 // (malformed) are sent in both modes and do not reach the service.
 func TestVersaoNegociadaPorRota(t *testing.T) {
-	auto := accessFor(t, "cli-1", classAutonomous)
+	auto := accessFor(t, "cli-1", classStandAlone)
 	for _, mode := range []string{modeWarn, modeEnforce} {
 		var got, gotPath, gotEscaped string
 		calls := 0
@@ -831,7 +831,7 @@ func TestPanicVira200(t *testing.T) {
 func TestRedisFora(t *testing.T) {
 	st := baseStore()
 	st.err = errors.New("dial tcp: connection refused")
-	tok := accessFor(t, "cli-1", classAutonomous)
+	tok := accessFor(t, "cli-1", classStandAlone)
 
 	h := newTestHandler(t, modeEnforce, st, nil)
 	checkC32(t, serve(h, "GET", "/tv3/current-service", map[string]string{"Authorization": tok}), 200)
@@ -1008,7 +1008,7 @@ func TestGateway5xxVira200(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		w.Write([]byte("<html>Service Unavailable</html>"))
 	})
-	tok := map[string]string{"Authorization": accessFor(t, "cli-1", classAutonomous)}
+	tok := map[string]string{"Authorization": accessFor(t, "cli-1", classStandAlone)}
 	for _, mode := range []string{modeWarn, modeEnforce} {
 		for _, c := range []struct {
 			name   string

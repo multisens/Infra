@@ -191,7 +191,7 @@ type accessClaims struct {
 
 // verifyAccessToken checks a "Bearer <accessToken>" header: HS256 with
 // secret, whatever alg the header declares; exp required; nbf; iss equal to
-// issuer. A missing or unknown class claim is returned as local-autonomous.
+// issuer; class claim required, one of the client classes.
 func verifyAccessToken(authorization string, secret []byte, issuer string, now time.Time) (*accessClaims, error) {
 	scheme, tok, ok := strings.Cut(strings.TrimSpace(authorization), " ")
 	if !ok || !strings.EqualFold(scheme, "Bearer") {
@@ -215,7 +215,7 @@ func verifyAccessToken(authorization string, secret []byte, issuer string, now t
 	}
 	c := &accessClaims{Sub: t.stringClaim("sub"), Class: t.stringClaim("class")}
 	if !validClass(c.Class) {
-		c.Class = classAutonomous
+		return nil, fmt.Errorf("class %q do access token invalida", c.Class)
 	}
 	return c, nil
 }

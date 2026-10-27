@@ -280,7 +280,7 @@ func TestRegistroClasseEVersao(t *testing.T) {
 	st := edgeStore()
 	h := newTestHandler(t, modeEnforce, st, nil)
 	wantErr(t, "nao associado", edgeCall(t, h, "POST", "/tv3/bind-context", map[string]string{"Content-Type": "application/json"}, regBody("HS256", "s")), 106)
-	auto := accessFor(t, "cli-1", classAutonomous)
+	auto := accessFor(t, "cli-1", classStandAlone)
 	wantErr(t, "token autonomo", edgeCall(t, h, "POST", "/tv3/bind-context", map[string]string{"Content-Type": "application/json", "Authorization": auto}, regBody("HS256", "s")), 106)
 	// API-Version (C.3.6.6): on 100 (a version outside the set), the latest
 	// supported; on 101 (malformed), 2.0.
@@ -326,7 +326,7 @@ func TestRegistroClasseEVersao(t *testing.T) {
 // --- C.6.8.3 (Table C.50) ---------------------------------------------------
 
 func bindGet(t *testing.T, h *authHandler, bindToken string) edgeResp {
-	hd := map[string]string{"Authorization": accessFor(t, "cli-1", classAutonomous)}
+	hd := map[string]string{"Authorization": accessFor(t, "cli-1", classStandAlone)}
 	if bindToken != "" {
 		hd["bind-token"] = bindToken
 	}
@@ -403,7 +403,7 @@ func TestBindListPolitica(t *testing.T) {
 	tok := hsTok(t, "segredo-a", nil)
 	wantErr(t, "sem access token", edgeCall(t, h, "GET", "/tv3/bind-context", map[string]string{"bind-token": tok}, ""), 107)
 	wantErr(t, "associado", edgeCall(t, h, "GET", "/tv3/bind-context", map[string]string{"Origin": tAssoc, "bind-token": tok}, ""), 106)
-	auto := accessFor(t, "cli-1", classAutonomous)
+	auto := accessFor(t, "cli-1", classStandAlone)
 	r := edgeCall(t, h, "GET", "/tv3/bind-context", map[string]string{"Authorization": auto, "bind-token": tok}, "")
 	if r.status != 200 {
 		t.Errorf("autonomo: status %d %s", r.status, r.body)
@@ -594,7 +594,7 @@ func TestC68ComClienteRedis(t *testing.T) {
 
 	bt := signJWT(t, "HS512", []byte("segredo-c68"), timeClaims(t0, t0, t0.Add(time.Hour)))
 	req := httptest.NewRequest("GET", "/tv3/current-service/users/current-user", nil)
-	req.Header.Set("Authorization", accessFor(t, "cli-1", classAutonomous))
+	req.Header.Set("Authorization", accessFor(t, "cli-1", classStandAlone))
 	req.Header.Set("bind-token", bt)
 	if v := h.evaluate(req); v.Code != 0 {
 		t.Fatalf("rota token+bind com o bind-token registrado: %d %s", v.Code, v.Detail)

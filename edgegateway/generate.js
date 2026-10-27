@@ -18,7 +18,8 @@ const PLUGIN_NAME = 'tv30-auth';
 const TLS_DIR = '/etc/tv30/tls';
 const PLUGIN_FOLDER = '/opt/krakend/plugins/';
 const AUTH_VALUES = ['none', 'token', 'token+bind'];
-const CLASS_VALUES = ['local-associated', 'local-autonomous', 'non-local'];
+const CLASS_NON_LOCAL = 'nonLocal';
+const CLASS_VALUES = ['associated', 'standAlone', CLASS_NON_LOCAL];
 // Names of the edge handlers of the plugin.
 const EDGE_HANDLERS = ['bind-context-register', 'bind-context-list', 'bind-context-remove', 'api-info', 'api-list'];
 // Formats of the API ids (Table C.2), sections and versions (C.3.6.2).
@@ -94,7 +95,7 @@ const routesOf = t => t.routes;
 // surface, 0 for none: 106 of C.4.1.8, only on the external surface.
 function surfaceErrorOf(r, surface) {
   if (!SURFACE_RULES[surface].secure) return 0;
-  const exclusivaDoLocal = !classesOf(r).includes('non-local');
+  const exclusivaDoLocal = !classesOf(r).includes(CLASS_NON_LOCAL);
   const soHTTP = !!r.api && HTTP_ONLY_SECTIONS.includes(r.api.section);
   return exclusivaDoLocal || soHTTP ? 106 : 0;
 }
@@ -350,7 +351,7 @@ function generate(t) {
           (r.edge ? 'Respondida pela propria borda (plugin tv30-auth), sem repasse ao tv3ws. ' : '') +
           `Credencial: ${AUTH_DOC[auth]}. Classes: ${(r.classes || ['todas']).join(', ')}. ` +
           (se ? `Nesta superficie responde ${se} a qualquer requisicao: so pelo Server-BaseURL (C.4.1.8). ` : '') +
-          (!SURFACE_RULES[surface].secure && !nonLocalHTTP(r) && classesOf(r).includes('non-local')
+          (!SURFACE_RULES[surface].secure && !nonLocalHTTP(r) && classesOf(r).includes(CLASS_NON_LOCAL)
             ? 'O cliente nao local recebe 106 nesta superficie (HTTP): use o Server-SecureBaseURL (C.4.1.6). ' : '') +
           (r.no_service ? `Sem servico DTV selecionado: ${r.no_service}. ` : '') +
           (r.not_in_catalog ? `Servico do caminho fora do Application Catalog: ${r.not_in_catalog}. ` : '') +

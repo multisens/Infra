@@ -7,7 +7,7 @@ import "testing"
 
 func apiGet(t *testing.T, h *authHandler, path string, hdr map[string]string) edgeResp {
 	if hdr == nil {
-		hdr = map[string]string{"Authorization": accessFor(t, "cli-1", classAutonomous)}
+		hdr = map[string]string{"Authorization": accessFor(t, "cli-1", classStandAlone)}
 	}
 	return edgeCall(t, h, "GET", path, hdr, "")
 }
@@ -62,7 +62,7 @@ func TestAPIInfoPolitica(t *testing.T) {
 		wantErr(t, p+" token lixo", apiGet(t, h, p, map[string]string{"Authorization": "Bearer lixo"}), 107)
 		for name, hd := range map[string]map[string]string{
 			"associado pelo Origin": {"Origin": tAssoc},
-			"token de autonomo":     {"Authorization": accessFor(t, "cli-1", classAutonomous)},
+			"token de autonomo":     {"Authorization": accessFor(t, "cli-1", classStandAlone)},
 			"token de associado":    {"Authorization": accessFor(t, "cli-3", classAssociated)},
 		} {
 			if r := apiGet(t, h, p, hd); r.status != 200 {
