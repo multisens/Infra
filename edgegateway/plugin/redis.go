@@ -12,7 +12,7 @@ import (
 )
 
 // Minimal Redis client (RESP2) on the standard library. It writes only by
-// FCALL of tv30_bind_registra and tv30_bind_remove, which check the schema
+// FCALL of tv30_bind_register and tv30_bind_remove, which check the schema
 // of the entry.
 
 type redisError string
@@ -95,7 +95,7 @@ func (rc *redisClient) fcall(idempotente bool, nome string, args ...string) (int
 
 // Prefix of the error replies of the tv30 functions for data outside the
 // schema.
-const schemaErrorPrefix = "TV30ESQUEMA "
+const schemaErrorPrefix = "TV30SCHEMA "
 
 // schemaRefusal reports whether err is a refusal by the schema, and returns
 // its message, which gives function, key, field and reason.
@@ -418,17 +418,17 @@ func (s *redisStore) BindKeys(serviceID string) ([]string, error) {
 }
 
 // AddBindKey appends the entry to bind-context:{serviceId} by
-// tv30_bind_registra, which checks the schema of the entry and of the
-// serviceId; data outside the schema gives a TV30ESQUEMA error
+// tv30_bind_register, which checks the schema of the entry and of the
+// serviceId; data outside the schema gives a TV30SCHEMA error
 // (schemaRefusal), and nothing is written. The call is not retried after
 // the command was sent.
 func (s *redisStore) AddBindKey(serviceID, raw string) error {
-	v, err := s.c.fcall(false, "tv30_bind_registra", serviceID, raw)
+	v, err := s.c.fcall(false, "tv30_bind_register", serviceID, raw)
 	if err != nil {
 		return err
 	}
 	if _, ok := v.(int64); !ok {
-		return errors.New("tv30_bind_registra: resposta inesperada")
+		return errors.New("tv30_bind_register: resposta inesperada")
 	}
 	return nil
 }

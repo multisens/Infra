@@ -24,9 +24,9 @@ var comandosEscrita = strings.Fields(`APPEND BITFIELD BITOP BLMOVE BLMPOP BLPOP 
  ZREM ZREMRANGEBYLEX ZREMRANGEBYRANK ZREMRANGEBYSCORE ZUNIONSTORE`)
 
 // Functions the edge may call (bind-context:{serviceId} family).
-var funcoesDaBorda = map[string]bool{"tv30_bind_registra": true, "tv30_bind_remove": true}
+var edgeFunctions = map[string]bool{"tv30_bind_register": true, "tv30_bind_remove": true}
 
-var nomeDeFuncao = regexp.MustCompile(`^tv30_[a-z_]+$`)
+var functionName = regexp.MustCompile(`^tv30_[a-z0-9_]+$`)
 
 func TestEscritasSoPorFuncoes(t *testing.T) {
 	proibidos := map[string]bool{}
@@ -64,12 +64,12 @@ func TestEscritasSoPorFuncoes(t *testing.T) {
 				return true
 			}
 			if proibidos[strings.ToUpper(v)] {
-				t.Errorf("%s: comando de escrita %q no codigo da borda; a escrita sai so por FCALL (infra/redis/esquema.json)", fset.Position(lit.Pos()), v)
+				t.Errorf("%s: comando de escrita %q no codigo da borda; a escrita sai so por FCALL (infra/redis/schema.json)", fset.Position(lit.Pos()), v)
 			}
-			if nomeDeFuncao.MatchString(v) {
+			if functionName.MatchString(v) {
 				usadas[v] = true
-				if !funcoesDaBorda[v] {
-					t.Errorf("%s: funcao %q nao e da borda (so %v)", fset.Position(lit.Pos()), v, funcoesDaBorda)
+				if !edgeFunctions[v] {
+					t.Errorf("%s: funcao %q nao e da borda (so %v)", fset.Position(lit.Pos()), v, edgeFunctions)
 				}
 			}
 			return true
@@ -78,7 +78,7 @@ func TestEscritasSoPorFuncoes(t *testing.T) {
 	if lidos < 5 {
 		t.Fatalf("so %d arquivo(s) .go lidos", lidos)
 	}
-	for f := range funcoesDaBorda {
+	for f := range edgeFunctions {
 		if !usadas[f] {
 			t.Errorf("funcao %s sem chamada no codigo", f)
 		}

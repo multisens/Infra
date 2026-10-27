@@ -1,0 +1,289 @@
+{
+  "$comment": [
+    "Schema of the Redis keys of the TV30 testbed. The function library (functions.lua) receives it embedded",
+    "(library.sh) and the tests (infra/redis/test) read it: a rule changes here and applies on the next start of redis.",
+    "Redis, the functions and this schema belong to the testbed, not to ABNT NBR 25608;",
+    "the 'source' field of each rule says where it came from (section of the standard, schemas.json of the broker or code)."
+  ],
+  "version": "9",
+  "library": "tv30",
+  "errorPrefix": "TV30SCHEMA",
+
+  "auditedPrefixes": ["session:", "users:", "user:", "clients:", "client:", "origins:", "bind-context:", "services:", "v100.0:"],
+
+  "definitions": {
+    "profileId": {
+      "type": "uuid",
+      "source": "Table 7: id 'UUID string', required. UUID in the textual format of IETF RFC 9562 (8-4-4-4-12 hexadecimal digits), in lowercase, with version 1 to 8 (1st digit of the 3rd group) and the variant of RFC 9562 (1st digit of the 4th group in 8, 9, a or b); the nil and the max UUID are not profile ids. No ':' by construction: user:{id}:consent is not mistaken for a profile"
+    },
+    "serviceId": {
+      "type": "text", "min": 1, "max": 256,
+      "source": "schemas.json of the broker, aop/currentService (maxLength 256): the value the AoP publishes and tv3ws mirrors in session:current-service-id"
+    },
+    "clientId": {
+      "type": "text", "min": 1,
+      "source": "C.6.1.4.3 recommends UUID (IETF RFC 9562) but accepts 'any alternative with the same properties'; tv3ws does not check the format. Only not empty."
+    },
+    "boolean": { "type": "boolean", "source": "Table 7: (true | false); written as the text 'true' or 'false', as the AoP writes it" },
+    "language": { "type": "language", "source": "Table 7: IETF RFC 5646 (e.g. pt-BR); the format of the subtags is checked, not the IANA registry" }
+  },
+
+  "families": [
+    {
+      "family": "session:current-user",
+      "key": "session:current-user",
+      "type": "string",
+      "owner": "tv3ws",
+      "description": "Id of the current profile: mirror of the retained topic aop/currentUser and write of C.6.14.4. Empty = no current user.",
+      "value": { "type": "text", "max": 64, "source": "schemas.json of the broker, aop/currentUser (string, maxLength 64), the same form as the mirrored topic" },
+      "functions": ["tv30_session_user"]
+    },
+    {
+      "family": "session:current-service-id",
+      "key": "session:current-service-id",
+      "type": "string",
+      "owner": "tv3ws",
+      "description": "Id of the current service: mirror of the retained topic aop/currentService. Empty = no current service (the edge answers 300 in C.6.8.2).",
+      "value": { "type": "text", "max": 256, "source": "schemas.json of the broker, aop/currentService (string, maxLength 256), the same form as the mirrored topic" },
+      "functions": ["tv30_session_service_id"]
+    },
+    {
+      "family": "session:current-service",
+      "key": "session:current-service",
+      "type": "hash",
+      "owner": "tv3ws",
+      "description": "Current service with the fields of GET /tv3/current-service (Table C.8), rewritten whole by tv3ws at each change of service; the edge reads it in C.6.8.3.",
+      "fields": {
+        "serviceContextId": { "type": "text", "min": 1, "max": 256, "required": true, "source": "Table C.8; the globalServiceId of the current service" },
+        "serviceId": { "type": "integer", "min": 0, "allowEmpty": true, "required": true, "source": "Table C.8: integer serviceId; empty when the testbed does not know it (no SLT)" },
+        "serviceName": { "type": "text", "required": true, "source": "Table C.8; empty when unknown" },
+        "transportStreamId": { "type": "text", "min": 1, "required": true, "source": "Table C.8; constant of tv3ws" },
+        "originalNetworkId": { "type": "text", "min": 1, "required": true, "source": "Table C.8; constant of tv3ws" }
+      },
+      "otherFields": false,
+      "functions": ["tv30_session_service"]
+    },
+    {
+      "family": "users:index",
+      "key": "users:index",
+      "type": "set",
+      "owner": "AoP",
+      "description": "Ids of every profile. Goes together with user:{id} (invariant profile-indexed).",
+      "members": { "ref": "profileId" },
+      "maxMembers": 5,
+      "maxMembersSource": "10.3.3",
+      "maxMembersDescription": "At most five profiles, checked in the same operation that writes: a new id with the set full is refused, and rewriting an existing profile does not count as new. No profile is evicted.",
+      "functions": ["tv30_profile_write", "tv30_profile_remove"]
+    },
+    {
+      "family": "user:{id}",
+      "key": "user:{id}",
+      "type": "hash",
+      "owner": "AoP",
+      "description": "Profile of the viewer: basic attributes of Table 7 plus lastAccess.",
+      "parts": { "id": { "ref": "profileId" } },
+      "fields": {
+        "id": { "ref": "profileId", "required": true, "source": "Table 7: UUID string, required" },
+        "nickname": { "type": "text", "min": 1, "max": 20, "required": true, "source": "Table 7: string (up to 20 characters), required" },
+        "avatar": { "type": "fileName", "maxName": 128, "extensions": ["svg", "png", "jpg", "jpeg", "webp"], "source": "Table 7: 'Path indicating the file with the graphical representation of the viewer profile', file path, optional. Name of a file of the thumbnail directory (<USER_DATA_PATH>/thumbs in the AoP = USER_THUMBS in tv3ws, which serves it in C.6.14.6), in the format ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.(svg|png|jpg|jpeg|webp)$; absent = the default avatar of each screen. The AoP writes <profile id>.svg. The standard only says 'file path'; the testbed restricts the path to a name inside a directory" },
+        "parentalControl": { "ref": "boolean", "required": true, "source": "Table 7: (true | false), required" },
+        "maxContentRating": { "type": "enum", "values": ["L", "10", "12", "14", "16", "18"], "requiredIf": { "field": "parentalControl", "value": "true" }, "source": "Table 7: predefined values of the country (age rating of Brazil, the same as the AoP); required only if parentalControl = true" },
+        "audioLanguage": { "ref": "language", "source": "Table 7: IETF RFC 5646, optional" },
+        "closedCaptioningLanguage": { "ref": "language", "source": "Table 7: IETF RFC 5646, optional (applicable if closedCaptioning = true)" },
+        "userInterfaceLanguage": { "ref": "language", "source": "Table 7: IETF RFC 5646, optional" },
+        "closedCaptioning": { "ref": "boolean", "required": true, "source": "Table 7: (true | false), required" },
+        "closedSigning": { "ref": "boolean", "required": true, "source": "Table 7: (true | false), required" },
+        "closedSigningSide": { "type": "enum", "values": ["left", "right"], "requiredIf": { "field": "closedSigning", "value": "true" }, "source": "Table 7: (left | right), applicable if closedSigning = true" },
+        "closedSigningWidth": { "type": "integer", "min": 14, "max": 28, "requiredIf": { "field": "closedSigning", "value": "true" }, "source": "Table 7: integer (14 to 28), applicable if closedSigning = true" },
+        "audioDescription": { "ref": "boolean", "required": true, "source": "Table 7: (true | false), required" },
+        "dialogEnhancement": { "ref": "boolean", "required": true, "source": "Table 7: (true | false), required" },
+        "voiceGuidance": { "ref": "boolean", "required": true, "source": "Table 7: (true | false), required" },
+        "lastAccess": { "type": "integer", "min": 0, "source": "Instant of the last access in ms; outside Table 7" }
+      },
+      "otherFields": false,
+      "fieldEqualsPart": { "field": "id", "part": "id" },
+      "functions": ["tv30_profile_write", "tv30_profile_last_access", "tv30_profile_remove"]
+    },
+    {
+      "family": "user:{id}:consent",
+      "key": "user:{id}:consent",
+      "type": "set",
+      "owner": "AoP",
+      "description": "Services to which the profile is visible (NOT the consent of section 8.8 of the standard).",
+      "parts": { "id": { "ref": "profileId" } },
+      "members": { "ref": "serviceId" },
+      "functions": ["tv30_profile_write", "tv30_profile_remove"]
+    },
+    {
+      "family": "user:{id}:broadcaster-attrs:{scid}",
+      "key": "user:{id}:broadcaster-attrs:{scid}",
+      "type": "hash",
+      "owner": "tv3ws and AoP (two writers)",
+      "writers": [
+        { "component": "tv3ws", "operation": "writes and deletes broadcaster attributes (C.6.14.5)", "function": "tv30_broadcaster_attributes" },
+        { "component": "AoP", "operation": "removes the whole family together with the profile, in the same function that removes the profile (atomic)", "function": "tv30_profile_remove" }
+      ],
+      "description": "Broadcaster attributes of the profile in a service context (C.6.14.5); an empty value in the API removes the attribute.",
+      "parts": { "id": { "ref": "profileId" }, "scid": { "ref": "serviceId" } },
+      "otherFields": {
+        "name": { "type": "text", "min": 1, "source": "C.6.14.5: name of the broadcaster attribute" },
+        "value": { "type": "text", "min": 1, "source": "C.6.14.5: an empty value removes the attribute, so the written one is never empty" }
+      },
+      "forbiddenFields": {
+        "names": ["id", "nickname", "parentalControl", "maxContentRating"],
+        "source": "C.6.14.5",
+        "description": "Basic attributes that C.6.14.5 forbids redefining in the context of the broadcaster; tv3ws answers 101 before reaching here."
+      },
+      "maxBytes": 20971520,
+      "maxBytesSource": "10.3.3",
+      "maxBytesDescription": "Up to 20 MB of private data per profile and service context, measured as tv3ws measures: sum of the bytes of the names and values.",
+      "functions": ["tv30_broadcaster_attributes", "tv30_profile_remove"]
+    },
+    {
+      "family": "client:{id}",
+      "key": "client:{id}",
+      "type": "hash",
+      "owner": "tv3ws",
+      "description": "Authorized client (C.6.1): class and issued credentials. Stays also after a block.",
+      "parts": { "id": { "ref": "clientId" } },
+      "fields": {
+        "class": { "type": "enum", "values": ["associated", "standAlone", "nonLocal"], "required": true, "source": "client classes of the testbed (C.4.1)" },
+        "refreshToken": { "type": "text", "min": 1, "required": true, "source": "C.6.1.2/C.6.1.3" },
+        "accessToken": { "type": "text", "min": 1, "source": "C.6.1.3; absent until the first /tv3/token" }
+      },
+      "otherFields": false,
+      "functions": ["tv30_client_write", "tv30_client_authorize"]
+    },
+    {
+      "family": "clients:authorized",
+      "key": "clients:authorized",
+      "type": "set",
+      "owner": "tv3ws",
+      "description": "Clients authorized by the viewer. Disjoint from clients:blocked.",
+      "members": { "ref": "clientId" },
+      "functions": ["tv30_client_authorize", "tv30_client_block", "tv30_client_add_authorized"]
+    },
+    {
+      "family": "clients:blocked",
+      "key": "clients:blocked",
+      "type": "set",
+      "owner": "tv3ws",
+      "description": "Clients refused or blocked by the viewer (C.4.2.2); the edge answers 107 to their token.",
+      "members": { "ref": "clientId" },
+      "functions": ["tv30_client_authorize", "tv30_client_block"]
+    },
+    {
+      "family": "origins:associated",
+      "key": "origins:associated",
+      "type": "hash",
+      "owner": "AoP",
+      "description": "Own origin of each launched broadcaster application -> globalServiceId of the service that launched the app. Without a current service, the AoP does not register. Cleared on the boot of the AoP.",
+      "otherFields": {
+        "name": { "type": "origin", "source": "the origin as the browser sends it in Origin (RFC 6454): http/https scheme and host in lowercase, port only if not the default" },
+        "value": { "ref": "serviceId" }
+      },
+      "functions": ["tv30_origin_register", "tv30_origin_remove", "tv30_origins_clear"]
+    },
+    {
+      "family": "services:announced",
+      "key": "services:announced",
+      "type": "set",
+      "owner": "aop-transport-layer-metadata-lls (in the process of the AoP)",
+      "description": "Services announced in the LLS: the globalServiceId (Table 6) of each BAM of the received BAMTs, which is the serviceContextId of the routes (C.3.5). Rewritten whole at each BAMT received or withdrawn and on the start of the AoP; the same content goes to the retained topic aop/services. The Application Catalog of the AoP lists these services, and the edge answers 304 in C.6.14.2 and C.6.14.5 to a service outside here.",
+      "members": { "ref": "serviceId" },
+      "functions": ["tv30_announced_services"]
+    },
+    {
+      "family": "bind-context:{serviceId}",
+      "key": "bind-context:{serviceId}",
+      "type": "list",
+      "owner": "edge",
+      "description": "Bind-token validation keys registered by the broadcaster (C.6.8.2), one JSON entry per key.",
+      "parts": { "serviceId": { "ref": "serviceId" } },
+      "items": {
+        "type": "json",
+        "fields": {
+          "alg": { "type": "enum", "values": ["HS256", "HS512", "RS256", "RS512"], "required": true, "source": "C.4.1.4.8" },
+          "key": { "type": "text", "min": 1, "required": true, "source": "C.6.8.2 (the received text; the edge already checks the format of the key)" },
+          "registeredAt": { "type": "integer", "min": 0, "required": true, "source": "instant of the registration in ms (outside the standard)" }
+        },
+        "otherFields": false
+      },
+      "functions": ["tv30_bind_register", "tv30_bind_remove"]
+    },
+    {
+      "family": "v100.0:remote-device:{handle}",
+      "key": "v100.0:remote-device:{handle}",
+      "type": "hash",
+      "owner": "tv3ws",
+      "description": "Projection of a remote device registration of API version 100.0 (proposal v2 of C.6.15), rewritten whole by tv3ws after each change in memory, which is the source of truth; cleared on the boot of tv3ws. Without the token of the entry point.",
+      "parts": { "handle": { "type": "uuid", "source": "C.6.15.2, Table C.76: handle of the registration (UUID generated by tv3ws)" } },
+      "fields": {
+        "deviceId": { "type": "uuid", "required": true, "source": "C.6.15.5, Table C.80 (proposal v2): identifier of the device in the listing" },
+        "deviceClass": { "type": "text", "min": 1, "required": true, "source": "C.6.15.2, Table C.76: deviceClass (empty is an invalid value)" },
+        "supportedTypes": { "type": "jsonList", "items": { "type": "text" }, "required": true, "source": "C.6.15.2, Table C.76: supportedTypes, JSON list of texts (may be empty)" },
+        "state": { "type": "enum", "values": ["registered", "connected"], "required": true, "source": "C.6.15.1, Figure C.7 (proposal v2): Registered or Connected" },
+        "paired": { "type": "boolean", "required": true, "source": "C.6.15.5, Table C.80 (proposal v2): paired" },
+        "disconnectedAt": { "type": "integer", "min": 0, "required": true, "source": "instant of the last disconnection in ms, basis of the discard of C.6.15.2 (outside the standard)" }
+      },
+      "otherFields": false,
+      "functions": ["tv30_v100_remote_device_write", "tv30_v100_remote_device_remove", "tv30_v100_remote_devices_clear"]
+    }
+  ],
+
+  "invariants": [
+    {
+      "id": "profile-indexed",
+      "description": "Every member of users:index has the hash user:{id}, and every hash user:{id} has the id in users:index.",
+      "source": "user:{id} and users:index go together"
+    },
+    {
+      "id": "profile-dependents",
+      "description": "user:{id}:consent and user:{id}:broadcaster-attrs:{scid} only exist for an id in users:index.",
+      "source": "Derived from the code: the creation writes profile and visibility together and the removal of the profile (tv30_profile_remove) deletes the four families together"
+    },
+    {
+      "id": "disjoint-clients",
+      "description": "No id is at the same time in clients:authorized and clients:blocked.",
+      "source": "the client is authorized or blocked, never both"
+    },
+    {
+      "id": "authorized-has-record",
+      "description": "Every member of clients:authorized has the hash client:{id}.",
+      "source": "Derived from the code: the authorization writes both in the same operation and the inclusion on boot only considers who has client:{id}"
+    }
+  ],
+
+  "functions": [
+    { "name": "tv30_session_user", "arguments": "<id of the current profile, or empty>", "effect": "SET session:current-user", "returns": "1", "callers": ["tv3ws (mirror of aop/currentUser; C.6.14.4)"] },
+    { "name": "tv30_session_service_id", "arguments": "<id of the current service, or empty>", "effect": "SET session:current-service-id", "returns": "1", "callers": ["tv3ws (mirror of aop/currentService)"] },
+    { "name": "tv30_session_service", "arguments": "<field> <value> [<field> <value> ...]", "effect": "rewrites the whole hash session:current-service (DEL + HSET)", "returns": "1", "callers": ["tv3ws (core.ts, change of service)"] },
+    { "name": "tv30_profile_write", "arguments": "<id> <n> <service 1> ... <service n> <field> <value> [...]", "effect": "SADD users:index; rewrites user:{id} (DEL + HSET); adds the n services to user:{id}:consent. An id outside users:index with the set at the limit (maxMembers) is refused", "returns": "1", "callers": ["AoP (profile creation and default profile)", "initial load (emit_seed.py)", "migrate_to_redis.py (manual debugging)"] },
+    { "name": "tv30_profile_last_access", "arguments": "<id> <instant in ms>", "effect": "HSET user:{id} lastAccess, only if the id is in users:index", "returns": "1 if written, 0 if the profile does not exist", "callers": ["AoP (change of current user)"] },
+    { "name": "tv30_profile_remove", "arguments": "<id>", "effect": "SREM users:index; DEL user:{id}, user:{id}:consent and every user:{id}:broadcaster-attrs:*", "returns": "number of keys and members removed", "callers": ["AoP (profile removal by the viewer, in the profile manager)"] },
+    { "name": "tv30_broadcaster_attributes", "arguments": "<id> <scid> <field> <value> [...] (an empty value removes the field)", "effect": "HDEL/HSET user:{id}:broadcaster-attrs:{scid}, with the 20 MB limit checked on the result", "returns": "number of fields changed", "callers": ["tv3ws (C.6.14.5)"] },
+    { "name": "tv30_client_write", "arguments": "<id> <field> <value> [...]", "effect": "HSET client:{id} (adds or replaces fields)", "returns": "1", "callers": ["tv3ws (rotation of the refresh token, issue of the access token)"] },
+    { "name": "tv30_client_authorize", "arguments": "<id> <field> <value> [...]", "effect": "HSET client:{id}; SREM clients:blocked; SADD clients:authorized", "returns": "1", "callers": ["tv3ws (C.6.1.2, pop-up accepted for a local client)", "tv3ws (C.6.1.3, challenge of a non-local client checked)"] },
+    { "name": "tv30_client_block", "arguments": "<id>", "effect": "SREM clients:authorized; SADD clients:blocked", "returns": "1", "callers": ["tv3ws (C.6.1.2, pop-up refused)"] },
+    { "name": "tv30_client_add_authorized", "arguments": "<id>", "effect": "SADD clients:authorized, if the id is not in clients:blocked", "returns": "1 if added, 0 otherwise", "callers": ["tv3ws (boot: clients older than the set)"] },
+    { "name": "tv30_origin_register", "arguments": "<origin> <service id>", "effect": "HSET origins:associated", "returns": "1", "callers": ["AoP (launch of an application)"] },
+    { "name": "tv30_origin_remove", "arguments": "<origin>", "effect": "HDEL origins:associated", "returns": "1 if removed, 0 if absent", "callers": ["AoP (end or change of application)"] },
+    { "name": "tv30_origins_clear", "arguments": "(none)", "effect": "DEL origins:associated", "returns": "1 if present, 0 otherwise", "callers": ["AoP (boot)"] },
+    { "name": "tv30_announced_services", "arguments": "[<service id> ...] (none = no announced service)", "effect": "rewrites the whole set services:announced (DEL + SADD); without arguments, only the DEL", "returns": "number of services in the set", "callers": ["AoP (aop-transport-layer-metadata-lls: BAMT received or withdrawn, start)"] },
+    { "name": "tv30_bind_register", "arguments": "<service id> <JSON entry>", "effect": "RPUSH bind-context:{serviceId}", "returns": "length of the list", "callers": ["edge (C.6.8.2)"] },
+    { "name": "tv30_bind_remove", "arguments": "<service id> <exact JSON entry>", "effect": "LREM bind-context:{serviceId} 0", "returns": "number of entries removed", "callers": ["edge (C.6.8.4)"] },
+    { "name": "tv30_v100_remote_device_write", "arguments": "<handle> <field> <value> [...] (the whole record)", "effect": "rewrites the whole hash v100.0:remote-device:{handle} (DEL + HSET)", "returns": "1", "callers": ["tv3ws (projection of the registrations of 100.0)"] },
+    { "name": "tv30_v100_remote_device_remove", "arguments": "<handle>", "effect": "DEL v100.0:remote-device:{handle}", "returns": "1 if removed, 0 if absent", "callers": ["tv3ws (projection of the registrations of 100.0)"] },
+    { "name": "tv30_v100_remote_devices_clear", "arguments": "(none)", "effect": "DEL of every v100.0:remote-device:*", "returns": "number of keys removed", "callers": ["tv3ws (boot)"] },
+    { "name": "tv30_audit", "readOnly": true, "arguments": "(none)", "effect": "goes through the families and the invariants and returns what is outside the schema", "returns": "list of [key, family, reason]; empty = everything in the schema", "callers": ["tests (scripts/test-auth.sh, scripts/test-consolidacao.sh, infra/redis/test)", "developer: docker exec redis redis-cli FCALL_RO tv30_audit 0"] },
+    { "name": "tv30_version", "readOnly": true, "arguments": "(none)", "effect": "none", "returns": "the version of this schema", "callers": ["developer: docker exec redis redis-cli FCALL_RO tv30_version 0"] }
+  ],
+
+  "outOfScope": [
+    { "key": "remote-devices:index", "owner": "tv3ws", "reason": "Mirror of the connected remote devices (live WebSockets), cleared on boot and read only by tv3ws itself. Direct write in tv3ws/src/modules/remotedevice-manager/manager.ts." },
+    { "key": "remote-devices:class:{class}", "owner": "tv3ws", "reason": "Idem (the same mirror)." },
+    { "key": "remote-device:{handle}", "owner": "tv3ws", "reason": "Idem (the same mirror)." },
+    { "key": "seed:done", "owner": "entrypoint of the redis container", "reason": "Control mark of the initial load (the healthcheck reads it); not testbed state." },
+    { "key": "tv30:{component}:example", "owner": "scripts/test-template.sh and scripts/test-dev-host.sh", "reason": "Key of the example of the component template (templates/componente), written only by the test scripts and read by the example." }
+  ]
+}

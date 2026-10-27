@@ -9,12 +9,12 @@ import (
 )
 
 // Contract between redisStore and the real Redis functions. Runs only with
-// TV30_REDIS_TESTE=host:port of a Redis with the tv30 library loaded;
+// TV30_REDIS_TEST=host:port of a Redis with the tv30 library loaded;
 // skipped without it.
-func TestContratoFuncoes(t *testing.T) {
-	addr := os.Getenv("TV30_REDIS_TESTE")
+func TestContractFunctions(t *testing.T) {
+	addr := os.Getenv("TV30_REDIS_TEST")
 	if addr == "" {
-		t.Skip("sem TV30_REDIS_TESTE (rode bash infra/redis/test/run.sh contrato)")
+		t.Skip("sem TV30_REDIS_TEST (rode bash infra/redis/test/run.sh contract)")
 	}
 	s := &redisStore{c: newRedisClient(addr, 2*time.Second)}
 	const sid = "urn:tv30:test:contrato-go"
@@ -30,7 +30,7 @@ func TestContratoFuncoes(t *testing.T) {
 	}
 	for _, bad := range []string{`{"alg":"none","key":"k","registeredAt":1}`, `nao-json`, `{"alg":"HS256","key":"","registeredAt":1}`, `{"alg":"HS256","key":"k"}`} {
 		msg, ok := schemaRefusal(s.AddBindKey(sid, bad))
-		if !ok || !strings.HasPrefix(msg, "TV30ESQUEMA tv30_bind_registra: bind-context:"+sid+" entrada: ") {
+		if !ok || !strings.HasPrefix(msg, "TV30SCHEMA tv30_bind_register: bind-context:"+sid+" entry: ") {
 			t.Errorf("entrada %s: esperada recusa do esquema, veio %q", bad, msg)
 		}
 	}
@@ -68,11 +68,11 @@ func TestContratoFuncoes(t *testing.T) {
 	if a, b := authz(); a || b {
 		t.Fatalf("antes: autorizado=%v bloqueado=%v", a, b)
 	}
-	must0("tv30_cliente_autoriza", cid, "class", "standAlone", "refreshToken", "rt")
+	must0("tv30_client_authorize", cid, "class", "standAlone", "refreshToken", "rt")
 	if a, b := authz(); !a || b {
 		t.Fatalf("autorizado: autorizado=%v bloqueado=%v", a, b)
 	}
-	must0("tv30_cliente_bloqueia", cid)
+	must0("tv30_client_block", cid)
 	if a, b := authz(); a || !b {
 		t.Fatalf("bloqueado: autorizado=%v bloqueado=%v", a, b)
 	}
@@ -83,7 +83,7 @@ func TestContratoFuncoes(t *testing.T) {
 	if a, b := authz(); a || b {
 		t.Fatalf("desbloqueado sem nova autorizacao: autorizado=%v bloqueado=%v", a, b)
 	}
-	must0("tv30_cliente_inclui_autorizado", cid)
+	must0("tv30_client_add_authorized", cid)
 	if a, b := authz(); !a || b {
 		t.Fatalf("incluido de novo: autorizado=%v bloqueado=%v", a, b)
 	}
@@ -100,14 +100,14 @@ func TestContratoFuncoes(t *testing.T) {
 			t.Fatalf("%s: %v", nome, err)
 		}
 	}
-	must("tv30_sessao_servico_id", sid)
-	must("tv30_origem_registra", tAssoc, sid)
+	must("tv30_session_service_id", sid)
+	must("tv30_origin_register", tAssoc, sid)
 	// The GET of C.6.8.3 requires an access token: its client (cli-1, bindGet)
 	// must be in clients:authorized.
-	must("tv30_cliente_autoriza", "cli-1", "class", "standAlone", "refreshToken", "rt")
+	must("tv30_client_authorize", "cli-1", "class", "standAlone", "refreshToken", "rt")
 	defer func() {
-		s.c.fcall(true, "tv30_origem_remove", tAssoc)
-		s.c.fcall(true, "tv30_sessao_servico_id", "")
+		s.c.fcall(true, "tv30_origin_remove", tAssoc)
+		s.c.fcall(true, "tv30_session_service_id", "")
 		s.c.do("SREM", keyAuthorized, "cli-1")
 		s.c.do("DEL", "client:cli-1")
 	}()
@@ -132,8 +132,8 @@ func TestContratoFuncoes(t *testing.T) {
 
 	// 304 on services:announced written by its function.
 	const fora = "urn:tv30:test:contrato-go-fora"
-	must("tv30_servicos_anunciados", sid, "urn:tv30:test:contrato-go-outro")
-	defer s.c.fcall(true, "tv30_servicos_anunciados")
+	must("tv30_announced_services", sid, "urn:tv30:test:contrato-go-outro")
+	defer s.c.fcall(true, "tv30_announced_services")
 	if in, err := s.ServiceInCatalog(sid); err != nil || !in {
 		t.Fatalf("servico anunciado: %v %v", in, err)
 	}

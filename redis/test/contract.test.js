@@ -1,7 +1,7 @@
 // Contract: the real adapters of tv3ws and aop against the functions on a
 // real Redis (the doubles of the unit tests mimic only the effect). What each
 // service writes passes the schema, and data outside it comes back as
-// TV30ESQUEMA. Run by run.sh contrato.
+// TV30SCHEMA. Run by run.sh contract.
 'use strict';
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -24,7 +24,7 @@ process.env.USER_DATA_PATH = USER_DATA;
 // Read when tv3ws issues an access token.
 process.env.JWT_SECRET = 'tv30-test-secret';
 process.env.JWT_ISSUER = 'GenericIssuer';
-// The same format as the nomeArquivo type of esquema.json.
+// The same format as the fileName type of schema.json.
 const AVATAR_FORMATO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(svg|png|jpg|jpeg|webp)$/;
 // An SVG of the palette of the AoP form (aop/src/modules/profile-manager/
 // avatar.js, color Azul), as the creation screen sends it.
@@ -39,19 +39,19 @@ const arquivoAvatar = id => path.join(THUMBS, `${id}.svg`);
 require(path.join(TV3WS, 'node_modules', 'ts-node')).register({
     project: path.join(TV3WS, 'tsconfig.json'), transpileOnly: true,
 });
-const tv = require(path.join(TV3WS, 'src', 'redis-funcoes.ts'));
+const tv = require(path.join(TV3WS, 'src', 'redis-functions.ts'));
 const tvRedis = require(path.join(TV3WS, 'src', 'redis-client.ts')).default;
 const auth = require(path.join(TV3WS, 'src', 'modules', 'auth-manager', 'manager.ts'));
-const aop = require(path.join(AOP, 'src', 'redis-funcoes.js'));
+const aop = require(path.join(AOP, 'src', 'redis-functions.js'));
 const aopRedis = require(path.join(AOP, 'src', 'redis-client.js'));
 const profiles = require(path.join(AOP, 'src', 'modules', 'profile-manager', 'service.js'));
 const appHosts = require(path.join(AOP, 'src', 'app-hosts.js'));
 
 let r;
-const auditoria = () => r('FCALL_RO', 'tv30_auditoria', 0);
+const auditoria = () => r('FCALL_RO', 'tv30_audit', 0);
 // A refusal by the function: ioredis rejects with a ReplyError whose message
 // is the Redis error.
-const esquema = { message: /^TV30ESQUEMA / };
+const esquema = { message: /^TV30SCHEMA / };
 
 before(async () => {
     r = await connect();
@@ -65,17 +65,17 @@ after(async () => {
 });
 
 test('tv3ws: espelhos da sessao e o hash do servico corrente', async () => {
-    await tv.sessaoUsuario('');
-    await tv.sessaoUsuario('c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10');
-    await tv.sessaoServicoId('urn:tv30:service:users-test');
-    await tv.sessaoServico({
+    await tv.sessionUser('');
+    await tv.sessionUser('c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10');
+    await tv.sessionServiceId('urn:tv30:service:users-test');
+    await tv.sessionService({
         serviceContextId: 'c08b2c72-fd14-4095-adaf-2e5810850c57', serviceId: '', serviceName: '',
         transportStreamId: 'c08b2c72-fd14-4095-adaf-2e5810850c57', originalNetworkId: '09e59a1d-e2e7-467e-85db-2fb5a572e2fc',
     });
     assert.equal(await r('GET', 'session:current-service-id'), 'urn:tv30:service:users-test');
     assert.equal((await r('HGETALL', 'session:current-service')).length, 10);
-    await assert.rejects(tv.sessaoUsuario('x'.repeat(65)), esquema);
-    await assert.rejects(tv.sessaoServico({ serviceContextId: 'c' }), esquema);
+    await assert.rejects(tv.sessionUser('x'.repeat(65)), esquema);
+    await assert.rejects(tv.sessionService({ serviceContextId: 'c' }), esquema);
     assert.deepEqual(await auditoria(), []);
 });
 
@@ -136,7 +136,7 @@ test('tv3ws: projecao de verdade dos registros da 100.0 (regrava, remove, limpa 
 });
 
 test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ultimo acesso; sexto recusado; remocao', async () => {
-    await tv.sessaoServicoId('urn:tv30:service:users-test');
+    await tv.sessionServiceId('urn:tv30:service:users-test');
     const bodies = [
         { nickname: 'Viewer 1' },
         // With the avatar chosen in the form.
@@ -171,16 +171,16 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
     assert.equal(await profiles.touchLastAccess(ids[1], 5), true);
     assert.equal(await profiles.touchLastAccess('desconhecido', 5), false);
     // A broadcaster attribute on the profile removed below.
-    assert.equal(await tv.atributosEmissora(ids[0], 'urn:tv30:service:users-test', { cor: 'azul' }), 1);
-    await assert.rejects(tv.atributosEmissora(ids[0], 'urn:tv30:service:users-test', { nickname: 'x' }), esquema);
+    assert.equal(await tv.broadcasterAttributes(ids[0], 'urn:tv30:service:users-test', { cor: 'azul' }), 1);
+    await assert.rejects(tv.broadcasterAttributes(ids[0], 'urn:tv30:service:users-test', { nickname: 'x' }), esquema);
     // A valid UUID outside users:index (perfil-dependentes invariant) and an id
     // that is not a UUID.
-    await assert.rejects(tv.atributosEmissora('9d1e2f3a-4b5c-4d6e-8f70-81a2b3c4d5e6', 'urn:s', { cor: 'azul' }), { message: /perfil-dependentes/ });
-    await assert.rejects(tv.atributosEmissora('user_1760000000000', 'urn:s', { cor: 'azul' }), { message: /^TV30ESQUEMA .*RFC 9562/ });
-    // The nil UUID and a version outside 1 to 8 come back as TV30ESQUEMA, with
+    await assert.rejects(tv.broadcasterAttributes('9d1e2f3a-4b5c-4d6e-8f70-81a2b3c4d5e6', 'urn:s', { cor: 'azul' }), { message: /profile-dependents/ });
+    await assert.rejects(tv.broadcasterAttributes('user_1760000000000', 'urn:s', { cor: 'azul' }), { message: /^TV30SCHEMA .*RFC 9562/ });
+    // The nil UUID and a version outside 1 to 8 come back as TV30SCHEMA, with
     // the part that failed.
-    await assert.rejects(tv.atributosEmissora('00000000-0000-0000-0000-000000000000', 'urn:s', { cor: 'azul' }), { message: /^TV30ESQUEMA .*UUID nulo/ });
-    await assert.rejects(tv.atributosEmissora('9d1e2f3a-4b5c-9d6e-8f70-81a2b3c4d5e6', 'urn:s', { cor: 'azul' }), { message: /^TV30ESQUEMA .*versao do UUID deve ser de 1 a 8/ });
+    await assert.rejects(tv.broadcasterAttributes('00000000-0000-0000-0000-000000000000', 'urn:s', { cor: 'azul' }), { message: /^TV30SCHEMA .*nil UUID/ });
+    await assert.rejects(tv.broadcasterAttributes('9d1e2f3a-4b5c-9d6e-8f70-81a2b3c4d5e6', 'urn:s', { cor: 'azul' }), { message: /^TV30SCHEMA .*UUID version must be 1 to 8/ });
     // Sixth profile: the write function refuses it by the limit of the schema,
     // and the AoP answers the message of the screen; no eviction and no new
     // file.
@@ -188,10 +188,10 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
     await assert.rejects(profiles.createProfile({ nickname: 'Sexto' }),
         err => err instanceof profiles.ValidationError && err.message === 'O limite de 5 perfis foi atingido. O perfil não foi criado.');
     const novo = 'c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10';
-    await assert.rejects(aop.perfilGrava(novo, [], {
+    await assert.rejects(aop.profileWrite(novo, [], {
         id: novo, nickname: 'Direto', parentalControl: 'false', closedCaptioning: 'false', closedSigning: 'false',
         audioDescription: 'false', dialogEnhancement: 'false', voiceGuidance: 'false',
-    }), err => aop.tetoDePerfis(err) === 5);
+    }), err => aop.profileLimitOf(err) === 5);
     assert.equal(await r('SCARD', 'users:index'), 5);
     assert.equal(await r('HGET', `user:${ids[0]}:broadcaster-attrs:urn:tv30:service:users-test`, 'cor'), 'azul');
     assert.deepEqual(fs.readdirSync(THUMBS).sort(), thumbsAntes, 'a recusa nao deixa arquivo de avatar');
@@ -203,7 +203,7 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
     }
     assert.deepEqual(fs.readdirSync(THUMBS).sort(), vivos.sort(), 'arquivos de thumbs/ = avatares dos perfis existentes');
     // Removal by the manager takes visibility and broadcaster attributes in
-    // the same function (tv30_perfil_remove), then the avatar file.
+    // the same function (tv30_profile_remove), then the avatar file.
     assert.ok(fs.existsSync(arquivoAvatar(ids[0])));
     await profiles.removeProfile(ids[0]);
     assert.deepEqual(await r('KEYS', `user:${ids[0]}*`), [], 'a remocao leva visibilidade e atributos de emissora juntos');
@@ -218,7 +218,7 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
 });
 
 test('AoP: perfil padrao na base sem perfil cumpre o esquema; o unico perfil nao e removido', async () => {
-    for (const id of await r('SMEMBERS', 'users:index')) await profiles.removeProfile(id).catch(() => aop.perfilRemove(id));
+    for (const id of await r('SMEMBERS', 'users:index')) await profiles.removeProfile(id).catch(() => aop.profileRemove(id));
     assert.equal(await r('SCARD', 'users:index'), 0);
     const p = await profiles.ensureDefaultProfile();
     assert.ok(p, 'perfil padrao criado');
@@ -267,16 +267,16 @@ test('AoP: origens montadas por app-hosts cumprem o esquema; registro, remocao e
     for (const [id, c] of [['urn:tv30:app:k1a2b3', cfg], ['Ação Ü!', cfg], ['x'.repeat(100), cfg], ['urn:tv30:service:users-test', cfg80]]) {
         const d = appHosts.describeApp(id, 'http://bcast:8081', c);
         assert.ok(d && d.origin, `describeApp(${id})`);
-        await aop.origemRegistra(d.origin, 'urn:tv30:service:users-test');
+        await aop.originRegister(d.origin, 'urn:tv30:service:users-test');
         origens.push(d.origin);
     }
-    await aop.origemRegistra('http://uff.apps.localhost:8080', 'current-service');
+    await aop.originRegister('http://uff.apps.localhost:8080', 'current-service');
     assert.deepEqual(await auditoria(), [], `origens: ${origens.join(' ')}`);
-    await assert.rejects(aop.origemRegistra('http://bcast:8081/', 'urn:s'), esquema);
-    await assert.rejects(aop.origemRegistra('http://Uff.apps.localhost:8080', 'urn:s'), esquema);
-    await aop.origemRemove(origens[0]);
+    await assert.rejects(aop.originRegister('http://bcast:8081/', 'urn:s'), esquema);
+    await assert.rejects(aop.originRegister('http://Uff.apps.localhost:8080', 'urn:s'), esquema);
+    await aop.originRemove(origens[0]);
     assert.equal(await r('HEXISTS', 'origins:associated', origens[0]), 0);
-    await aop.origensLimpa();
+    await aop.originsClear();
     assert.equal(await r('EXISTS', 'origins:associated'), 0);
     assert.deepEqual(await auditoria(), []);
 });

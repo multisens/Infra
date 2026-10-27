@@ -22,7 +22,7 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "test -f /tmp/tv30-redis-pronto && test \"$$(redis-cli --raw EXISTS seed:done)\" = \"1\""]
+      test: ["CMD-SHELL", "test -f /tmp/tv30-redis-ready && test \"$$(redis-cli --raw EXISTS seed:done)\" = \"1\""]
       interval: 2s
       timeout: 3s
       retries: 30

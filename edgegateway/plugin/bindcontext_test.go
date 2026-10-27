@@ -491,7 +491,7 @@ func TestBindRedisFora(t *testing.T) {
 // reason in the description (not "redis indisponivel"), in both modes and on
 // both writes.
 func TestBindRecusaDoEsquema(t *testing.T) {
-	msg := `TV30ESQUEMA tv30_bind_registra: bind-context:` + tSvc + ` entrada: membro "alg": deve ser um de HS256, HS512, RS256, RS512 (veio "none")`
+	msg := `TV30SCHEMA tv30_bind_register: bind-context:` + tSvc + ` entry: member "alg": must be one of HS256, HS512, RS256, RS512 (got "none")`
 	for _, mode := range []string{modeEnforce, modeWarn} {
 		st := twoServices(t)
 		st.current = tSvc

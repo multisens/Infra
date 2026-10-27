@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Generates the Redis seed in RESP, for `redis-cli --pipe`: one FCALL
-tv30_perfil_grava per profile, with the arguments of perfil_fcall_args
+tv30_profile_write per profile, with the arguments of profile_fcall_args
 (migrate_to_redis.py).
 
 Usage: emit_seed.py <userData.json> <output.resp>
@@ -9,7 +9,7 @@ Usage: emit_seed.py <userData.json> <output.resp>
 import json
 import sys
 
-from migrate_to_redis import perfil_fcall_args
+from migrate_to_redis import profile_fcall_args
 
 
 def resp(*args) -> bytes:
@@ -28,13 +28,13 @@ def main(src: str, dst: str) -> None:
 
     cmds = []
     for user in users:
-        args = perfil_fcall_args(user)
+        args = profile_fcall_args(user)
         if args:
             cmds.append(resp(*args))
 
     with open(dst, "wb") as f:
         f.writelines(cmds)
-    print(f"seed: {len(users)} usuarios, {len(cmds)} chamadas tv30_perfil_grava -> {dst}")
+    print(f"seed: {len(users)} users, {len(cmds)} calls of tv30_profile_write -> {dst}")
 
 
 if __name__ == "__main__":

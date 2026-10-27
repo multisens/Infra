@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Migration of the profiles of a file to Redis. Writes, by FCALL
-tv30_perfil_grava, which checks the schema, the keys:
+tv30_profile_write, which checks the schema, the keys:
   - users:index (SET): every user id;
   - user:{userId} (HASH): the profile attributes (Table 7);
   - user:{userId}:consent (SET): services to which the profile is visible.
@@ -58,10 +58,10 @@ def redis_text(v) -> str:
     return str(v)
 
 
-def perfil_fcall_args(user: dict):
-    """Arguments of FCALL tv30_perfil_grava for a profile of userData.json, or
+def profile_fcall_args(user: dict):
+    """Arguments of FCALL tv30_profile_write for a profile of userData.json, or
     None if the profile has no id. Format of the function:
-      FCALL tv30_perfil_grava 0 <id> <n> <service 1..n> <field> <value> ...
+      FCALL tv30_profile_write 0 <id> <n> <service 1..n> <field> <value> ...
     users:index gets the id, user:{id} is rewritten whole and the visibility
     (accessConsent) is added to user:{id}:consent, without removing what was
     granted outside the JSON."""
@@ -71,7 +71,7 @@ def perfil_fcall_args(user: dict):
     fields = {k: redis_text(v) for k, v in normalize_user(user).items() if v is not None}
     consent = [redis_text(s) for s in (user.get('accessConsent') or user.get('consent') or [])]
     flat = [x for kv in fields.items() for x in kv]
-    return ['FCALL', 'tv30_perfil_grava', '0', redis_text(user_id), str(len(consent)), *consent, *flat]
+    return ['FCALL', 'tv30_profile_write', '0', redis_text(user_id), str(len(consent)), *consent, *flat]
 
 
 def migrate(r, user_data_path: str) -> None:
@@ -85,7 +85,7 @@ def migrate(r, user_data_path: str) -> None:
     # user:{id}:consent. The visibility is merged, without DEL.
     pipe = r.pipeline()
     for user in users:
-        args = perfil_fcall_args(user)
+        args = profile_fcall_args(user)
         if args:
             pipe.execute_command(*args)
 

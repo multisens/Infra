@@ -1,6 +1,6 @@
 # tv30-redis: Redis with the tv30 function library, the initial load
 # generated at build time (applied by redis-cli --pipe) and redis-commander
-# (debug). The build runs confere-imagem.sh: a library that does not load or
+# (debug). The build runs check-image.sh: a library that does not load or
 # a load outside the schema fails the build. Build context: infra/ (the
 # userData template and migrate_to_redis.py of mqtt-broker).
 
@@ -21,8 +21,8 @@ RUN apk add --no-cache nodejs npm dumb-init && \
     npm cache clean --force
 
 COPY --from=seedgen /seed.resp /seed.resp
-COPY redis/esquema.json redis/funcoes.lua redis/biblioteca.sh redis/confere-imagem.sh /opt/tv30-redis/
-RUN sh /opt/tv30-redis/confere-imagem.sh
+COPY redis/schema.json redis/functions.lua redis/library.sh redis/check-image.sh /opt/tv30-redis/
+RUN sh /opt/tv30-redis/check-image.sh
 COPY redis/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
