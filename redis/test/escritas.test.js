@@ -45,7 +45,7 @@ test('funcoes chamadas pelos adaptadores existem e cobrem as familias de cada do
     const usadas = new Set();
     for (const cfg of Object.values(MODULOS)) verificaModuloJs(cfg).adaptadorFuncoes.forEach(f => usadas.add(f));
     const go = fs.readFileSync(path.join(INFRA, 'edgegateway', 'plugin', 'redis.go'), 'utf8');
-    for (const m of go.matchAll(/"(tv30_[a-z_]+)"/g)) usadas.add(m[1]);
+    for (const m of go.matchAll(/"(tv30_[a-z0-9_]+)"/g)) usadas.add(m[1]);
     // Initial load (test above).
     usadas.add('tv30_perfil_grava');
     for (const f of usadas) assert.ok(declaradas.has(f), `${f} declarada no esquema.json`);

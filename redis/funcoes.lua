@@ -335,6 +335,18 @@ motivo = function(regra, v, emJson)
         if not (regra.campos and regra.campos[nome]) then return 'membro "' .. tostring(nome) .. '" nao previsto no esquema' end
       end
     end
+  elseif t == 'listaJson' then
+    -- cjson decodes [] and {} alike: the text must open a list.
+    local ok, lista = pcall(cjson.decode, v)
+    if string.sub(v, 1, 1) ~= '[' or not ok or type(lista) ~= 'table' then
+      return 'deve ser uma lista JSON (veio ' .. amostra(v) .. ')'
+    end
+    for i, x in ipairs(lista) do
+      local m = motivo(regra.itens, x, true)
+      if m then
+        return 'item ' .. (i - 1) .. ': ' .. m
+      end
+    end
   else
     return 'regra de tipo desconhecido no esquema.json: ' .. tostring(t)
   end
@@ -754,6 +766,49 @@ OP.tv30_bind_remove = function(args)
   return redis.call('LREM', chave, 0, args[2])
 end
 
+-- Remote devices of API version 100.0: projection written by tv3ws.
+
+local V100_REMOTE_DEVICE = 'v100.0:remote-device:{handle}'
+
+-- Rewrites the whole record of the handle.
+OP.tv30_v100_remote_device_write = function(args)
+  local usage = 'tv30_v100_remote_device_write <handle> <campo> <valor> [...]'
+  if #args < 3 then
+    falha('uso: ' .. usage)
+  end
+  local fam = familia(V100_REMOTE_DEVICE)
+  local parts = { handle = args[1] }
+  local key = chaveValida(fam, parts)
+  local record = pares(args, 2, usage)
+  exige(key, motivosHash(fam, parts, record, nil))
+  exigeTipo(fam, key)
+  redis.call('DEL', key)
+  emLotes('HSET', key, plano(record))
+  return 1
+end
+
+OP.tv30_v100_remote_device_remove = function(args)
+  exigeArgs(args, 1, 'tv30_v100_remote_device_remove <handle>')
+  exigeNaoVazio(args[1], 'handle')
+  local key = chaveDe(familia(V100_REMOTE_DEVICE), { handle = args[1] })
+  return redis.call('DEL', key)
+end
+
+OP.tv30_v100_remote_devices_clear = function(args)
+  exigeArgs(args, 0, 'tv30_v100_remote_devices_clear')
+  local prefix = string.gsub(familia(V100_REMOTE_DEVICE).chave, '{handle}', '')
+  local removed = 0
+  local cursor = '0'
+  repeat
+    local r = redis.call('SCAN', cursor, 'MATCH', escapaGlob(prefix) .. '*', 'COUNT', 500)
+    cursor = r[1]
+    for _, key in ipairs(r[2]) do
+      removed = removed + redis.call('DEL', key)
+    end
+  until cursor == '0'
+  return removed
+end
+
 local function membros(chave)
   if tipoNoRedis(chave) ~= 'set' then return {} end
   return conjuntoDe(redis.call('SMEMBERS', chave))
@@ -896,6 +951,9 @@ local ESCRITA = {
   'tv30_sessao_servico',
   'tv30_sessao_servico_id',
   'tv30_sessao_usuario',
+  'tv30_v100_remote_device_remove',
+  'tv30_v100_remote_device_write',
+  'tv30_v100_remote_devices_clear',
 }
 for i = 1, #ESCRITA do
   registra(ESCRITA[i], OP[ESCRITA[i]], { 'no-cluster' })

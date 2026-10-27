@@ -218,7 +218,7 @@ function verificaModuloJs(opts) {
                 }
             }
             for (const t of a.textos) {
-                if (/^tv30_[a-z_]+$/.test(t.v)) {
+                if (/^tv30_[a-z0-9_]+$/.test(t.v)) {
                     adaptadorFuncoes.add(t.v);
                     if (!funcoes.has(t.v)) violacoes.push(`${r}:${t.linha}: funcao ${t.v} nao existe no esquema.json`);
                 }

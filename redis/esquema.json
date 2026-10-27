@@ -5,11 +5,11 @@
     "Redis, funcoes e este esquema sao do testbed, nao da ABNT NBR 25608;",
     "o campo 'fonte' de cada regra diz de onde ela veio (secao da norma, schemas.json do broker ou codigo)."
   ],
-  "versao": "7",
+  "versao": "8",
   "biblioteca": "tv30",
   "prefixoErro": "TV30ESQUEMA",
 
-  "prefixosAuditados": ["session:", "users:", "user:", "clients:", "client:", "origins:", "bind-context:", "services:"],
+  "prefixosAuditados": ["session:", "users:", "user:", "clients:", "client:", "origins:", "bind-context:", "services:", "v100.0:"],
 
   "definicoes": {
     "idPerfil": {
@@ -210,6 +210,24 @@
         "outrosCampos": false
       },
       "funcoes": ["tv30_bind_registra", "tv30_bind_remove"]
+    },
+    {
+      "familia": "v100.0:remote-device:{handle}",
+      "chave": "v100.0:remote-device:{handle}",
+      "tipo": "hash",
+      "dono": "tv3ws",
+      "descricao": "Projecao de um registro de dispositivo remoto da versao de API 100.0 (proposta v2 da C.6.15), regravada inteira pelo tv3ws depois de cada mudanca em memoria, que e a fonte da verdade; limpa no boot do tv3ws. Sem o token do ponto de entrada.",
+      "partes": { "handle": { "tipo": "uuid", "fonte": "C.6.15.2, Tabela C.76: handle do registro (UUID gerado pelo tv3ws)" } },
+      "campos": {
+        "deviceId": { "tipo": "uuid", "obrigatorio": true, "fonte": "C.6.15.5, Tabela C.80 (proposta v2): identificador do dispositivo na listagem" },
+        "deviceClass": { "tipo": "texto", "min": 1, "obrigatorio": true, "fonte": "C.6.15.2, Tabela C.76: deviceClass (vazio e valor invalido)" },
+        "supportedTypes": { "tipo": "listaJson", "itens": { "tipo": "texto" }, "obrigatorio": true, "fonte": "C.6.15.2, Tabela C.76: supportedTypes, lista JSON de textos (pode ser vazia)" },
+        "state": { "tipo": "enum", "valores": ["registered", "connected"], "obrigatorio": true, "fonte": "C.6.15.1, Figura C.7 (proposta v2): Registered ou Connected" },
+        "paired": { "tipo": "booleano", "obrigatorio": true, "fonte": "C.6.15.5, Tabela C.80 (proposta v2): paired" },
+        "disconnectedAt": { "tipo": "inteiro", "min": 0, "obrigatorio": true, "fonte": "instante da ultima desconexao em ms, base do descarte da C.6.15.2 (fora da norma)" }
+      },
+      "outrosCampos": false,
+      "funcoes": ["tv30_v100_remote_device_write", "tv30_v100_remote_device_remove", "tv30_v100_remote_devices_clear"]
     }
   ],
 
@@ -254,6 +272,9 @@
     { "nome": "tv30_servicos_anunciados", "argumentos": "[<id do servico> ...] (nenhum = nenhum servico anunciado)", "efeito": "regrava inteiro o conjunto services:announced (DEL + SADD); sem argumento, so o DEL", "retorno": "numero de servicos no conjunto", "chamadores": ["AoP (aop-transport-layer-metadata-lls: BAMT recebida ou retirada, partida)"] },
     { "nome": "tv30_bind_registra", "argumentos": "<id do servico> <entrada JSON>", "efeito": "RPUSH bind-context:{serviceId}", "retorno": "tamanho da lista", "chamadores": ["borda (C.6.8.2)"] },
     { "nome": "tv30_bind_remove", "argumentos": "<id do servico> <entrada JSON exata>", "efeito": "LREM bind-context:{serviceId} 0", "retorno": "numero de entradas removidas", "chamadores": ["borda (C.6.8.4)"] },
+    { "nome": "tv30_v100_remote_device_write", "argumentos": "<handle> <campo> <valor> [...] (o registro inteiro)", "efeito": "regrava inteiro o hash v100.0:remote-device:{handle} (DEL + HSET)", "retorno": "1", "chamadores": ["tv3ws (projecao dos registros da 100.0)"] },
+    { "nome": "tv30_v100_remote_device_remove", "argumentos": "<handle>", "efeito": "DEL v100.0:remote-device:{handle}", "retorno": "1 se removeu, 0 se nao havia", "chamadores": ["tv3ws (projecao dos registros da 100.0)"] },
+    { "nome": "tv30_v100_remote_devices_clear", "argumentos": "(nenhum)", "efeito": "DEL de todo v100.0:remote-device:*", "retorno": "numero de chaves removidas", "chamadores": ["tv3ws (boot)"] },
     { "nome": "tv30_auditoria", "somenteLeitura": true, "argumentos": "(nenhum)", "efeito": "percorre as familias e as invariantes e devolve o que esta fora do esquema", "retorno": "lista de [chave, familia, motivo]; vazia = tudo no esquema", "chamadores": ["testes (scripts/test-auth.sh, scripts/test-consolidacao.sh, infra/redis/test)", "desenvolvedor: docker exec redis redis-cli FCALL_RO tv30_auditoria 0"] },
     { "nome": "tv30_versao", "somenteLeitura": true, "argumentos": "(nenhum)", "efeito": "nenhum", "retorno": "a versao deste esquema", "chamadores": ["desenvolvedor: docker exec redis redis-cli FCALL_RO tv30_versao 0"] }
   ],

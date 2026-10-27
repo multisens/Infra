@@ -68,6 +68,11 @@ const SVC = {
 const CLIENTE = { class: 'standAlone', refreshToken: 'rt-1', accessToken: 'at-1' };
 const ENTRADA = { alg: 'HS256', key: 'segredo', registeredAt: 1760000000000 };
 const ORIGEM = 'http://users-test.apps.localhost:8080';
+const RD_HANDLE = '2b7f6c1e-4d3a-4f8b-9c2d-1e0f3a4b5c6d';
+const RD = {
+    deviceId: '7c1d2e3f-4a5b-4c6d-8e7f-0a1b2c3d4e5f', deviceClass: 'sensory-effect', supportedTypes: '["light","wind"]',
+    state: 'connected', paired: 'false', disconnectedAt: '1760000000000',
+};
 
 async function snapshot() {
     const keys = new Set();
@@ -225,6 +230,16 @@ function violacoes(regra, emJson = false) {
             if (regra.outrosCampos === false) out.push([JSON.stringify({ ...valido, inventado: 1 }), 'membro "inventado" nao previsto', 'membro extra']);
             break;
         }
+        case 'listaJson':
+            out.push(['nao-e-json', 'lista JSON', 'texto que nao e JSON']);
+            out.push(['{}', 'lista JSON', 'objeto JSON vazio']);
+            out.push(['{"a":"b"}', 'lista JSON', 'objeto JSON']);
+            out.push(['"texto"', 'lista JSON', 'string JSON']);
+            out.push(['', 'lista JSON', 'vazio']);
+            for (const [v, m, d] of violacoes(resolve(regra.itens), true)) {
+                out.push([JSON.stringify(['ok', v]), ['item 1: ', m], `item: ${d}`]);
+            }
+            break;
         default:
             throw new Error(`tipo de regra sem gerador de violacoes neste teste: ${t}`);
     }
@@ -270,6 +285,7 @@ function aceitacoes(regra) {
         ];
         case 'origem': return ['http://users-test.apps.localhost:8080', 'http://a.apps.localhost', 'https://x.example', 'https://x.example:8443', 'http://[::1]:8099', 'http://127.0.0.1:65535'];
         case 'json': return ['HS256', 'HS512', 'RS256', 'RS512'].map(alg => JSON.stringify({ ...jsonValido(regra), alg }));
+        case 'listaJson': return ['[]', '["light"]', '["light","wind"]', '[""]'];
         default: throw new Error(`tipo de regra sem gerador de aceitacoes neste teste: ${regra.tipo}`);
     }
 }
@@ -321,6 +337,10 @@ const SLOTS = {
         { rotulo: 'valor', regra: f => f.outrosCampos.valor, chamada: v => ['tv30_origem_registra', [ORIGEM, v]], trecho: 'campo "' },
     ],
     'services:announced': [{ rotulo: 'membro', regra: f => f.membros, chamada: v => ['tv30_servicos_anunciados', ['urn:tv30:service:ok', v]], trecho: 'services:announced membro' }],
+    'v100.0:remote-device:{handle}': [
+        { rotulo: '{handle}', regra: f => f.partes.handle, chamada: v => ['tv30_v100_remote_device_write', [v, ...plano(RD)]], trecho: '{handle} da chave:' },
+        ...campoSlots(campo => v => ['tv30_v100_remote_device_write', [RD_HANDLE, ...plano({ ...RD, [campo]: v })]]),
+    ],
     'bind-context:{serviceId}': [
         { rotulo: '{serviceId}', regra: f => f.partes.serviceId, chamada: v => ['tv30_bind_registra', [v, JSON.stringify(ENTRADA)]], trecho: '{serviceId} da chave:' },
         { rotulo: 'entrada', regra: f => f.itens, chamada: v => ['tv30_bind_registra', ['urn:tv30:service:a', v]], trecho: 'entrada:' },
@@ -410,6 +430,7 @@ for (const fam of ESQ.familias) {
                 'session:current-service': [SVC, h => ['tv30_sessao_servico', plano(h)]],
                 'user:{id}': [PERFIL, h => ['tv30_perfil_grava', perfilArgs(P1, [], h)]],
                 'client:{id}': [CLIENTE, h => ['tv30_cliente_grava', ['c1', ...plano(h)]]],
+                'v100.0:remote-device:{handle}': [RD, h => ['tv30_v100_remote_device_write', [RD_HANDLE, ...plano(h)]]],
             }[fam.familia];
             for (const [campo, r0] of Object.entries(fam.campos)) {
                 const regra = resolve(r0);
@@ -692,6 +713,34 @@ test('registro existente: campo novo conferido, o resto ja gravado nao trava (a 
     assert.deepEqual(await auditoria(), [[`user:${P1}`, 'user:{id}', 'campo parentalControl: deve ser "true" ou "false" (veio "False")']]);
     // A new client checks everything; an existing one only what is written.
     await recusa('cliente novo incompleto', 'tv30_cliente_grava', ['c1', 'accessToken', 'a'], ['campo class: obrigatorio, ausente']);
+});
+
+test('dispositivos remotos da 100.0: regrava inteiro, remove e limpa so a propria familia', async () => {
+    const key = `v100.0:remote-device:${RD_HANDLE}`;
+    const other = 'v100.0:remote-device:3c8a7d2f-5e4b-4a9c-8d1e-2f3a4b5c6d7e';
+    await fcall('tv30_v100_remote_device_write', RD_HANDLE, ...plano(RD));
+    await fcall('tv30_v100_remote_device_write', RD_HANDLE, ...plano({ ...RD, state: 'registered', paired: 'false', supportedTypes: '[]' }));
+    const h = await r('HGETALL', key);
+    assert.deepEqual(Object.fromEntries(Array.from({ length: h.length / 2 }, (_, i) => [h[2 * i], h[2 * i + 1]])),
+        { ...RD, state: 'registered', paired: 'false', supportedTypes: '[]' });
+    assert.deepEqual(await auditoria(), []);
+    // The write takes the whole record: a missing field is refused.
+    const { state, ...withoutState } = RD;
+    await recusa('registro incompleto', 'tv30_v100_remote_device_write', [RD_HANDLE, ...plano(withoutState)], ['campo state: obrigatorio, ausente']);
+
+    assert.equal(await fcall('tv30_v100_remote_device_remove', RD_HANDLE), 1);
+    assert.equal(await fcall('tv30_v100_remote_device_remove', RD_HANDLE), 0);
+    assert.equal(await r('EXISTS', key), 0);
+
+    await fcall('tv30_v100_remote_device_write', RD_HANDLE, ...plano(RD));
+    await fcall('tv30_v100_remote_device_write', other.split(':').pop(), ...plano(RD));
+    await fcall('tv30_cliente_autoriza', 'c1', ...plano(CLIENTE));
+    assert.equal(await fcall('tv30_v100_remote_devices_clear'), 2);
+    assert.equal(await r('EXISTS', key), 0);
+    assert.equal(await r('EXISTS', other), 0);
+    assert.equal(await r('EXISTS', 'client:c1'), 1, 'a limpeza nao toca outras familias');
+    assert.equal(await fcall('tv30_v100_remote_devices_clear'), 0);
+    assert.deepEqual(await auditoria(), []);
 });
 
 test('origens: registra, remove, limpa', async () => {

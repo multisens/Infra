@@ -102,6 +102,39 @@ test('tv3ws: auth-manager de verdade (autorizar, emitir e rotacionar, bloquear, 
     assert.equal(await r('SISMEMBER', 'clients:authorized', 'c-x'), 0);
 });
 
+test('tv3ws: projecao de verdade dos registros da 100.0 (regrava, remove, limpa no boot)', async () => {
+    const projection = require(path.join(TV3WS, 'src', 'v100.0', 'modules', 'remote-device', 'projection.ts'));
+    const Registry = require(path.join(TV3WS, 'src', 'v100.0', 'modules', 'remote-device', 'registry.ts')).default;
+    const waitFor = async (condition) => {
+        for (let i = 0; i < 200 && !(await condition()); i++) {
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        assert.ok(await condition(), 'condicao nao alcancada a tempo');
+    };
+    await tv.writeRemoteDeviceV100('3c8a7d2f-5e4b-4a9c-8d1e-2f3a4b5c6d7e', {
+        deviceId: '7c1d2e3f-4a5b-4c6d-8e7f-0a1b2c3d4e5f', deviceClass: 'antigo', supportedTypes: '[]',
+        state: 'registered', paired: 'false', disconnectedAt: '0',
+    });
+    await projection.startProjection();
+    assert.equal(await r('EXISTS', 'v100.0:remote-device:3c8a7d2f-5e4b-4a9c-8d1e-2f3a4b5c6d7e'), 0, 'a partida limpa a projecao anterior');
+
+    const registry = new Registry('sensory-effect', ['light', 'wind']);
+    const key = `v100.0:remote-device:${registry.handle}`;
+    projection.projectRegistry(registry.handle, () => registry);
+    await waitFor(async () => (await r('EXISTS', key)) === 1);
+    assert.equal(await r('HGET', key, 'supportedTypes'), '["light","wind"]');
+    assert.equal(await r('HGET', key, 'state'), 'registered');
+    assert.deepEqual(await auditoria(), []);
+
+    registry.update('outra', []);
+    projection.projectRegistry(registry.handle, () => registry);
+    await waitFor(async () => (await r('HGET', key, 'deviceClass')) === 'outra');
+    projection.projectRegistry(registry.handle, () => undefined);
+    await waitFor(async () => (await r('EXISTS', key)) === 0);
+    await assert.rejects(tv.writeRemoteDeviceV100(registry.handle, { deviceClass: '' }), esquema);
+    assert.deepEqual(await auditoria(), []);
+});
+
 test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ultimo acesso; sexto recusado; remocao', async () => {
     await tv.sessaoServicoId('urn:tv30:service:users-test');
     const bodies = [
