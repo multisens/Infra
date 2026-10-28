@@ -113,12 +113,12 @@ test('tv3ws: projecao de verdade dos registros da 100.0 (regrava, remove, limpa 
     };
     await tv.writeRemoteDeviceV100('3c8a7d2f-5e4b-4a9c-8d1e-2f3a4b5c6d7e', {
         deviceId: '7c1d2e3f-4a5b-4c6d-8e7f-0a1b2c3d4e5f', deviceClass: 'antigo', supportedTypes: '[]',
-        state: 'registered', paired: 'false', disconnectedAt: '0',
+        state: 'registered', paired: 'false', disconnectedAt: '0', registeredBy: 'dispositivo-1',
     });
     await projection.startProjection();
     assert.equal(await r('EXISTS', 'v100.0:remote-device:3c8a7d2f-5e4b-4a9c-8d1e-2f3a4b5c6d7e'), 0, 'a partida limpa a projecao anterior');
 
-    const registry = new Registry('sensory-effect', ['light', 'wind']);
+    const registry = new Registry('sensory-effect', ['light', 'wind'], 'dispositivo-1');
     const key = `v100.0:remote-device:${registry.handle}`;
     projection.projectRegistry(registry.handle, () => registry);
     await waitFor(async () => (await r('EXISTS', key)) === 1);

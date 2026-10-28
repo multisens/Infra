@@ -662,10 +662,10 @@ func TestVersaoNegociadaPorRota(t *testing.T) {
 	}
 }
 
-// The edge passes on the class and the identity of the local client in
+// The edge passes on the class and the identity of the client in
 // X-TV30-Client-Class and X-TV30-Client-Id, removing those sent by the
-// client: associated, only the class; standAlone, the class and the
-// clientid; nonLocal, neither.
+// client: associated, only the class; standAlone and nonLocal, the class
+// and the clientid.
 func TestCabecalhosDoCliente(t *testing.T) {
 	forged := map[string]string{internalClientClassHeader: classAssociated, internalClientIDHeader: "forjado"}
 	with := func(base map[string]string) map[string]string {
@@ -685,9 +685,9 @@ func TestCabecalhosDoCliente(t *testing.T) {
 	}{
 		{"standAlone", "/tv3/remote-device/devices/x", map[string]string{"Authorization": accessFor(t, "cli-1", classStandAlone)}, classStandAlone, "cli-1"},
 		{"associado pelo Origin", "/tv3/remote-device/devices/x", map[string]string{"Origin": tAssoc}, classAssociated, ""},
-		{"nonLocal", "/tv3/token", map[string]string{"Authorization": accessFor(t, "cli-2", classNonLocal)}, "", ""},
+		{"nonLocal", "/tv3/token", map[string]string{"Authorization": accessFor(t, "cli-2", classNonLocal)}, classNonLocal, "cli-2"},
 		{"standAlone com cabecalhos forjados", "/tv3/remote-device/devices/x", with(map[string]string{"Authorization": accessFor(t, "cli-1", classStandAlone)}), classStandAlone, "cli-1"},
-		{"nonLocal com cabecalhos forjados", "/tv3/token", with(map[string]string{"Authorization": accessFor(t, "cli-2", classNonLocal)}), "", ""},
+		{"nonLocal com cabecalhos forjados", "/tv3/token", with(map[string]string{"Authorization": accessFor(t, "cli-2", classNonLocal)}), classNonLocal, "cli-2"},
 	} {
 		var class, id string
 		calls := 0

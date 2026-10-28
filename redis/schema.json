@@ -5,7 +5,7 @@
     "Redis, the functions and this schema belong to the testbed, not to ABNT NBR 25608;",
     "the 'source' field of each rule says where it came from (section of the standard, schemas.json of the broker or code)."
   ],
-  "version": "9",
+  "version": "10",
   "library": "tv30",
   "errorPrefix": "TV30SCHEMA",
 
@@ -224,7 +224,8 @@
         "supportedTypes": { "type": "jsonList", "items": { "type": "text" }, "required": true, "source": "C.6.15.2, Table C.76: supportedTypes, JSON list of texts (may be empty)" },
         "state": { "type": "enum", "values": ["registered", "connected"], "required": true, "source": "C.6.15.1, Figure C.7 (proposal v2): Registered or Connected" },
         "paired": { "type": "boolean", "required": true, "source": "C.6.15.5, Table C.80 (proposal v2): paired" },
-        "disconnectedAt": { "type": "integer", "min": 0, "required": true, "source": "instant of the last disconnection in ms, basis of the discard of C.6.15.2 (outside the standard)" }
+        "disconnectedAt": { "type": "integer", "min": 0, "required": true, "source": "instant of the last disconnection in ms, basis of the discard of C.6.15.2 (outside the standard)" },
+        "registeredBy": { "type": "text", "min": 1, "required": true, "source": "clientid of the client that made the registration, or the identity of the associated application; released with the client (C.4.4)" }
       },
       "otherFields": false,
       "functions": ["tv30_v100_remote_device_write", "tv30_v100_remote_device_remove", "tv30_v100_remote_devices_clear"]

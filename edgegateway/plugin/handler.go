@@ -121,17 +121,18 @@ func (h *authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.serveNext(w, r)
 }
 
-// setClientHeaders writes the class and the identity of the local client
-// decided by evaluate, removing those sent by the client: associated, only
-// the class; standAlone, the class and the clientid; any other, neither.
+// setClientHeaders writes the class and the identity of the client decided
+// by evaluate, removing those sent by the client: associated, only the
+// class; standAlone and nonLocal, the class and the clientid; a client
+// without a class, neither.
 func setClientHeaders(r *http.Request, v verdict) {
 	r.Header.Del(internalClientClassHeader)
 	r.Header.Del(internalClientIDHeader)
 	switch v.Class {
 	case classAssociated:
 		r.Header.Set(internalClientClassHeader, classAssociated)
-	case classStandAlone:
-		r.Header.Set(internalClientClassHeader, classStandAlone)
+	case classStandAlone, classNonLocal:
+		r.Header.Set(internalClientClassHeader, v.Class)
 		r.Header.Set(internalClientIDHeader, v.ClientID)
 	}
 }

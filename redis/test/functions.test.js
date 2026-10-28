@@ -71,7 +71,7 @@ const ORIGEM = 'http://users-test.apps.localhost:8080';
 const RD_HANDLE = '2b7f6c1e-4d3a-4f8b-9c2d-1e0f3a4b5c6d';
 const RD = {
     deviceId: '7c1d2e3f-4a5b-4c6d-8e7f-0a1b2c3d4e5f', deviceClass: 'sensory-effect', supportedTypes: '["light","wind"]',
-    state: 'connected', paired: 'false', disconnectedAt: '1760000000000',
+    state: 'connected', paired: 'false', disconnectedAt: '1760000000000', registeredBy: 'dispositivo-1',
 };
 
 async function snapshot() {

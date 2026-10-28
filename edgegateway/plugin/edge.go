@@ -66,8 +66,7 @@ const (
 	internalVersionHeader = "X-TV30-API-Version"
 	// Original Host header of the client request.
 	internalHostHeader = "X-TV30-Host"
-	// Class of the local client (associated or standAlone) and, for the
-	// stand-alone one, its clientid; absent for any other client.
+	// Class of the client and, except for the associated one, its clientid.
 	internalClientClassHeader = "X-TV30-Client-Class"
 	internalClientIDHeader    = "X-TV30-Client-Id"
 )

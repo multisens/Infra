@@ -339,5 +339,10 @@
       "state"
     ],
     "additionalProperties": false
+  },
+  "aop/access-panel/client-blocked": {
+    "type": "string",
+    "minLength": 1,
+    "description": "O clientid do cliente bloqueado pelo telespectador no menu de historico de autorizacoes (C.4.2.2), NAO retido, publicado pelo Access Panel depois de gravar o bloqueio no Redis. O tv3ws libera os recursos do cliente (C.4.4)."
   }
 }
