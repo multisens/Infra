@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-// Testes das APIs C.6.8 respondidas pela borda, pelo ServeHTTP inteiro.
+// Tests of the C.6.8 APIs answered by the edge, through the whole ServeHTTP.
 
 const tSvcB = "urn:tv30:service:b"
 
@@ -27,8 +27,8 @@ var (
 	rsa512     *rsa.PrivateKey
 )
 
-// chave de 512 bits: o tamanho do exemplo da norma ("MIIBOgIBAAJB...");
-// so serve para RS256.
+// A 512-bit key, the size of the example of the standard ("MIIBOgIBAAJB..."),
+// valid only for RS256.
 func testRSA512(t *testing.T) *rsa.PrivateKey {
 	t.Helper()
 	rsa512Once.Do(func() {
@@ -54,7 +54,7 @@ func spkiB64(t *testing.T, k *rsa.PrivateKey) string {
 	return base64.StdEncoding.EncodeToString(der)
 }
 
-// edgeStore: servico corrente tSvc, nenhuma chave registrada.
+// edgeStore: current service tSvc, no registered key.
 func edgeStore() *fakeStore {
 	st := baseStore()
 	st.keys = map[string][]string{}
@@ -69,8 +69,8 @@ type edgeResp struct {
 	json   map[string]interface{}
 }
 
-// edgeCall faz a requisicao pelo ServeHTTP. hdr pode trazer Content-Type;
-// corpo "" = sem corpo. O roteador (next) nao pode ser chamado.
+// edgeCall makes the request through ServeHTTP. hdr may carry Content-Type;
+// an empty body means no body. The router (next) must not be called.
 func edgeCall(t *testing.T, h *authHandler, method, path string, hdr map[string]string, body string) edgeResp {
 	t.Helper()
 	h.next = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -138,11 +138,13 @@ func regBody(alg, key string) string {
 	return string(b)
 }
 
-// o serviceContextId devolvido e o globalServiceId do servico corrente
+// The returned serviceContextId is the globalServiceId of the current
+// service.
 var okRegister = `{"serviceContextId":"` + tSvc + `"}`
 
-// C.6.8.2 (Tabela C.49): 101 corpo fora do formato / alg nao suportado /
-// chave incompativel; 105 falta alg ou key num objeto JSON. Nada eh gravado.
+// C.6.8.2 (Table C.49): 101 for a body out of format, an unsupported alg or
+// an incompatible key; 105 for a missing alg or key in a JSON object.
+// Nothing is written.
 func TestRegistroCorpoInvalido(t *testing.T) {
 	ec, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	ecDER, _ := x509.MarshalPKIXPublicKey(&ec.PublicKey)
@@ -186,15 +188,15 @@ func TestRegistroCorpoInvalido(t *testing.T) {
 	if len(st.keys) != 0 {
 		t.Fatalf("corpo invalido gravou algo: %v", st.keys)
 	}
-	// detalhe do 105
+	// Detail of the 105.
 	r := postBind(t, h, `{}`)
 	if d, _ := r.json["description"].(string); d != "Missing argument: alg, key" {
 		t.Errorf("description do 105: %q", d)
 	}
 }
 
-// Os quatro algoritmos com chave compativel; o elemento gravado eh
-// {"alg","key","registeredAt"} (ms), a key sem transformacao.
+// The four algorithms with a compatible key; the stored element is
+// {"alg","key","registeredAt"} (ms), the key unchanged.
 func TestRegistroQuatroAlgoritmos(t *testing.T) {
 	k2048 := testRSAKey(t)
 	st := edgeStore()
@@ -202,13 +204,14 @@ func TestRegistroQuatroAlgoritmos(t *testing.T) {
 	ok := [][2]string{
 		{"HS256", "segredo-256"},
 		{"HS512", "segredo-512"},
-		{"RS256", pkcs1PrivB64(testRSA512(t))}, // privada de 512 bits, como o exemplo da norma
+		// A 512-bit private key, like the example of the standard.
+		{"RS256", pkcs1PrivB64(testRSA512(t))},
 		{"RS512", pubPEM(t, k2048)},
 	}
 	for _, c := range ok {
 		wantOK(t, "POST "+c[0], postBind(t, h, regBody(c[0], c[1])), okRegister)
 	}
-	// application/json com parametro tambem eh JSON
+	// application/json with a parameter is also JSON.
 	r := edgeCall(t, h, "POST", "/tv3/bind-context", map[string]string{"Origin": tAssoc, "Content-Type": "application/json; charset=utf-8"}, regBody("HS256", "com-charset"))
 	wantOK(t, "Content-Type com charset", r, okRegister)
 
@@ -225,13 +228,14 @@ func TestRegistroQuatroAlgoritmos(t *testing.T) {
 			t.Errorf("entrada %d: %s", i, list[i])
 		}
 	}
-	// o formato gravado eh o que a validacao do bind-token le
+	// The stored format is the one the bind-token check reads.
 	if keys := h.keys.decodeStoredKeys(tSvc, list); len(keys) != 5 {
 		t.Errorf("decodeStoredKeys leu %d de 5 entradas", len(keys))
 	}
 }
 
-// Ordem: o corpo vem antes (101/105); corpo valido sem servico corrente => 300.
+// Order: the body comes first (101, 105); a valid body without a current
+// service gives 300.
 func TestRegistroSemServicoCorrente(t *testing.T) {
 	st := edgeStore()
 	st.current = ""
@@ -243,20 +247,25 @@ func TestRegistroSemServicoCorrente(t *testing.T) {
 	}
 }
 
-// Sem duplicata: HS so com segredo identico; RSA pela mesma chave publica em
-// qualquer codificacao; mesmo segredo com outro alg eh outra entrada.
+// No duplicates: HS only with an identical secret; RSA by the same public
+// key in any encoding; the same secret with another alg is another entry.
 func TestRegistroSemDuplicata(t *testing.T) {
 	k := testRSAKey(t)
 	st := edgeStore()
 	h := newTestHandler(t, modeEnforce, st, nil)
 	for _, body := range []string{
 		regBody("HS256", "segredo-a"),
-		regBody("HS256", "segredo-a"),  // identico: nao entra
-		regBody("HS256", "segredo-a "), // outro segredo (bytes sem aparar)
-		regBody("HS512", "segredo-a"),  // outro alg
+		// Identical: not added.
+		regBody("HS256", "segredo-a"),
+		// Another secret (untrimmed bytes).
+		regBody("HS256", "segredo-a "),
+		// Another alg.
+		regBody("HS512", "segredo-a"),
 		regBody("RS256", pubPEM(t, k)),
-		regBody("RS256", spkiB64(t, k)), // mesma publica em base64 de DER
-		regBody("RS256", base64.StdEncoding.EncodeToString(x509.MarshalPKCS1PrivateKey(k))), // a privada correspondente
+		// The same public key in base64 of DER.
+		regBody("RS256", spkiB64(t, k)),
+		// The matching private key.
+		regBody("RS256", base64.StdEncoding.EncodeToString(x509.MarshalPKCS1PrivateKey(k))),
 	} {
 		wantOK(t, "POST", postBind(t, h, body), okRegister)
 	}
@@ -265,15 +274,16 @@ func TestRegistroSemDuplicata(t *testing.T) {
 	}
 }
 
-// Classe (106) e versao (100/101) antes da logica da API; warn so avisa.
+// Class (106) and version (100, 101) before the API logic; warn mode only
+// warns.
 func TestRegistroClasseEVersao(t *testing.T) {
 	st := edgeStore()
 	h := newTestHandler(t, modeEnforce, st, nil)
 	wantErr(t, "nao associado", edgeCall(t, h, "POST", "/tv3/bind-context", map[string]string{"Content-Type": "application/json"}, regBody("HS256", "s")), 106)
-	auto := accessFor(t, "cli-1", classAutonomous)
+	auto := accessFor(t, "cli-1", classStandAlone)
 	wantErr(t, "token autonomo", edgeCall(t, h, "POST", "/tv3/bind-context", map[string]string{"Content-Type": "application/json", "Authorization": auto}, regBody("HS256", "s")), 106)
-	// API-Version (C.3.6.6): no 100 (versao fora do conjunto), a mais recente
-	// suportada; no 101 (malformado), a 2.0
+	// API-Version (C.3.6.6): on 100 (a version outside the set), the latest
+	// supported; on 101 (malformed), 2.0.
 	for _, c := range []struct {
 		v    string
 		code int
@@ -299,7 +309,8 @@ func TestRegistroClasseEVersao(t *testing.T) {
 		t.Errorf("sem Accept-Version: API-Version %q, esperado 2.0", v)
 	}
 
-	// o 106 sai nos dois modos: o nao associado nao registra chave nem em warn
+	// 106 is sent in both modes: a client that is not associated does not
+	// register a key, even in warn mode.
 	st = edgeStore()
 	h = newTestHandler(t, modeWarn, st, nil)
 	r = edgeCall(t, h, "POST", "/tv3/bind-context", map[string]string{"Content-Type": "application/json"}, regBody("HS256", "s"))
@@ -312,10 +323,10 @@ func TestRegistroClasseEVersao(t *testing.T) {
 	}
 }
 
-// --- C.6.8.3 (Tabela C.50) --------------------------------------------------
+// --- C.6.8.3 (Table C.50) ---------------------------------------------------
 
 func bindGet(t *testing.T, h *authHandler, bindToken string) edgeResp {
-	hd := map[string]string{"Authorization": accessFor(t, "cli-1", classAutonomous)}
+	hd := map[string]string{"Authorization": accessFor(t, "cli-1", classStandAlone)}
 	if bindToken != "" {
 		hd["bind-token"] = bindToken
 	}
@@ -329,7 +340,7 @@ func hsTok(t *testing.T, secret string, claims map[string]interface{}) string {
 	return signJWT(t, "HS256", []byte(secret), claims)
 }
 
-// Duas emissoras: a (HS256 segredo-a) e b (RS256, a corrente).
+// Two broadcasters: a (HS256 segredo-a) and b (RS256, the current one).
 func twoServices(t *testing.T) *fakeStore {
 	st := edgeStore()
 	st.current = tSvcB
@@ -354,7 +365,7 @@ func TestBindListErros(t *testing.T) {
 	wantErr(t, "expirado e chave errada: assinatura antes do prazo", bindGet(t, h, hsTok(t, "outra", exp)), 101)
 	wantErr(t, "nbf no futuro", bindGet(t, h, hsTok(t, "segredo-a", timeClaims(t0, future, future.Add(time.Hour)))), 108)
 	wantErr(t, "iat no futuro", bindGet(t, h, hsTok(t, "segredo-a", timeClaims(future, t0, future.Add(time.Hour)))), 108)
-	// confusao de algoritmo: HS256 assinado com a chave publica RSA como segredo
+	// Algorithm confusion: HS256 signed with the RSA public key as the secret.
 	st := edgeStore()
 	k := testRSAKey(t)
 	st.keys[tSvc] = []string{storedJSON("RS256", pubPEM(t, k))}
@@ -366,38 +377,38 @@ func TestBindListServicos(t *testing.T) {
 	st := twoServices(t)
 	h := newTestHandler(t, modeEnforce, st, nil)
 	rsTok := signJWT(t, "RS256", testRSA512(t), timeClaims(t0.Add(-5*time.Second), t0.Add(-5*time.Second), t0.Add(10*time.Minute)))
-	// corrente = b: nome e id (serviceId volta a inteiro, Tabela C.8)
+	// Current = b: name and id (serviceId back to an integer, Table C.8).
 	wantOK(t, "token de b", bindGet(t, h, rsTok), `{"boundServices":[{"serviceContextId":"`+tSvcB+`","serviceName":"Canal B","serviceId":9}]}`)
-	// a nao eh o corrente: so o serviceContextId, o globalServiceId dele
+	// a is not the current one: only its serviceContextId, its globalServiceId.
 	wantOK(t, "token de a", bindGet(t, h, hsTok(t, "segredo-a", nil)), `{"boundServices":[{"serviceContextId":"`+tSvc+`"}]}`)
 
-	// serviceId nao numerico e nome vazio sao omitidos
+	// A non-numeric serviceId and an empty name are omitted.
 	st.svcHash = map[string]string{"serviceName": "", "serviceId": "9a"}
 	wantOK(t, "sem nome nem id numerico", bindGet(t, h, rsTok), `{"boundServices":[{"serviceContextId":"`+tSvcB+`"}]}`)
 
-	// o mesmo segredo nas duas emissoras: dois itens; lista ilegivel
-	// (WRONGTYPE) e entrada malformada sao ignoradas
+	// The same secret in both broadcasters: two items; an unreadable list
+	// (WRONGTYPE) and a malformed entry are skipped.
 	st = twoServices(t)
 	st.keys[tSvcB] = append(st.keys[tSvcB], "nao-json", storedJSON("HS256", "segredo-a"))
 	st.wrongType = map[string]bool{"urn:tv30:service:string": true}
 	h = newTestHandler(t, modeEnforce, st, nil)
-	// (BindServices do fakeStore vem em ordem: ...:b antes de ...:webmedia)
+	// BindServices of fakeStore is ordered: ...:b before ...:webmedia.
 	wantOK(t, "dois servicos", bindGet(t, h, hsTok(t, "segredo-a", nil)),
 		`{"boundServices":[{"serviceContextId":"`+tSvcB+`","serviceName":"Canal B","serviceId":9},{"serviceContextId":"`+tSvc+`"}]}`)
 }
 
-// Politica da rota: access token (107) e classe (106) antes da API.
+// Route policy: access token (107) and class (106) before the API.
 func TestBindListPolitica(t *testing.T) {
 	h := newTestHandler(t, modeEnforce, twoServices(t), nil)
 	tok := hsTok(t, "segredo-a", nil)
 	wantErr(t, "sem access token", edgeCall(t, h, "GET", "/tv3/bind-context", map[string]string{"bind-token": tok}, ""), 107)
 	wantErr(t, "associado", edgeCall(t, h, "GET", "/tv3/bind-context", map[string]string{"Origin": tAssoc, "bind-token": tok}, ""), 106)
-	auto := accessFor(t, "cli-1", classAutonomous)
+	auto := accessFor(t, "cli-1", classStandAlone)
 	r := edgeCall(t, h, "GET", "/tv3/bind-context", map[string]string{"Authorization": auto, "bind-token": tok}, "")
 	if r.status != 200 {
 		t.Errorf("autonomo: status %d %s", r.status, r.body)
 	}
-	// nao local: 106 na superficie HTTP; na externa, passa
+	// Non-local: 106 on the HTTP surface; on the external surface, it passes.
 	nonLocal := accessFor(t, "cli-2", classNonLocal)
 	wantErr(t, "nao local na interna", edgeCall(t, h, "GET", "/tv3/bind-context", map[string]string{"Authorization": nonLocal, "bind-token": tok}, ""), 106)
 	r = edgeCall(t, externalHandler(t, modeEnforce, twoServices(t), nil), "GET", "/tv3/bind-context", map[string]string{"Authorization": nonLocal, "bind-token": tok}, "")
@@ -406,7 +417,7 @@ func TestBindListPolitica(t *testing.T) {
 	}
 }
 
-// --- C.6.8.4 (Tabela C.51) --------------------------------------------------
+// --- C.6.8.4 (Table C.51) ---------------------------------------------------
 
 func bindDelete(t *testing.T, h *authHandler, key string) edgeResp {
 	hd := map[string]string{"Origin": tAssoc}
@@ -423,7 +434,7 @@ func TestBindRemove(t *testing.T) {
 
 	wantErr(t, "sem key", bindDelete(t, h, ""), 105)
 	wantErr(t, "key so espacos", bindDelete(t, h, "  "), 105)
-	// registrada como privada PKCS#1; revogada pela publica SPKI
+	// Registered as a PKCS#1 private key; revoked by the SPKI public key.
 	wantOK(t, "revoga RSA pela publica", bindDelete(t, h, spkiB64(t, testRSA512(t))), `{}`)
 	if _, ok := st.keys[tSvcB]; ok {
 		t.Fatalf("bind-context:%s deveria ter sumido: %v", tSvcB, st.keys[tSvcB])
@@ -431,24 +442,25 @@ func TestBindRemove(t *testing.T) {
 	wantErr(t, "GET com o token da chave revogada", bindGet(t, h, rsTok), 101)
 	wantOK(t, "chave inexistente", bindDelete(t, h, "nunca-registrada"), `{}`)
 
-	// so o servico corrente: a chave de a continua valendo
+	// Only the current service: the key of a is still valid.
 	if r := bindGet(t, h, hsTok(t, "segredo-a", nil)); r.status != 200 {
 		t.Fatalf("token de a: %d %s", r.status, r.body)
 	}
-	bindDelete(t, h, "segredo-a") // corrente = b
+	// Current = b.
+	bindDelete(t, h, "segredo-a")
 	if len(st.keys[tSvc]) != 1 {
 		t.Fatalf("revogacao mexeu em outro servico: %v", st.keys[tSvc])
 	}
 
-	// sem servico corrente: sucesso e nada muda
+	// Without a current service: success, and nothing changes.
 	st.current = ""
 	wantOK(t, "sem servico corrente", bindDelete(t, h, "segredo-a"), `{}`)
 	if len(st.keys[tSvc]) != 1 {
 		t.Fatalf("revogacao sem servico corrente removeu: %v", st.keys[tSvc])
 	}
 
-	// revogar "s" remove tambem o segredo registrado como "s " (o cabecalho
-	// chega aparado), e as duplicatas
+	// Revoking "s" also removes the secret registered as "s " (the header is
+	// trimmed), and the duplicates.
 	st.current = tSvc
 	st.keys[tSvc] = []string{storedJSON("HS256", "s "), storedJSON("HS512", "s"), storedJSON("HS512", "s"), storedJSON("HS256", "outra")}
 	wantOK(t, "revoga por texto aparado", bindDelete(t, h, "s"), `{}`)
@@ -456,28 +468,30 @@ func TestBindRemove(t *testing.T) {
 		t.Fatalf("sobrou %v", l)
 	}
 
-	// classe: so o associado
+	// Class: only the associated client.
 	wantErr(t, "nao associado", edgeCall(t, h, "DELETE", "/tv3/bind-context", map[string]string{"key": "outra"}, ""), 106)
 }
 
-// Redis fora: 200 nas tres rotas (nos dois modos), sem chegar ao roteador.
+// Redis down: 200 on the three routes (in both modes), without reaching the
+// router.
 func TestBindRedisFora(t *testing.T) {
 	for _, mode := range []string{modeEnforce, modeWarn} {
 		st := twoServices(t)
 		h := newTestHandler(t, mode, st, nil)
 		tok := hsTok(t, "segredo-a", nil)
 		st.err = errorString("dial tcp: connection refused")
-		// o associado reconhecido pelo Origin tambem consulta o Redis
+		// The associated client recognized by the Origin also looks up Redis.
 		wantErr(t, mode+" POST", postBind(t, h, regBody("HS256", "s")), 200)
 		wantErr(t, mode+" GET", bindGet(t, h, tok), 200)
 		wantErr(t, mode+" DELETE", bindDelete(t, h, "s"), 200)
 	}
 }
 
-// A funcao do Redis recusa a entrada (esquema): 404 {error:200} com o motivo
-// no description (nao "redis indisponivel"), nos dois modos e nas duas escritas.
+// The Redis function refuses the entry (schema): 404 {error:200} with the
+// reason in the description (not "redis indisponivel"), in both modes and on
+// both writes.
 func TestBindRecusaDoEsquema(t *testing.T) {
-	msg := `TV30ESQUEMA tv30_bind_registra: bind-context:` + tSvc + ` entrada: membro "alg": deve ser um de HS256, HS512, RS256, RS512 (veio "none")`
+	msg := `TV30SCHEMA tv30_bind_register: bind-context:` + tSvc + ` entry: member "alg": must be one of HS256, HS512, RS256, RS512 (got "none")`
 	for _, mode := range []string{modeEnforce, modeWarn} {
 		st := twoServices(t)
 		st.current = tSvc
@@ -509,8 +523,8 @@ type errorString string
 
 func (e errorString) Error() string { return string(e) }
 
-// panicStore: o Redis "explode" no meio da API — vira 200, nao conexao
-// fechada.
+// panicStore: Redis "explodes" in the middle of the API; the result is 200,
+// not a closed connection.
 type panicStore struct{ *fakeStore }
 
 func (p panicStore) CurrentServiceID() (string, error) { panic("falha inesperada") }
@@ -555,16 +569,16 @@ func TestParseStoredEntry(t *testing.T) {
 	}
 }
 
-// Ponta a ponta com o cliente RESP de verdade (servidor falso em memoria):
-// POST -> lista no Redis -> bind-token valida a rota token+bind e o GET ->
-// DELETE some com a lista.
+// End to end with the real RESP client (fake server in memory): POST, list
+// in Redis, the bind-token validates the token+bind route and the GET,
+// DELETE removes the list.
 func TestC68ComClienteRedis(t *testing.T) {
 	f := startFakeRedis(t)
 	f.with(func() {
 		f.strs[keyCurrentService] = tSvc
 		f.hashes[keyAssociated] = map[string]string{tAssoc: tSvc}
 		f.hashes[keyCurrentSvcHash] = map[string]string{"serviceName": "Canal A", "serviceId": "7"}
-		// os clientes dos tokens do teste estao em clients:authorized
+		// The clients of the test tokens are in clients:authorized.
 		f.sets[keyAuthorized] = map[string]bool{"cli-1": true, "cli-2": true, "cli-3": true}
 	})
 	h := newTestHandler(t, modeEnforce, nil, nil)
@@ -580,7 +594,7 @@ func TestC68ComClienteRedis(t *testing.T) {
 
 	bt := signJWT(t, "HS512", []byte("segredo-c68"), timeClaims(t0, t0, t0.Add(time.Hour)))
 	req := httptest.NewRequest("GET", "/tv3/current-service/users/current-user", nil)
-	req.Header.Set("Authorization", accessFor(t, "cli-1", classAutonomous))
+	req.Header.Set("Authorization", accessFor(t, "cli-1", classStandAlone))
 	req.Header.Set("bind-token", bt)
 	if v := h.evaluate(req); v.Code != 0 {
 		t.Fatalf("rota token+bind com o bind-token registrado: %d %s", v.Code, v.Detail)

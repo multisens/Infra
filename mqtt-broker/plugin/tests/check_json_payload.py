@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-# Segundo leitor de tests/test_json_payload.c: confere cada veredito do plugin
-# contra o json do Python (RFC 8259; NaN e Infinity recusados por parse_constant).
-# Divergencia conhecida do json-c tem de ser recusada pelo Python; o resto, mesmo veredito.
+# Second reader of tests/test_json_payload.c: checks each verdict of the
+# plugin against the Python json module (RFC 8259; NaN and Infinity refused
+# by parse_constant). A known divergence of json-c must be refused by
+# Python; the rest, the same verdict.
 #
 #   python3 check_json_payload.py /tmp/casos.tsv
 import json

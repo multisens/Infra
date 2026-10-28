@@ -13,13 +13,14 @@ import (
 	"unicode"
 )
 
-// Codificacao da chave registrada pela emissora (C.6.8.2). A norma nao define
-// o formato; o testbed aceita:
-//   - HS256/HS512: a chave eh o segredo, bytes UTF-8 da string recebida;
+// parseKeyMaterial decodes a key registered by the broadcaster (C.6.8.2):
+//   - HS256/HS512: the key is the secret, the UTF-8 bytes of the string;
 //   - RS256/RS512: PEM (PUBLIC KEY, RSA PUBLIC KEY, RSA PRIVATE KEY, PRIVATE
-//     KEY) ou base64 de DER (SPKI ou PKCS#1 publico). Chave PRIVADA (PKCS#1/
-//     PKCS#8, como o exemplo MIIBOgIBAAJB... da norma) eh aceita e a publica
-//     eh derivada.
+//     KEY) or base64 of DER (SPKI or PKCS#1 public). A private key (PKCS#1
+//     or PKCS#8) is accepted, and its public key is returned.
+//
+// Returns an error for an empty secret, an unsupported alg or an unreadable
+// RSA key.
 func parseKeyMaterial(alg, key string) (interface{}, error) {
 	switch alg {
 	case algHS256, algHS512:
@@ -33,8 +34,7 @@ func parseKeyMaterial(alg, key string) (interface{}, error) {
 	return nil, fmt.Errorf("alg %q nao suportado", alg)
 }
 
-// Rotulos PEM aceitos. O registro (C.6.8.2) e a validacao do bind-token usam
-// esta mesma funcao: o registro nao aceita chave que a validacao nao le.
+// PEM block types accepted for an RSA key.
 var pemLabels = map[string]bool{"PUBLIC KEY": true, "RSA PUBLIC KEY": true, "RSA PRIVATE KEY": true, "PRIVATE KEY": true}
 
 func parseRSAPublicKey(s string) (*rsa.PublicKey, error) {
@@ -99,16 +99,15 @@ func rsaPublicFromDER(der []byte) (*rsa.PublicKey, error) {
 	return nil, errors.New("chave nao parseia como RSA (SPKI, PKCS#1 ou PKCS#8)")
 }
 
-// storedKey eh o JSON de cada elemento de bind-context:{serviceId}
-// (gravado pela propria borda na API C.6.8.2, bindcontext.go):
-// {"alg","key","registeredAt"}.
+// storedKey is the JSON of each element of bind-context:{serviceId},
+// {"alg","key","registeredAt"}; registeredAt is not read.
 type storedKey struct {
 	Alg string `json:"alg"`
 	Key string `json:"key"`
 }
 
-// keyCache evita reparsear PEM/DER a cada requisicao. Limitado: ao passar
-// do teto, recomeca do zero (chaves sao poucas por servico).
+// keyCache holds parsed keys by alg and key string. When it reaches
+// keyCacheMax entries, it is emptied before the next insertion.
 type keyCache struct {
 	mu sync.Mutex
 	m  map[string]interface{}
@@ -137,9 +136,9 @@ func (c *keyCache) get(alg, key string) (interface{}, error) {
 	return v, nil
 }
 
-// decodeStoredKeys converte os elementos crus da lista em chaves usaveis.
-// Elemento malformado ou chave que nao parseia eh ignorado (e logado): uma
-// entrada ruim nao invalida as demais chaves da emissora.
+// decodeStoredKeys converts the raw list elements into usable keys. An
+// element that is malformed, has an unsupported alg or a key that does not
+// parse is logged and skipped; the other elements are still returned.
 func (c *keyCache) decodeStoredKeys(serviceID string, raw []string) []bindKey {
 	out := make([]bindKey, 0, len(raw))
 	for i, r := range raw {

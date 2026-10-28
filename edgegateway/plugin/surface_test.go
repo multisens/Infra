@@ -7,13 +7,12 @@ import (
 	"time"
 )
 
-// Comportamento do plugin com a tabela da superficie externa. As diferencas
-// entre as superficies sao derivadas pelo generate.js (generate.test.js).
+// Behavior of the plugin with the table of the external surface.
 
-// externalExtra: testExtra() como o generate.js o entrega a superficie
-// externa: as mesmas rotas e o mesmo catalogo de APIs, com o 106 da C.4.1.8
-// nas rotas cuja lista "classes" nao inclui non-local e no /tv3/authorize,
-// e sem as marcas da superficie HTTP.
+// externalExtra: testExtra() as for the external surface: the same routes
+// and the same catalog of APIs, with the 106 of C.4.1.8 on the routes whose
+// "classes" list does not include non-local and on /tv3/authorize, and
+// without the marks of the HTTP surface.
 func externalExtra() map[string]interface{} {
 	ex := testExtra()
 	ex["surface"] = "external"
@@ -59,7 +58,7 @@ func TestExternaTodasAsRotas(t *testing.T) {
 		t.Errorf("externa com %d rotas, esperado %d (todas)", n, all)
 	}
 	want106 := map[string]bool{"GET /tv3/authorize": true, "POST /tv3/bind-context": true, "DELETE /tv3/bind-context": true,
-		"GET /tv3/remote-device/devices/{classId}": true, "GET /tv3/remote-device/device/{handle}": true}
+		"GET /tv3/remote-device/devices/{classId}": true, "GET /tv3/notifications/{className}": true}
 	for _, rt := range h.cfg.Routes.routes {
 		if got := rt.SurfaceError == 106; got != want106[rt.String()] {
 			t.Errorf("%s: surface_error 106 = %v, esperado %v", rt, got, want106[rt.String()])
@@ -67,10 +66,11 @@ func TestExternaTodasAsRotas(t *testing.T) {
 	}
 }
 
-// A rota de uso exclusivo do cliente local e a C.6.1.2 dao 106 na externa a
-// qualquer requisicao: nos dois modos, para qualquer classe, sem Redis, sem
-// roteador (edgeCall falha o teste se o next for chamado) e sem mexer nas
-// chaves registradas. Na interna, a mesma requisicao do associado funciona.
+// The route for the exclusive use of the local client and C.6.1.2 give 106
+// on the external surface to any request: in both modes, for any class,
+// without Redis, without the router (edgeCall fails the test if next is
+// called) and without changing the registered keys. On the internal
+// surface, the same request of the associated client works.
 func TestExternaRotaExclusivaDoLocalDa106(t *testing.T) {
 	assocTok := accessFor(t, "cli-3", classAssociated)
 	nonLocal := accessFor(t, "cli-2", classNonLocal)
@@ -108,7 +108,7 @@ func TestExternaRotaExclusivaDoLocalDa106(t *testing.T) {
 			t.Errorf("%s: chaves de %s mudaram na externa: %v", mode, tSvc, l)
 		}
 	}
-	// a mesma requisicao na interna: o registro funciona
+	// The same request on the internal surface: the registration works.
 	st := edgeStore()
 	wantOK(t, "interna: POST pelo associado", postBind(t, newTestHandler(t, modeEnforce, st, nil), regBody("HS256", "nova")), okRegister)
 	if len(st.keys[tSvc]) != 1 {
@@ -116,10 +116,10 @@ func TestExternaRotaExclusivaDoLocalDa106(t *testing.T) {
 	}
 }
 
-// Na externa o nao local usa as APIs (o 106 da C.4.1.6 e da superficie HTTP).
-// O caminho do POST continua declarado: o OPTIONS que nao e preflight recebe
-// os cabecalhos da C.4.1.9.3, o preflight e concedido como em qualquer
-// caminho, e a requisicao de verdade da 106.
+// On the external surface a non-local client uses the APIs (the 106 of
+// C.4.1.6 is of the HTTP surface). The POST path is still declared: the
+// OPTIONS that is not a preflight gets the headers of C.4.1.9.3, the
+// preflight is granted as on any path, and the actual request gets 106.
 func TestExternaMantemGetEOptions(t *testing.T) {
 	st := baseStore()
 	bind := signJWT(t, "HS256", []byte("chave-webmedia"), timeClaims(t0, t0, t0.Add(time.Hour)))
@@ -150,8 +150,8 @@ func TestExternaMantemGetEOptions(t *testing.T) {
 	}
 }
 
-// A C.6.7.9 lista todas as APIs implementadas nas duas superficies, e a
-// C.6.7.8 responde por todas.
+// C.6.7.9 lists every implemented API on both surfaces, and C.6.7.8 answers
+// for every one.
 func TestExternaAPIInfo(t *testing.T) {
 	h := externalHandler(t, modeEnforce, baseStore(), nil)
 	wantOK(t, "externa: lista", apiGet(t, h, "/tv3/api-info", nil), allAPIs)

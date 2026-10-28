@@ -4,9 +4,9 @@ package main
 
 import "syscall"
 
-// Par de sockopt_other.go no Windows: o descritor e syscall.Handle, e os erros
-// de socket chegam como codigos WSA (winsock2.h), que nao casam com os
-// syscall.E* inventados do pacote syscall no Windows.
+// The Windows counterpart of sockopt_other.go: the descriptor is
+// syscall.Handle, and socket errors come as WSA codes (winsock2.h), which do
+// not match the syscall.E* values of the syscall package on Windows.
 
 func setMulticastOpts(fd uintptr, a [4]byte, ttl int) error {
 	h := syscall.Handle(fd)

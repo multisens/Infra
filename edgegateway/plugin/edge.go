@@ -11,19 +11,24 @@ import (
 	"strings"
 )
 
-// APIs respondidas pela propria borda (campo "edge" da rota), depois da mesma
-// decisao das demais rotas e da negociacao de versao. O endpoint delas continua
-// gerado no KrakenD so para manter o caminho no roteador; nunca e alcancado.
+// APIs answered by the edge itself (the "edge" field of the route), after
+// the same decision as the other routes and the version negotiation.
 
 const (
-	edgeBindRegister = "bind-context-register" // POST   /tv3/bind-context (C.6.8.2)
-	edgeBindList     = "bind-context-list"     // GET    /tv3/bind-context (C.6.8.3)
-	edgeBindRemove   = "bind-context-remove"   // DELETE /tv3/bind-context (C.6.8.4)
-	edgeAPIInfo      = "api-info"              // GET    /tv3/api-info/{apiId} (C.6.7.8)
-	edgeAPIList      = "api-list"              // GET    /tv3/api-info (C.6.7.9)
+	// POST /tv3/bind-context (C.6.8.2)
+	edgeBindRegister = "bind-context-register"
+	// GET /tv3/bind-context (C.6.8.3)
+	edgeBindList = "bind-context-list"
+	// DELETE /tv3/bind-context (C.6.8.4)
+	edgeBindRemove = "bind-context-remove"
+	// GET /tv3/api-info/{apiId} (C.6.7.8)
+	edgeAPIInfo = "api-info"
+	// GET /tv3/api-info (C.6.7.9)
+	edgeAPIList = "api-list"
 )
 
-// edgeReply: Code 0 = sucesso (status 200 + Body em JSON); senao erro C.3.2.
+// edgeReply is the result of an edge API: Code 0 is success, status 200 with
+// Body as JSON; any other Code is an error in the format of C.3.2.
 type edgeReply struct {
 	Code   int
 	Detail string
@@ -49,27 +54,31 @@ func edgeHandlerNames() string {
 	return strings.Join(names, ", ")
 }
 
-// Negociacao de versao (C.3.6.5), em toda rota, contra o campo versions do
-// routes.json (ausente = 2.0, a "current version" da C.3.6.3): sem
-// Accept-Version vale a 2.0; fora do formato X.Y, 101; versao que a rota nao
-// serve, 100. Versoes de 100 em diante sao extensoes do testbed (100.0:
-// remote-device por handle). A negociada vai ao servico em X-TV30-API-Version
-// e, se for extensao, tambem no caminho (internalPath).
+// Version negotiation (C.3.6.5), on every route, against the versions field
+// of routes.json, 2.0 when absent (C.3.6.3): without Accept-Version, 2.0;
+// outside the X.Y format, 101; a version the route does not serve, 100.
+// Versions from 100 on are testbed extensions. The negotiated version goes
+// to the service in X-TV30-API-Version and, for an extension, also in the
+// path (internalPath).
 const (
 	defaultVersion        = "2.0"
 	extensionMajor        = 100
 	internalVersionHeader = "X-TV30-API-Version"
-	// Host original do cliente (o KrakenD o troca pelo do backend): o /manifest
-	// monta com ele o Server-BaseURL, no mesmo host do anuncio SSDP.
+	// Original Host header of the client request.
 	internalHostHeader = "X-TV30-Host"
+	// Class of the client and, except for the associated one, its clientid.
+	internalClientClassHeader = "X-TV30-Client-Class"
+	internalClientIDHeader    = "X-TV30-Client-Id"
 )
 
 var versionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
 
-// prefixo do caminho interno (internalPath): fora das rotas declaradas
+// Prefix of the internal path (internalPath); no declared route starts with
+// it.
 var internalPrefix = regexp.MustCompile(`^/v[0-9]+\.[0-9]+(/|$)`)
 
-// compareVersions: "X.Y" numerico (C.3.6.2): 2.10 e mais recente que 2.9.
+// compareVersions compares two "X.Y" versions numerically (C.3.6.2): 2.10 is
+// newer than 2.9.
 func compareVersions(a, b string) int {
 	am, an := splitVersion(a)
 	bm, bn := splitVersion(b)
@@ -90,7 +99,7 @@ func negotiateVersion(r *http.Request, served []string) (version string, code in
 	vals := r.Header.Values("Accept-Version")
 	v := defaultVersion
 	if len(vals) > 0 {
-		// varios cabecalhos: o node junta com ", " (e o resultado eh malformado)
+		// Several headers are joined with ", ", which is malformed.
 		v = strings.Join(vals, ", ")
 		if !versionPattern.MatchString(v) {
 			return "", 101, "malformed Accept-Version '" + v + "'"
@@ -109,24 +118,22 @@ func isExtensionVersion(v string) bool {
 	return major >= extensionMajor
 }
 
-// internalPath: caminho do salto borda -> servico. Extensao do testbed leva o
-// prefixo /v<X.Y> antes do publico; versao da norma, o publico. Antes do /tv3/
-// porque /tv3/{versao}/... colidiria com /tv3/{serviceContextId}/users/...
-// O generate.js gera os endpoints do KrakenD pela mesma regra.
+// internalPath returns the path from the edge to the service: for a testbed
+// extension, /v<X.Y> followed by the public path; otherwise, the public path.
 func internalPath(path, version string) string {
 	if !isExtensionVersion(version) {
 		return path
 	}
-	// sem a barra final: o redirecionamento do roteador mostraria ao cliente o
-	// caminho interno
+	// No trailing slash, so that a redirect by the router does not show the
+	// internal path to the client.
 	if len(path) > 1 {
 		path = strings.TrimSuffix(path, "/")
 	}
 	return "/v" + version + path
 }
 
-// toInternalPath troca o caminho da requisicao pelo interno. r e a copia
-// feita em ServeHTTP; a URL e copiada para nao mexer na do servidor.
+// toInternalPath replaces the request path with the internal path. The URL
+// is copied, so the URL it replaces is not changed.
 func toInternalPath(r *http.Request, version string) {
 	if !isExtensionVersion(version) {
 		return
@@ -139,9 +146,8 @@ func toInternalPath(r *http.Request, version string) {
 	r.URL = &u
 }
 
-// versionInfo: as versoes da rota da requisicao e a mais recente do servidor,
-// guardadas no contexto da requisicao para o API-Version das respostas que a
-// borda escreve (apiVersion, handler.go).
+// versionInfo holds the versions served by the requested route and the
+// latest version of the server, kept in the request context.
 type versionInfo struct {
 	served []string
 	latest string
@@ -160,8 +166,8 @@ func versionInfoOf(r *http.Request) versionInfo {
 	return versionInfo{served: []string{defaultVersion}, latest: defaultVersion}
 }
 
-// serveEdge responde uma rota da borda. O aviso do modo warn (se houver)
-// ja esta nos cabecalhos e fica: ele diz o que o enforce faria.
+// serveEdge answers a route of the edge. A warn mode header already set is
+// kept.
 func (h *authHandler) serveEdge(w http.ResponseWriter, r *http.Request, v verdict, version string) {
 	reply := h.runEdge(edgeHandlers[v.rt.Edge], r, v.params)
 	if reply.Code != 0 {
@@ -184,8 +190,7 @@ func (h *authHandler) serveEdge(w http.ResponseWriter, r *http.Request, v verdic
 	w.Write(body)
 }
 
-// runEdge: um panic no handler vira 404 + {error:200}, como o do roteador
-// (serveNext), em vez de conexao fechada.
+// runEdge runs the handler, and returns error 200 if it panics.
 func (h *authHandler) runEdge(fn edgeFunc, r *http.Request, params map[string]string) (reply edgeReply) {
 	defer func() {
 		p := recover()
@@ -201,15 +206,14 @@ func (h *authHandler) runEdge(fn edgeFunc, r *http.Request, params map[string]st
 	return fn(h, r, params)
 }
 
-// redisDown: falha do Redis numa API da borda => 200 (Tabela C.1, "Platform
-// resource unavailable"), nos dois modos.
+// redisDown returns error 200, "Platform resource unavailable" (Table C.1),
+// for a Redis failure in an edge API.
 func redisDown(err error) edgeReply {
 	return edgeReply{Code: 200, Detail: "redis indisponivel (" + err.Error() + ")"}
 }
 
-// redisWriteFailed: falha numa escrita (C.6.8.2, C.6.8.4). Recusa do esquema
-// pela funcao do Redis e defeito da borda, nao Redis fora do ar: tambem 404
-// {error:200}, com o motivo no detalhe.
+// redisWriteFailed returns error 200 for a failed write (C.6.8.2, C.6.8.4);
+// for a refusal by the Redis schema, with the refusal in the detail.
 func redisWriteFailed(err error) edgeReply {
 	if msg, ok := schemaRefusal(err); ok {
 		return edgeReply{Code: 200, Detail: "escrita recusada pelo esquema do Redis (" + msg + ")"}
@@ -217,8 +221,8 @@ func redisWriteFailed(err error) edgeReply {
 	return redisDown(err)
 }
 
-// encodeJSON: sem o escape de <, > e & do json.Marshal (como o JSON.stringify
-// do tv3ws) e sem a quebra de linha final do Encoder.
+// encodeJSON encodes v as JSON without escaping <, > and &, and without a
+// trailing newline.
 func encodeJSON(v interface{}) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)

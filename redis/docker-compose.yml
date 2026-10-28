@@ -1,7 +1,8 @@
 services:
-  # Redis com a biblioteca de funcoes tv30, a carga inicial e o redis-commander
-  # (debug); se o redis-server ou o commander cair, o container cai. Saudavel so
-  # depois de a biblioteca carregar nesta partida e a carga estar aplicada.
+  # Redis with the tv30 function library, the initial load and
+  # redis-commander (debug); if redis-server or the commander exits, the
+  # container exits. Healthy only after the library loaded in this start and
+  # the load is applied.
   redis:
     image: ${DOCKERHUB_NS:-tv30}/tv30-redis:${IMAGE_TAG:-latest}
     build:
@@ -9,20 +10,19 @@ services:
       dockerfile: redis/Dockerfile
     container_name: redis
     ports:
-      # 6379 so em 127.0.0.1: aberta a rede, um aparelho gravaria nas origens
-      # associadas ou nas chaves de bind e contornaria a borda. Sem senha nem ACL:
-      # escrita fora das funcoes fica vedada por convencao.
+      # 6379 only on 127.0.0.1.
       - "127.0.0.1:6379:6379"
-      - "18081"       # UI do commander: porta de host dinamica, com login
+      # Commander UI, with login, on a host port chosen by Docker.
+      - "18081"
     environment:
-      # usuario e senha so na UI do commander (a 6379 segue sem senha); valor
-      # vazio cai no padrao, o mesmo do entrypoint
+      # User and password only for the commander UI; an empty value falls back
+      # to the default.
       REDIS_COMMANDER_USER: ${REDIS_COMMANDER_USER:-admin}
       REDIS_COMMANDER_PASSWORD: ${REDIS_COMMANDER_PASSWORD:-tv30-redis-admin}
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "test -f /tmp/tv30-redis-pronto && test \"$$(redis-cli --raw EXISTS seed:done)\" = \"1\""]
+      test: ["CMD-SHELL", "test -f /tmp/tv30-redis-ready && test \"$$(redis-cli --raw EXISTS seed:done)\" = \"1\""]
       interval: 2s
       timeout: 3s
       retries: 30

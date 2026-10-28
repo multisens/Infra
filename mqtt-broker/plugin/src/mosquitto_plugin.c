@@ -51,7 +51,7 @@ static void load_schemas_from_file(const char* filename) {
     }
 }
 
-// Publica em errors/<client_id>; mensagem e topico seguem error_json.h.
+// Publishes on errors/<client_id>; message and topic as in error_json.h.
 static void publish_error(const char* topic, const char* error_type, const char* details, const char* payload, size_t payload_len, const char* client_id) {
     char *error_buffer = malloc(ERROR_JSON_CAP);
     if (!error_buffer) return;
@@ -63,8 +63,8 @@ static void publish_error(const char* topic, const char* error_type, const char*
     int len = error_json_build(error_buffer, ERROR_JSON_CAP, timestamp, topic, error_type, details,
                                client_id ? client_id : "unknown", payload, payload_len);
 
-    // mosquitto_broker_publish so fica com o buffer (e o libera) quando
-    // devolve sucesso; nos outros casos ele e liberado aqui
+    // mosquitto_broker_publish takes the buffer, and frees it, only when it
+    // returns success; otherwise it is freed here.
     if (len > 0) {
         char error_topic[ERROR_JSON_TOPIC_CAP];
         if (error_json_topic(error_topic, sizeof(error_topic), client_id) > 0 &&
@@ -75,8 +75,8 @@ static void publish_error(const char* topic, const char* error_type, const char*
     free(error_buffer);
 }
 
-// Casamento de topico MQTT (+ e #), para os topicos parametrizados de
-// sinalizacao (tlm/sls/<sid>/esg etc.)
+// MQTT topic matching (+ and #), for the parameterized signaling topics
+// (tlm/sls/<sid>/esg and others).
 static int topic_matches(const char* pattern, const char* topic) {
     while (*pattern && *topic) {
         if (*pattern == '#') return 1;
@@ -92,7 +92,7 @@ static int topic_matches(const char* pattern, const char* topic) {
         pattern++; topic++;
     }
     if (*pattern == '\0' && *topic == '\0') return 1;
-    // "a/#" casa "a"
+    // "a/#" matches "a".
     if (pattern[0] == '/' && pattern[1] == '#' && *topic == '\0') return 1;
     if (pattern[0] == '#' && *topic == '\0') return 1;
     return 0;
@@ -114,8 +114,8 @@ static json_object* get_schema_for_topic(const char* topic) {
     return NULL;
 }
 
-// payloads de estado da plataforma sao strings puras (uuid, caminho, nome de
-// tela), que nao sao JSON
+// Whether the schema has type string, for a payload that is a plain string
+// and not JSON.
 static int schema_expects_plain_string(json_object* schema) {
     json_object *type;
     if (!json_object_object_get_ex(schema, "type", &type)) return 0;
@@ -123,9 +123,11 @@ static int schema_expects_plain_string(json_object* schema) {
     return t && strcmp(t, "string") == 0;
 }
 
-// payload_len e o comprimento real: o payload e lido inteiro, mesmo com NUL no
-// meio (json_payload.h). O literal null vira NULL no json-c: INVALID_JSON, ou
-// string pura nos topicos de esquema type=string.
+// Validates the payload against the schema of the topic, if any. payload_len
+// is the real length: the payload is read whole, even with a NUL inside
+// (json_payload.h). The literal null becomes NULL in json-c: INVALID_JSON, or
+// a plain string on topics with a type=string schema. A refusal publishes
+// the error message and returns MOSQ_ERR_ACL_DENIED.
 static int validate_message(const char* topic, const char* payload, size_t payload_len, const char* client_id) {
     json_object *schema = get_schema_for_topic(topic);
     if (!schema) {
@@ -135,8 +137,9 @@ static int validate_message(const char* topic, const char* payload, size_t paylo
     json_object *message = NULL;
     json_payload_parse(payload, payload_len, &message);
     if (!message && schema_expects_plain_string(schema) && !memchr(payload, '\0', payload_len)) {
-        // string pura: embrulha como string JSON para minLength/maxLength/pattern.
-        // Com NUL nao embrulha (essas regras leem C string e parariam no NUL).
+        // A plain string is wrapped as a JSON string for
+        // minLength/maxLength/pattern. Not with a NUL, since these rules read a
+        // C string and would stop at the NUL.
         message = json_object_new_string_len(payload, (int)payload_len);
     }
     if (!message) {
@@ -157,6 +160,9 @@ static int validate_message(const char* topic, const char* payload, size_t paylo
     return MOSQ_ERR_SUCCESS;
 }
 
+// The MOSQ_EVT_ACL_CHECK callback of Mosquitto. It controls no access: it
+// grants every access, except a PUBLISH whose payload does not satisfy the
+// schema of the topic. It also answers the response time test.
 static int callback_acl_check(int event, void *event_data, void *userdata) {
     struct mosquitto_evt_acl_check *ed = event_data;
     const char *client_id = mosquitto_client_id(ed->client);
@@ -183,9 +189,8 @@ static int callback_acl_check(int event, void *event_data, void *userdata) {
         return MOSQ_ERR_SUCCESS;
     }
     
-    // Sem controle de acesso por topico: a identidade no barramento e de
-    // microsservico, e o isolamento que a norma exige e por contexto de servico,
-    // na fronteira das APIs. Valida so PUBLISH; topico sem esquema passa.
+    // Only PUBLISH is validated, outside $SYS/; a topic without a schema
+    // passes.
     if (ed->access != MOSQ_ACL_WRITE || strncmp(ed->topic, "$SYS/", 5) == 0) {
         return MOSQ_ERR_SUCCESS;
     }

@@ -1,7 +1,7 @@
-// Comparador de latência pub->sub (auto-eco via broker, sem depender do
-// eco do plugin): N publishers -> 1 tópico -> 1 listener dedicado.
-// Mesma cadência do brokertimetest: rajada simultânea, 100ms entre iterações.
-// Uso: MQTT_HOST=<broker> TOPIC=<tópico> node headless-compare.js
+// Latency comparator pub->sub (self echo through the broker, without the
+// echo of the plugin): N publishers, 1 topic, 1 dedicated listener. Same
+// cadence as brokertimetest: simultaneous burst, 100 ms between iterations.
+// Usage: MQTT_HOST=<broker> TOPIC=<topic> node headless-compare.js
 const mqtt = require('mqtt');
 
 const HOST = process.env.MQTT_HOST || 'localhost';
@@ -23,7 +23,8 @@ function connect(clientId) {
 }
 
 async function runScenario(numClients) {
-  const sent = {};      // chave c<n>i<i> -> ts de envio
+  // Key c<n>i<i> to the send timestamp.
+  const sent = {};
   const latencies = [];
 
   const listener = await connect(`cmplistener${numClients}`);
