@@ -302,5 +302,42 @@
     "type": "string",
     "maxLength": 1024,
     "description": "O diretorio da aplicacao {appId} do servico {serviceId}, RETIDO, do mesmo publicador de currentApp (C.6.4.7 le dele)."
+  },
+  "aop/application-lifecycle-manager/application-state": {
+    "type": "object",
+    "description": "Mudanca de estado de uma aplicacao, NAO retido: started quando ela entra em execucao, ended quando termina; numa troca, ended da que sai antes de started da que entra. Publicador: o Application Lifecycle Manager ou, enquanto ele nao existir, o AoP (setDisplayGraphics). O estado corrente nao vem daqui, e sim do armazenamento.",
+    "properties": {
+      "serviceContextId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "globalServiceId do servico da aplicacao"
+      },
+      "appId": {
+        "type": "string",
+        "maxLength": 256,
+        "description": "appId da BALD; vazio quando a BALD nao o informa"
+      },
+      "origin": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024,
+        "description": "origem propria da aplicacao (a mesma de origins:associated)"
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "started",
+          "ended"
+        ]
+      }
+    },
+    "required": [
+      "serviceContextId",
+      "appId",
+      "origin",
+      "state"
+    ],
+    "additionalProperties": false
   }
 }
