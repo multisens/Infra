@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// fakeRedis: servidor RESP minimo em memoria (so os comandos usados).
+// fakeRedis is a minimal RESP server in memory, with only the commands used.
 type fakeRedis struct {
 	ln      net.Listener
 	mu      sync.Mutex
@@ -22,12 +22,13 @@ type fakeRedis struct {
 	lists   map[string][]string
 	conns   []net.Conn
 	accepts int
-	cmds    map[string]int // comandos recebidos, por nome
-	// dropNext: le o proximo comando, NAO o executa e fecha a conexao sem
-	// responder (resposta perdida)
+	// Commands received, by name.
+	cmds map[string]int
+	// dropNext: reads the next command, does not run it, and closes the
+	// connection without replying (lost reply).
 	dropNext bool
-	// recusa: resposta de erro das funcoes tv30 (como a de dado fora do
-	// esquema); vazio = executa
+	// recusa: error reply of the tv30 functions, as the one for data outside
+	// the schema; empty to run the command.
 	recusa string
 }
 
@@ -64,7 +65,7 @@ func (f *fakeRedis) with(fn func()) {
 	fn()
 }
 
-// dropAll fecha as conexoes abertas (simula reinicio do Redis).
+// dropAll closes the open connections, as a Redis restart.
 func (f *fakeRedis) dropAll() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -105,7 +106,8 @@ func (f *fakeRedis) serve(c net.Conn) {
 	}
 }
 
-// keysMatching: chaves de qualquer tipo com o prefixo do padrao "<prefixo>*".
+// keysMatching returns the keys of any type with the prefix of the pattern
+// "<prefix>*".
 func (f *fakeRedis) keysMatching(pattern string) []string {
 	prefix := strings.TrimSuffix(pattern, "*")
 	var out []string
@@ -173,7 +175,9 @@ func (f *fakeRedis) exec(a []string) string {
 			out += bulk(e)
 		}
 		return out
-	case "FCALL": // so as funcoes tv30_bind_* (o efeito, sem o esquema), numkeys 0
+	// Only the tv30_bind_* functions (the effect, without the schema), numkeys
+	// 0.
+	case "FCALL":
 		if len(a) != 5 || a[2] != "0" {
 			return "-ERR FCALL do duble: esperado FCALL <funcao> 0 <serviceId> <entrada>\r\n"
 		}
@@ -182,10 +186,12 @@ func (f *fakeRedis) exec(a []string) string {
 		}
 		key := keyBindPrefix + a[3]
 		switch a[1] {
-		case "tv30_bind_registra": // RPUSH
+		// RPUSH
+		case "tv30_bind_register":
 			f.lists[key] = append(f.lists[key], a[4])
 			return ":" + strconv.Itoa(len(f.lists[key])) + "\r\n"
-		case "tv30_bind_remove": // LREM 0 (todas as ocorrencias)
+		// LREM 0, every occurrence.
+		case "tv30_bind_remove":
 			var kept []string
 			n := 0
 			for _, e := range f.lists[key] {
@@ -196,7 +202,8 @@ func (f *fakeRedis) exec(a []string) string {
 				kept = append(kept, e)
 			}
 			if len(kept) == 0 {
-				delete(f.lists, key) // como no Redis: lista vazia some
+				// As in Redis, an empty list is removed.
+				delete(f.lists, key)
 			} else {
 				f.lists[key] = kept
 			}
@@ -215,7 +222,8 @@ func (f *fakeRedis) exec(a []string) string {
 			out += bulk(k) + bulk(h[k])
 		}
 		return out
-	case "SCAN": // SCAN cursor MATCH padrao COUNT n — UMA chave por pagina
+	// SCAN cursor MATCH pattern COUNT n, one key per page.
+	case "SCAN":
 		all := f.keysMatching(a[3])
 		cur, _ := strconv.Atoi(a[1])
 		if cur >= len(all) {
@@ -230,9 +238,9 @@ func (f *fakeRedis) exec(a []string) string {
 	return "-ERR unknown command\r\n"
 }
 
-// Comandos da C.6.8 respondida pela borda: FCALL de tv30_bind_registra e
-// tv30_bind_remove, SCAN (varias paginas), HGETALL; LRANGE de chave de outro
-// tipo eh erro do servidor.
+// Commands of C.6.8 answered by the edge: FCALL of tv30_bind_register and
+// tv30_bind_remove, SCAN (several pages), HGETALL; LRANGE of a key of another
+// type is a server error.
 func TestRedisComandosC68(t *testing.T) {
 	f := startFakeRedis(t)
 	f.with(func() {
@@ -280,21 +288,22 @@ func TestRedisComandosC68(t *testing.T) {
 	if m, err := s.CurrentService(); err != nil || len(m) != 0 {
 		t.Fatalf("HGETALL ausente: %v %v", m, err)
 	}
-	// SCAN sem nenhuma chave
+	// SCAN without any key.
 	f.with(func() { f.lists = map[string][]string{}; f.strs = map[string]string{} })
 	if sids, err := s.BindServices(); err != nil || len(sids) != 0 {
 		t.Fatalf("SCAN vazio: %q %v", sids, err)
 	}
 }
 
-// Resposta perdida depois de o comando sair: o registro (FCALL
-// tv30_bind_registra, um RPUSH) NAO eh repetido (poderia duplicar a entrada);
-// leitura numa conexao do pool que morreu eh repetida (TestRedisReconecta).
+// A reply lost after the command was sent: the registration (FCALL
+// tv30_bind_register, an RPUSH) is not repeated (it could duplicate the
+// entry); a read on a dead pooled connection is repeated (TestRedisReconecta).
 func TestRedisRPUSHNaoRepete(t *testing.T) {
 	f := startFakeRedis(t)
 	f.with(func() { f.strs[keyCurrentService] = tSvc })
 	s := &redisStore{c: newRedisClient(f.ln.Addr().String(), time.Second)}
-	if _, err := s.CurrentServiceID(); err != nil { // deixa uma conexao no pool
+	// Leaves a connection in the pool.
+	if _, err := s.CurrentServiceID(); err != nil {
 		t.Fatal(err)
 	}
 	f.with(func() { f.dropNext = true })
@@ -302,11 +311,11 @@ func TestRedisRPUSHNaoRepete(t *testing.T) {
 		t.Fatal("esperado erro com a resposta perdida")
 	}
 	f.with(func() {
-		if f.cmds["FCALL tv30_bind_registra"] != 1 {
-			t.Errorf("tv30_bind_registra enviado %d vezes, esperado 1", f.cmds["FCALL tv30_bind_registra"])
+		if f.cmds["FCALL tv30_bind_register"] != 1 {
+			t.Errorf("tv30_bind_register enviado %d vezes, esperado 1", f.cmds["FCALL tv30_bind_register"])
 		}
 	})
-	// o cliente segue usavel
+	// The client is still usable.
 	if err := s.AddBindKey("urn:a", "e2"); err != nil {
 		t.Fatalf("depois da falha: %v", err)
 	}
@@ -315,13 +324,13 @@ func TestRedisRPUSHNaoRepete(t *testing.T) {
 	}
 }
 
-// Recusa da funcao (dado fora do esquema) volta como erro do servidor com
-// prefixo TV30ESQUEMA, reconhecido por schemaRefusal; a conexao segue boa e a
-// recusa nao e repetida.
+// A refusal by the function (data outside the schema) comes back as a server
+// error with the TV30SCHEMA prefix, recognized by schemaRefusal; the
+// connection stays usable and the refusal is not repeated.
 func TestRedisRecusaDoEsquema(t *testing.T) {
 	f := startFakeRedis(t)
 	s := &redisStore{c: newRedisClient(f.ln.Addr().String(), time.Second)}
-	msg := `TV30ESQUEMA tv30_bind_registra: bind-context:urn:a entrada: membro "alg": deve ser um de HS256, HS512, RS256, RS512 (veio "none")`
+	msg := `TV30SCHEMA tv30_bind_register: bind-context:urn:a entry: member "alg": must be one of HS256, HS512, RS256, RS512 (got "none")`
 	f.with(func() { f.recusa = msg })
 	err := s.AddBindKey("urn:a", `{"alg":"none","key":"k","registeredAt":1}`)
 	if got, ok := schemaRefusal(err); !ok || got != msg {
@@ -335,8 +344,8 @@ func TestRedisRecusaDoEsquema(t *testing.T) {
 		t.Fatalf("depois da recusa: %v", err)
 	}
 	f.with(func() {
-		if n := f.cmds["FCALL tv30_bind_registra"]; n != 2 {
-			t.Errorf("tv30_bind_registra enviado %d vezes, esperado 2 (sem repetir a recusa)", n)
+		if n := f.cmds["FCALL tv30_bind_register"]; n != 2 {
+			t.Errorf("tv30_bind_register enviado %d vezes, esperado 2 (sem repetir a recusa)", n)
 		}
 		if f.cmds["RPUSH"]+f.cmds["LREM"] != 0 {
 			t.Errorf("escrita direta: RPUSH=%d LREM=%d", f.cmds["RPUSH"], f.cmds["LREM"])
@@ -352,7 +361,8 @@ func TestRedisComandos(t *testing.T) {
 		f.sets[keyAuthorized] = map[string]bool{"cli-ok": true}
 		f.sets[keyAnnounced] = map[string]bool{tSvc: true}
 		f.hashes[keyAssociated] = map[string]string{tAssoc: tSvc}
-		// segundo elemento com CRLF dentro: o bulk tem que ser lido pelo tamanho
+		// Second element with a CRLF inside: the bulk must be read by its
+		// length.
 		f.lists[keyBindPrefix+tSvc] = []string{storedJSON("HS256", "a"), "x\r\ny"}
 	})
 
@@ -385,7 +395,7 @@ func TestRedisComandos(t *testing.T) {
 			t.Errorf("SISMEMBER enviado %d vezes, esperado 6", f.cmds["SISMEMBER"])
 		}
 	})
-	// o valor da origem e o servico que lancou a app
+	// The value of the origin is the service that launched the application.
 	if svc, ok, err := s.AssociatedOrigin(tAssoc); err != nil || !ok || svc != tSvc {
 		t.Fatalf("HGET: %q %v %v", svc, ok, err)
 	}
@@ -403,7 +413,7 @@ func TestRedisComandos(t *testing.T) {
 	if v, err := s.CurrentServiceID(); err != nil || v != "" {
 		t.Fatalf("GET nulo: %q %v", v, err)
 	}
-	// erro do servidor (WRONGTYPE) nao derruba a conexao
+	// A server error (WRONGTYPE) does not break the connection.
 	f.with(func() { f.strs[keyAssociated] = "x" })
 	if _, _, err := s.AssociatedOrigin(tAssoc); err == nil || !strings.Contains(err.Error(), "WRONGTYPE") {
 		t.Fatalf("esperado WRONGTYPE, veio %v", err)
@@ -421,7 +431,8 @@ func TestRedisReconecta(t *testing.T) {
 	if _, err := s.CurrentServiceID(); err != nil {
 		t.Fatal(err)
 	}
-	f.dropAll() // "reinicio" do Redis: conexao do pool morre
+	// Redis "restart": the pooled connection dies.
+	f.dropAll()
 	time.Sleep(20 * time.Millisecond)
 	if v, err := s.CurrentServiceID(); err != nil || v != tSvc {
 		t.Fatalf("nao reconectou: %q %v", v, err)
@@ -437,7 +448,8 @@ func TestRedisReconecta(t *testing.T) {
 func TestRedisForaTimeoutCurto(t *testing.T) {
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
 	addr := ln.Addr().String()
-	ln.Close() // ninguem escutando
+	// Nobody listening.
+	ln.Close()
 	s := &redisStore{c: newRedisClient(addr, 200*time.Millisecond)}
 	start := time.Now()
 	if _, err := s.IsBlocked("x"); err == nil {
@@ -463,7 +475,8 @@ func TestRedisServidorMudo(t *testing.T) {
 		}
 	}()
 	go func() {
-		c, err := ln.Accept() // aceita e nunca responde
+		// Accepts and never replies.
+		c, err := ln.Accept()
 		if err == nil {
 			held <- c
 		}

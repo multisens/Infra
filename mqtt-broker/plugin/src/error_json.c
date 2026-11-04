@@ -1,24 +1,27 @@
-// Mensagem e topico de errors/<client_id> e escape de string JSON (error_json.h).
-// Teste: tests/test_error_json.c, que roda no build da imagem.
+// Message and topic of errors/<client_id>, and JSON string escaping
+// (error_json.h). Tests: tests/test_error_json.c.
 #include "error_json.h"
 #include <stdio.h>
 #include <string.h>
 
 typedef struct {
     char *buf;
-    size_t cap;     // bytes de buf, com o NUL
-    size_t len;     // bytes escritos, sem o NUL
-    int truncated;  // algum campo foi cortado
+    // Bytes of buf, with the NUL.
+    size_t cap;
+    // Bytes written, without the NUL.
+    size_t len;
+    // Some field was cut.
+    int truncated;
 } json_writer;
 
 static const char MARKER[] = ",\"truncated\":true";
 #define MARKER_LEN (sizeof(MARKER) - 1)
 
-// Comprimento (1 a 4) do caractere UTF-8 bem formado que comeca em s, com n
-// bytes disponiveis; 0 se a sequencia nao e UTF-8 valido: byte de
-// continuacao solto, forma longa demais (C0, C1, E0 80..9F, F0 80..8F),
-// substituto UTF-16 (ED A0..BF), acima de U+10FFFF (F4 90.., F5..FF) ou
-// sequencia cortada. Faixas da RFC 3629, secao 4.
+// Length (1 to 4) of the well-formed UTF-8 character that starts at s, with
+// n bytes available; 0 if the sequence is not valid UTF-8: a stray
+// continuation byte, an overlong form (C0, C1, E0 80..9F, F0 80..8F), a
+// UTF-16 surrogate (ED A0..BF), above U+10FFFF (F4 90.., F5..FF) or a cut
+// sequence. Ranges of RFC 3629, section 4.
 static size_t utf8_char_len(const unsigned char *s, size_t n) {
     unsigned char c = s[0];
     if (c < 0x80) return 1;
@@ -44,9 +47,10 @@ static size_t utf8_char_len(const unsigned char *s, size_t n) {
     return 0;
 }
 
-// Acrescenta um literal da estrutura (chaves, nomes de campo). O espaco dos
-// literais esta reservado por ERROR_JSON_MIN_CAP; se ainda assim nao couber,
-// nao escreve nada e marca o corte (nao acontece com cap >= MIN_CAP).
+// Appends a structure literal (braces, field names). The room for the
+// literals is reserved by ERROR_JSON_MIN_CAP; if it still does not fit,
+// writes nothing and marks the cut, which does not happen with
+// cap >= ERROR_JSON_MIN_CAP.
 static void put_literal(json_writer *w, const char *t) {
     size_t n = strlen(t);
     if (w->len + n >= w->cap) {
@@ -58,9 +62,9 @@ static void put_literal(json_writer *w, const char *t) {
     w->buf[w->len] = '\0';
 }
 
-// s[0..n) como conteudo de string JSON, sem aspas (RFC 8259, secao 7), em no
-// maximo max bytes; cada unidade (caractere UTF-8 ou escape) entra inteira ou
-// nao entra. Devolve 1 se coube tudo, 0 se cortou.
+// Writes s[0..n) as the content of a JSON string, without quotes (RFC 8259,
+// section 7), in at most max bytes; each unit (UTF-8 character or escape)
+// goes in whole or not at all. Returns 1 if everything fit, 0 if it cut.
 static int put_string(json_writer *w, const char *s, size_t n, size_t max) {
     const unsigned char *p = (const unsigned char *)s;
     size_t used = 0, i = 0;
@@ -93,7 +97,8 @@ static int put_string(json_writer *w, const char *s, size_t n, size_t max) {
         } else {
             size_t k = utf8_char_len(p + i, n - i);
             if (k == 0) {
-                unit = "\\ufffd";  // byte invalido -> U+FFFD
+                // Invalid byte: U+FFFD.
+                unit = "\\ufffd";
                 ulen = 6;
             } else {
                 unit = (const char *)p + i;
@@ -137,10 +142,10 @@ int error_json_build(char *out, size_t cap,
 
     if (payload) {
         put_literal(&w, ",\"payload\":\"");
-        // O payload fica com o que sobra, menos as aspas e a chave finais
-        // (2 bytes) e, se algum campo ja foi cortado, o marcador. Se ele nao
-        // couber inteiro, volta ao inicio do campo e escreve de novo,
-        // deixando lugar para o marcador.
+        // The payload gets what is left, minus the closing quote and brace (2
+        // bytes) and, if a field was already cut, the marker. If the payload
+        // does not fit whole, it goes back to the start of the field and writes
+        // it again, leaving room for the marker.
         size_t start = w.len;
         size_t reserve = 2 + (w.truncated ? MARKER_LEN : 0);
         size_t room = (start + reserve < cap - 1) ? cap - 1 - start - reserve : 0;
@@ -172,12 +177,14 @@ int error_json_topic(char *out, size_t cap, const char *client_id) {
         size_t k = utf8_char_len(p + i, n - i);
         int swap;
         if (k == 0) {
-            swap = 1;  // byte invalido
+            // Invalid byte.
+            swap = 1;
             k = 1;
         } else if (k == 1) {
             swap = c == '+' || c == '#' || c == '/' || c < 0x20 || c == 0x7F;
         } else {
-            swap = k == 2 && c == 0xC2 && p[i + 1] <= 0x9F;  // U+0080 a U+009F
+            // U+0080 to U+009F.
+            swap = k == 2 && c == 0xC2 && p[i + 1] <= 0x9F;
         }
         size_t ulen = swap ? 1 : k;
         if (len + ulen > cap - 1) break;
@@ -198,7 +205,7 @@ int error_json_string(char *out, size_t cap, const char *s, size_t n) {
     json_writer w = { out, cap, 0, 0 };
     out[0] = '\0';
     put_literal(&w, "\"");
-    // cap - 3: as duas aspas e o NUL
+    // cap - 3: the two quotes and the NUL.
     if (s && !put_string(&w, s, n, cap - 3)) {
         out[0] = '\0';
         return -1;

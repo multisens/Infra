@@ -6,20 +6,24 @@ import (
 	"strings"
 )
 
-// Escolha da interface do anuncio. Uma so, para a busca nao receber respostas
-// duplicadas. Ordem: SSDP_INTERFACE, se definida; a interface que tem o IPv4
-// do host anunciado; a da rota padrao (com aviso, salvo com o host detectado).
-// Quando nada serve, o erro e de falta de rede (netDown).
+// Choice of the announcement interface, a single one, so that a search does
+// not get duplicated replies. Order: SSDP_INTERFACE, if set; the interface
+// with the IPv4 of the announced host; the one of the default route (with a
+// warning, except with the detected host). When none fits, the error is a
+// lack of network (netDown).
 
 type ifaceInfo struct {
-	Name  string
-	IPv4s []string // IPv4 externos (nao loopback)
+	Name string
+	// External IPv4 addresses (not loopback).
+	IPv4s []string
 }
 
 type choice struct {
-	Name     string
-	Addr     string // IPv4 de origem do anuncio
-	Source   string // SSDP_INTERFACE | host-ip | default-route
+	Name string
+	// Source IPv4 of the announcement.
+	Addr string
+	// SSDP_INTERFACE, host-ip or default-route.
+	Source   string
 	Warnings []string
 }
 
@@ -49,12 +53,13 @@ func systemInterfaces() []ifaceInfo {
 	return out
 }
 
-// routeProbe: endereco fora de qualquer rede local (TEST-NET-1, RFC 5737),
-// para o sistema escolher a rota padrao. O "connect" de UDP nao manda pacote.
+// routeProbe: an address outside any local network (TEST-NET-1, RFC 5737),
+// for the system to choose the default route. A UDP "connect" sends no
+// packet.
 const routeProbe = "192.0.2.1:9"
 
-// defaultRouteAddr: o IPv4 local que o sistema usaria para sair pela rota
-// padrao ("" sem rota).
+// defaultRouteAddr returns the local IPv4 the system would use to leave by
+// the default route; "" without a route.
 func defaultRouteAddr() string {
 	c, err := net.Dial("udp4", routeProbe)
 	if err != nil {
@@ -67,7 +72,8 @@ func defaultRouteAddr() string {
 	return ""
 }
 
-// readDefaultRoute: a interface que tem o IPv4 da rota padrao.
+// readDefaultRoute returns the interface that has the IPv4 of the default
+// route.
 func readDefaultRoute() string {
 	if ifi := owner(systemInterfaces(), defaultRouteAddr()); ifi != nil {
 		return ifi.Name
@@ -106,10 +112,9 @@ func owner(ifaces []ifaceInfo, ip string) *ifaceInfo {
 	return nil
 }
 
-// checkForced: SSDP_INTERFACE com nome que nao existe na maquina, ou de
-// loopback (o anuncio nunca sairia para a LAN por ela), e erro de
-// configuracao. Conferido so na partida: depois dela, a interface sumir (um
-// adaptador USB retirado, a rede do container desconectada) e falta de rede.
+// checkForced: an SSDP_INTERFACE with a name that does not exist on the
+// machine, or a loopback one, is a configuration error. Checked only at
+// startup: afterwards, the interface disappearing is a lack of network.
 func checkForced(forced string, lookup func(string) (exists, loopback bool)) error {
 	if forced = strings.TrimSpace(forced); forced == "" {
 		return nil
@@ -155,8 +160,8 @@ func chooseInterface(host, forced string, ifaces []ifaceInfo, defaultRoute func(
 	if len(ifaces) == 0 {
 		return choice{}, netDown{fmt.Errorf("nenhuma interface de pe com IPv4 externo")}
 	}
-	// host detectado (sem SSDP_ADVERTISE_HOST): a interface da rota padrao,
-	// sem aviso; o IPv4 dela vira o host do LOCATION
+	// Detected host (no SSDP_ADVERTISE_HOST): the interface of the default
+	// route, without a warning; its IPv4 becomes the host of LOCATION.
 	if host == "" {
 		if r := defaultRoute(); r != "" {
 			if ifi := find(ifaces, r); ifi != nil {

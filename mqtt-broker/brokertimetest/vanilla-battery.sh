@@ -1,5 +1,6 @@
 #!/bin/bash
-# 5 repeticoes do broker vanilla numa unica sessao (WSL nao pode idle-desligar no meio)
+# 5 repetitions of the vanilla broker in a single session, so that WSL does
+# not shut down when idle in the middle.
 B=/mnt/d/Proj_CEFET/TV30/infra/mqtt-broker/brokertimetest
 OUT=$B/interleaved.jsonl
 docker rm -f mqtt-vanilla >/dev/null 2>&1

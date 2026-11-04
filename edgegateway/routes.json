@@ -62,8 +62,8 @@
       "auth": "none",
       "timeout": "15s",
       "classes": [
-        "local-autonomous",
-        "non-local"
+        "standAlone",
+        "nonLocal"
       ],
       "headers": [
         "Accept-Version",
@@ -86,8 +86,8 @@
       },
       "auth": "none",
       "classes": [
-        "local-autonomous",
-        "non-local"
+        "standAlone",
+        "nonLocal"
       ],
       "headers": [
         "Authorization",
@@ -110,7 +110,7 @@
       "edge": "bind-context-register",
       "auth": "none",
       "classes": [
-        "local-associated"
+        "associated"
       ],
       "headers": [
         "Accept-Version",
@@ -128,8 +128,8 @@
       "edge": "bind-context-list",
       "auth": "token",
       "classes": [
-        "local-autonomous",
-        "non-local"
+        "standAlone",
+        "nonLocal"
       ],
       "headers": [
         "Authorization",
@@ -148,7 +148,7 @@
       "edge": "bind-context-remove",
       "auth": "none",
       "classes": [
-        "local-associated"
+        "associated"
       ],
       "headers": [
         "Accept-Version",
@@ -305,8 +305,31 @@
       "api": {
         "id": "tv3ws-remotedevice-register",
         "section": "C.6.15.2",
-        "version": "2.0"
+        "version": "100.0"
       },
+      "versions": [
+        "2.0",
+        "100.0"
+      ],
+      "auth": "token",
+      "headers": [
+        "Authorization",
+        "Accept-Version",
+        "Content-Type"
+      ]
+    },
+    {
+      "path": "/tv3/remote-device/{handle}",
+      "method": "POST",
+      "api": {
+        "id": "tv3ws-remotedevice-register",
+        "section": "C.6.15.2",
+        "version": "100.0"
+      },
+      "versions": [
+        "2.0",
+        "100.0"
+      ],
       "auth": "token",
       "headers": [
         "Authorization",
@@ -320,8 +343,12 @@
       "api": {
         "id": "tv3ws-remotedevice-cancel",
         "section": "C.6.15.3",
-        "version": "2.0"
+        "version": "100.0"
       },
+      "versions": [
+        "2.0",
+        "100.0"
+      ],
       "auth": "token",
       "headers": [
         "Authorization",
@@ -342,8 +369,8 @@
       ],
       "auth": "token",
       "classes": [
-        "local-associated",
-        "local-autonomous"
+        "associated",
+        "standAlone"
       ],
       "headers": [
         "Authorization",
@@ -351,15 +378,20 @@
       ]
     },
     {
-      "path": "/tv3/remote-device/device/{handle}",
+      "path": "/tv3/notifications/{className}",
       "method": "GET",
+      "api": {
+        "id": "tv3ws-register-notifications",
+        "section": "C.6.2.2",
+        "version": "100.0"
+      },
       "versions": [
         "100.0"
       ],
       "auth": "token",
       "classes": [
-        "local-associated",
-        "local-autonomous"
+        "associated",
+        "standAlone"
       ],
       "headers": [
         "Authorization",
@@ -367,15 +399,20 @@
       ]
     },
     {
-      "path": "/tv3/remote-device/device/{handle}",
+      "path": "/tv3/notifications/{handle}",
       "method": "DELETE",
+      "api": {
+        "id": "tv3ws-deregister-notifications",
+        "section": "C.6.2.3",
+        "version": "100.0"
+      },
       "versions": [
         "100.0"
       ],
       "auth": "token",
       "classes": [
-        "local-associated",
-        "local-autonomous"
+        "associated",
+        "standAlone"
       ],
       "headers": [
         "Authorization",

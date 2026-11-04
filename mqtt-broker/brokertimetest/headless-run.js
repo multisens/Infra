@@ -1,6 +1,6 @@
-// Headless runner do MQTT Broker Response Time Tester.
-// Mesma lógica do server.js (rajada por iteração, 100ms entre iterações),
-// sem UI: roda cenários em sequência e imprime tabela + JSON.
+// Headless runner of the MQTT Broker Response Time Tester. Same logic as
+// server.js (burst per iteration, 100 ms between iterations), without UI:
+// runs scenarios in sequence and prints a table and JSON.
 const mqtt = require('mqtt');
 
 const HOST = process.env.MQTT_HOST || 'localhost';

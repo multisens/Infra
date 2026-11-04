@@ -4,8 +4,8 @@ package main
 
 import "syscall"
 
-// Opcoes de socket e erros do sistema fora do Windows (Linux e macOS); o par
-// do Windows esta em sockopt_windows.go.
+// Socket options and system errors outside Windows (Linux and macOS); the
+// Windows counterpart is sockopt_windows.go.
 
 func setMulticastOpts(fd uintptr, a [4]byte, ttl int) error {
 	if err := syscall.SetsockoptInet4Addr(int(fd), syscall.IPPROTO_IP, syscall.IP_MULTICAST_IF, a); err != nil {
@@ -14,12 +14,14 @@ func setMulticastOpts(fd uintptr, a [4]byte, ttl int) error {
 	return syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IP, syscall.IP_MULTICAST_TTL, ttl)
 }
 
-// netErrnos: erros do sistema que sao falta de rede (endereco ou interface
-// que sumiu, sem rota). Lista fechada: erro fora dela e de configuracao.
+// netErrnos: system errors that are a lack of network (address or interface
+// gone, no route). A closed list: an error outside it is a configuration
+// error.
 var netErrnos = []syscall.Errno{
 	syscall.ENETUNREACH, syscall.EHOSTUNREACH, syscall.ENETDOWN,
 	syscall.EHOSTDOWN, syscall.EADDRNOTAVAIL, syscall.ENODEV,
 }
 
-// errAddrInUse: a UDP 1900 presa por socket sem SO_REUSEADDR (configuracao).
+// errAddrInUse: UDP 1900 held by a socket without SO_REUSEADDR
+// (configuration).
 var errAddrInUse error = syscall.EADDRINUSE

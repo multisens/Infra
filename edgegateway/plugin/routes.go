@@ -5,50 +5,57 @@ import (
 	"strings"
 )
 
-// Politica por rota (routes.json, campos "auth" e "classes").
+// Credential required by a route, the "auth" field of routes.json.
 const (
-	authNone      = "none"       // sem credencial
-	authToken     = "token"      // access token
-	authTokenBind = "token+bind" // access token + bind-token ("Security requirements" = shall)
+	// No credential.
+	authNone = "none"
+	// Access token.
+	authToken = "token"
+	// Access token and bind-token.
+	authTokenBind = "token+bind"
 )
 
-// Classes de cliente: os valores que o tv3ws grava no claim `class`
-// (tv3ws/src/modules/auth-manager/client.ts, ClientClass).
+// Client classes, the values of the access token claim `class`.
 const (
-	classAssociated = "local-associated"
-	classAutonomous = "local-autonomous"
-	classNonLocal   = "non-local"
+	classAssociated = "associated"
+	classStandAlone = "standAlone"
+	classNonLocal   = "nonLocal"
 )
 
 func validClass(c string) bool {
-	return c == classAssociated || c == classAutonomous || c == classNonLocal
+	return c == classAssociated || c == classStandAlone || c == classNonLocal
 }
 
 type segment struct {
-	lit   string
-	param string // != "" => segmento {param}
+	lit string
+	// Parameter name of a {param} segment; empty for a literal segment.
+	param string
 }
 
 type route struct {
-	Method  string
-	Path    string
-	Auth    string
-	Classes []string // nil = todas as classes
-	// Edge: handler de edge.go que responde a rota na propria borda ("" = repassa)
+	Method string
+	Path   string
+	Auth   string
+	// Classes allowed to use the route; nil allows all classes.
+	Classes []string
+	// Name of the edgeHandlers entry that answers the route at the edge;
+	// empty when the route is forwarded.
 	Edge string
-	// SurfaceError: codigo que a rota responde nesta superficie a qualquer
-	// requisicao, nos dois modos (o 106 da C.4.1.8 na externa). 0 = nenhum.
+	// Error code the route answers on this surface to any request, in both
+	// modes (106 on the external surface, C.4.1.8); 0 for none.
 	SurfaceError int
-	// NonLocalHTTP: rota que o nao local usa por HTTP (C.6.1.2 e C.6.1.3,
-	// C.4.1.6); so conta com NonLocalHTTPSOnly.
+	// The route is one a non-local client may use over HTTP (C.6.1.2 and
+	// C.6.1.3, C.4.1.6); only read when NonLocalHTTPSOnly is set.
 	NonLocalHTTP bool
-	// NoService: codigo sem servico DTV selecionado, antes do bind-token (300,
-	// nas APIs cuja tabela o lista); 0 = segue o bind-token e da 108.
+	// Error code when no DTV service is selected, checked before the
+	// bind-token (300); 0 leaves the case to the bind-token check, which
+	// gives 108.
 	NoService int
-	// NotInCatalog: codigo do {serviceContextId} fora do Application Catalog,
-	// depois do 300 e antes do bind-token (304, Tabelas C.71 e C.74); 0 = nao confere.
+	// Error code when {serviceContextId} is not in the Application Catalog,
+	// checked after 300 and before the bind-token (304, Tables C.71 and
+	// C.74); 0 for no check.
 	NotInCatalog int
-	// Versions: versoes servidas, em ordem crescente (ausente no routes.json = 2.0)
+	// Served versions, in ascending order; 2.0 when absent from routes.json.
 	Versions []string
 	segs     []segment
 }
@@ -71,7 +78,7 @@ func newRoute(method, path, auth string, classes []string) (*route, error) {
 	}
 	for _, c := range classes {
 		if !validClass(c) {
-			return nil, fmt.Errorf("classe %q invalida (%s, %s ou %s)", c, classAssociated, classAutonomous, classNonLocal)
+			return nil, fmt.Errorf("classe %q invalida (%s, %s ou %s)", c, classAssociated, classStandAlone, classNonLocal)
 		}
 	}
 	rt := &route{Method: method, Path: path, Auth: auth, Classes: classes}
@@ -92,10 +99,9 @@ func newRoute(method, path, auth string, classes []string) (*route, error) {
 	return rt, nil
 }
 
-// allows diz se a classe pode usar a rota. Classe vazia = nao identificada
-// (sem token valido e sem Origin associado): nao eh o local associado, mas
-// pode ser autonomo ou nao local — passa se a rota admite alguma dessas
-// (a exigencia de token, se houver, vem depois e da 107).
+// allows reports whether the class may use the route. An empty class, an
+// unidentified client, is allowed if the route admits any class other than
+// associated.
 func (rt *route) allows(class string) bool {
 	if rt.Classes == nil {
 		return true
@@ -136,11 +142,11 @@ func splitPath(p string) []string {
 	return strings.Split(p, "/")
 }
 
-// match casa metodo+caminho com a tabela. Um segmento literal tem
-// precedencia sobre {param} na mesma posicao (como no roteador do KrakenD):
-// GET /tv3/current-service/users/files casa a rota literal, nao
-// /tv3/current-service/users/{userid}. Uma barra final eh tolerada (o
-// roteador redireciona; a requisicao redirecionada volta a passar aqui).
+// match finds the route for method and path, and returns the path
+// parameters. A literal segment takes precedence over {param} at the same
+// position: GET /tv3/current-service/users/files matches the literal route,
+// not /tv3/current-service/users/{userid}. A trailing slash is ignored.
+// Returns nil if no route matches.
 func (t *routeTable) match(method, path string) (*route, map[string]string) {
 	if !strings.HasPrefix(path, "/") {
 		return nil, nil
@@ -170,8 +176,8 @@ func (t *routeTable) match(method, path string) (*route, map[string]string) {
 	return best, params
 }
 
-// pathDeclared diz se o caminho casa alguma rota da tabela, com qualquer
-// metodo (o OPTIONS da C.4.1.9.3 vale para toda API declarada).
+// pathDeclared reports whether the path matches a route of the table with
+// any method.
 func (t *routeTable) pathDeclared(path string) bool {
 	if !strings.HasPrefix(path, "/") {
 		return false
@@ -203,7 +209,9 @@ func (rt *route) matches(segs []string) bool {
 	return true
 }
 
-// moreSpecific: na primeira posicao em que os dois diferem, literal vence.
+// moreSpecific reports whether a is more specific than b: at the first
+// position where one segment is literal and the other is not, the literal
+// wins.
 func moreSpecific(a, b *route) bool {
 	for i := range a.segs {
 		al, bl := a.segs[i].param == "", b.segs[i].param == ""

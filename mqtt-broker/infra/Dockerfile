@@ -30,17 +30,17 @@ COPY plugin/src/ /tmp/src/
 COPY plugin/include/ /tmp/include/
 COPY plugin/tests/test_error_json.c plugin/tests/test_json_payload.c plugin/tests/check_json_payload.py /tmp/tests/
 
-# Testes de error_json.c (mensagem e topico de errors/<client_id>, escape do id
-# do response_time_tester.c) antes de compilar o plugin: escape quebrado nao vira
-# imagem. O json do Python confere de novo cada mensagem gerada.
+# Tests of error_json.c (message and topic of errors/<client_id>, escaping
+# of the id of response_time_tester.c) before the plugin is compiled. The
+# Python json module checks each generated message again.
 RUN gcc -std=gnu11 -Wall -Wextra -I/tmp/include -o /tmp/test_error_json \
         /tmp/tests/test_error_json.c /tmp/src/error_json.c -ljson-c \
  && /tmp/test_error_json /tmp/mensagens.jsonl \
  && python3 -c "import json,sys; ls=open(sys.argv[1],encoding='utf-8').read().split('\n')[:-1]; [json.loads(l) for l in ls]; print('python3 json: %d mensagens validas' % len(ls))" /tmp/mensagens.jsonl \
  && rm -f /tmp/test_error_json /tmp/mensagens.jsonl
 
-# Teste de json_payload.c (payload inteiro, exatamente um texto JSON); o json do
-# Python confere de novo o veredito de cada caso.
+# Test of json_payload.c (whole payload, exactly one JSON text); the Python
+# json module checks the verdict of each case again.
 RUN gcc -std=gnu11 -Wall -Wextra -I/tmp/include -o /tmp/test_json_payload \
         /tmp/tests/test_json_payload.c /tmp/src/json_payload.c -ljson-c \
  && /tmp/test_json_payload /tmp/casos.tsv \

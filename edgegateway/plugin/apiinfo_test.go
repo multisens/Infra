@@ -2,12 +2,12 @@ package main
 
 import "testing"
 
-// C.6.7.8 (Tabela C.47) e C.6.7.9 (Tabela C.48), a partir do catalogo "apis"
-// (testExtra: 6 APIs, todas tv3ws, versao 2.0).
+// C.6.7.8 (Table C.47) and C.6.7.9 (Table C.48), from the "apis" catalog
+// (testExtra: 6 APIs, all tv3ws, version 2.0).
 
 func apiGet(t *testing.T, h *authHandler, path string, hdr map[string]string) edgeResp {
 	if hdr == nil {
-		hdr = map[string]string{"Authorization": accessFor(t, "cli-1", classAutonomous)}
+		hdr = map[string]string{"Authorization": accessFor(t, "cli-1", classStandAlone)}
 	}
 	return edgeCall(t, h, "GET", path, hdr, "")
 }
@@ -26,11 +26,11 @@ func TestAPIInfo(t *testing.T) {
 		`{"receiverApi":{"id":"tv3ws-current-service","version":"2.0"}}`)
 	wantOK(t, "a propria api-info", apiGet(t, h, "/tv3/api-info/tv3ws-api-info", nil),
 		`{"receiverApi":{"id":"tv3ws-api-info","version":"2.0"}}`)
-	// id da Tabela C.2 que o testbed nao implementa: 101
+	// An id of Table C.2 that the testbed does not implement: 101.
 	wantErr(t, "id da Tabela C.2 nao implementado", apiGet(t, h, "/tv3/api-info/tv3ws-geolocation-info", nil), 101)
 	wantErr(t, "id inventado", apiGet(t, h, "/tv3/api-info/nao-existe", nil), 101)
 	wantErr(t, "id com caixa trocada", apiGet(t, h, "/tv3/api-info/TV3WS-CURRENT-SERVICE", nil), 101)
-	// barra codificada vira segmento a mais: rota nao declarada
+	// An encoded slash becomes an extra segment: undeclared route.
 	wantErr(t, "id com barra", apiGet(t, h, "/tv3/api-info/a%2Fb", nil), 100)
 }
 
@@ -46,15 +46,15 @@ func TestAPIList(t *testing.T) {
 	wantErr(t, "subsystem com caixa trocada", apiGet(t, h, "/tv3/api-info?subsystem=TV3WS", nil), 101)
 	wantErr(t, "query malformada", apiGet(t, h, "/tv3/api-info?subsystem=%zz", nil), 101)
 
-	// catalogo vazio: lista vazia, nao null
+	// Empty catalog: an empty list, not null.
 	cfg := testConfig(t, modeEnforce)
 	cfg.APIs = &apiCatalog{byID: map[string]apiEntry{}}
 	h2 := newHandler(cfg, baseStore(), nil)
 	wantOK(t, "catalogo vazio", apiGet(t, h2, "/tv3/api-info", map[string]string{"Origin": tAssoc}), `{"receiverApis":[]}`)
 }
 
-// 107 ao nao local/autonomo sem access token valido; o associado dispensa
-// (C.4.1.1); todas as classes podem chamar.
+// 107 to a non-local or stand-alone client without a valid access token;
+// the associated client is exempt (C.4.1.1); every class may call.
 func TestAPIInfoPolitica(t *testing.T) {
 	h := newTestHandler(t, modeEnforce, baseStore(), nil)
 	for _, p := range []string{"/tv3/api-info", "/tv3/api-info/tv3ws-api-info"} {
@@ -62,14 +62,15 @@ func TestAPIInfoPolitica(t *testing.T) {
 		wantErr(t, p+" token lixo", apiGet(t, h, p, map[string]string{"Authorization": "Bearer lixo"}), 107)
 		for name, hd := range map[string]map[string]string{
 			"associado pelo Origin": {"Origin": tAssoc},
-			"token de autonomo":     {"Authorization": accessFor(t, "cli-1", classAutonomous)},
+			"token de autonomo":     {"Authorization": accessFor(t, "cli-1", classStandAlone)},
 			"token de associado":    {"Authorization": accessFor(t, "cli-3", classAssociated)},
 		} {
 			if r := apiGet(t, h, p, hd); r.status != 200 {
 				t.Errorf("%s %s: status %d %s", p, name, r.status, r.body)
 			}
 		}
-		// o nao local: 106 na superficie HTTP (C.4.1.6); na externa, passa
+		// Non-local: 106 on the HTTP surface (C.4.1.6); on the external
+		// surface, it passes.
 		nl := map[string]string{"Authorization": accessFor(t, "cli-2", classNonLocal)}
 		wantErr(t, p+" token de nao local na interna", apiGet(t, h, p, nl), 106)
 		if r := apiGet(t, externalHandler(t, modeEnforce, baseStore(), nil), p, nl); r.status != 200 {
@@ -81,7 +82,7 @@ func TestAPIInfoPolitica(t *testing.T) {
 			t.Errorf("%s Accept-Version 9.9: API-Version %q, esperado a mais recente (%s, C.3.6.6)", p, v, h.cfg.LatestVersion)
 		}
 	}
-	// warn: sem token so avisa, e a borda responde
+	// warn: without a token it only warns, and the edge answers.
 	h = newTestHandler(t, modeWarn, baseStore(), nil)
 	r := apiGet(t, h, "/tv3/api-info", map[string]string{})
 	wantOK(t, "warn sem token", r, allAPIs)

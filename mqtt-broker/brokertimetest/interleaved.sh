@@ -1,5 +1,6 @@
 #!/bin/bash
-# 5 repeticoes intercaladas de 3 configuracoes (vanilla / plugin neutro / plugin validacao)
+# 5 interleaved repetitions of 3 configurations (vanilla, neutral plugin,
+# validating plugin).
 B=/mnt/d/Proj_CEFET/TV30/infra/mqtt-broker/brokertimetest
 OUT=$B/interleaved.jsonl
 : > "$OUT"

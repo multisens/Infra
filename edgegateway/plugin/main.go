@@ -1,6 +1,7 @@
-// tv30-auth: plugin http-server do KrakenD que decide, na borda, credencial,
-// tipo de cliente e versao de cada requisicao (handler.go), responde as APIs
-// da propria borda (edge.go) e repassa as demais ao roteador. Ver README.md.
+// tv30-auth is a KrakenD http-server plugin that decides the credential,
+// the client class and the API version of each request (handler.go),
+// answers the APIs of the edge itself (edge.go) and passes the others on to
+// the router.
 package main
 
 import (
@@ -13,8 +14,8 @@ import (
 
 const pluginName = "tv30-auth"
 
-// HandlerRegisterer eh o simbolo que o KrakenD procura no .so de um plugin
-// do tipo http-server.
+// HandlerRegisterer is the symbol KrakenD looks up in the .so of an
+// http-server plugin.
 var HandlerRegisterer = registerer(pluginName)
 
 type registerer string
@@ -29,8 +30,8 @@ func (r registerer) RegisterHandlers(f func(
 func (r registerer) registerHandlers(_ context.Context, extra map[string]interface{}, next http.Handler) (http.Handler, error) {
 	cfg, err := loadConfig(extra[string(r)], os.Getenv)
 	if err != nil {
-		// Com erro no registro o KrakenD so avisa e segue sem o plugin, e a
-		// borda ficaria sem validacao; encerrar derruba o container inteiro.
+		// Exits the process: on a registration error, KrakenD logs a warning
+		// and runs without the plugin.
 		logf("FATAL configuracao invalida: %v", err)
 		os.Exit(1)
 	}

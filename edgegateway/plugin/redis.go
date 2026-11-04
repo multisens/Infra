@@ -11,9 +11,9 @@ import (
 	"time"
 )
 
-// Mini cliente Redis (RESP2) so com a biblioteca padrao. Escreve so por FCALL
-// das funcoes tv30_bind_registra e tv30_bind_remove (infra/redis/funcoes.lua),
-// que conferem o esquema da entrada; escritas_test.go barra outro comando.
+// Minimal Redis client (RESP2) on the standard library. It writes only by
+// FCALL of tv30_bind_register and tv30_bind_remove, which check the schema
+// of the entry.
 
 type redisError string
 
@@ -32,7 +32,8 @@ type redisClient struct {
 
 const (
 	redisPoolSize = 8
-	redisMaxBulk  = 4 << 20 // 4 MiB: nenhuma chave lida aqui chega perto disso
+	// Largest bulk string read, 4 MiB.
+	redisMaxBulk = 4 << 20
 )
 
 func newRedisClient(addr string, timeout time.Duration) *redisClient {
@@ -65,7 +66,7 @@ func (rc *redisClient) give(cn *redisConn) {
 	}
 }
 
-// drain fecha as conexoes paradas no pool (provavelmente mortas tambem).
+// drain closes the idle connections of the pool.
 func (rc *redisClient) drain() {
 	for {
 		select {
@@ -77,27 +78,27 @@ func (rc *redisClient) drain() {
 	}
 }
 
-// do executa um comando idempotente. Erro de rede numa conexao reaproveitada
-// (ex.: o Redis reiniciou e fechou as conexoes) => esvazia o pool e tenta UMA
-// vez numa conexao nova.
+// do runs an idempotent command. On a network error on a reused connection,
+// as after a Redis restart, it empties the pool and retries once on a new
+// connection.
 func (rc *redisClient) do(args ...string) (interface{}, error) {
 	return rc.exec(true, args)
 }
 
-// fcall chama uma funcao da biblioteca tv30 do Redis com numkeys 0 —
-// as funcoes derivam as chaves dos argumentos. idempotente=false (o registro
-// de bind-context): NAO repete as cegas, so se a falha foi antes de o comando
-// terminar de sair.
+// fcall calls a function of the tv30 Redis library with numkeys 0; the
+// functions derive the keys from the arguments. When not idempotent, it
+// retries only if the failure happened before the command was fully sent.
 func (rc *redisClient) fcall(idempotente bool, nome string, args ...string) (interface{}, error) {
 	full := append([]string{"FCALL", nome, "0"}, args...)
 	return rc.exec(idempotente, full)
 }
 
-// prefixo das respostas de erro das funcoes tv30 para dado fora do esquema
-const schemaErrorPrefix = "TV30ESQUEMA "
+// Prefix of the error replies of the tv30 functions for data outside the
+// schema.
+const schemaErrorPrefix = "TV30SCHEMA "
 
-// schemaRefusal: a funcao recusou o dado (esquema). E defeito de quem
-// grava, nao Redis fora do ar; a mensagem diz funcao, chave, campo e motivo.
+// schemaRefusal reports whether err is a refusal by the schema, and returns
+// its message, which gives function, key, field and reason.
 func schemaRefusal(err error) (string, bool) {
 	var re redisError
 	if errors.As(err, &re) && strings.HasPrefix(string(re), schemaErrorPrefix) {
@@ -118,7 +119,7 @@ func (rc *redisClient) exec(idempotent bool, args []string) (interface{}, error)
 	}
 	var re redisError
 	if errors.As(err, &re) {
-		// resposta de erro do servidor: a conexao continua integra
+		// An error reply of the server leaves the connection usable.
 		rc.give(cn)
 		return nil, err
 	}
@@ -143,8 +144,8 @@ func (rc *redisClient) exec(idempotent bool, args []string) (interface{}, error)
 	return v, nil
 }
 
-// roundTrip envia o comando e le a resposta. sent=true: o comando saiu
-// inteiro (a falha, se houver, foi na leitura da resposta).
+// roundTrip sends the command and reads the reply. sent is true if the
+// command was fully sent, so that a failure happened reading the reply.
 func (cn *redisConn) roundTrip(timeout time.Duration, args []string) (v interface{}, sent bool, err error) {
 	if err := cn.c.SetDeadline(time.Now().Add(timeout)); err != nil {
 		return nil, false, err
@@ -172,9 +173,9 @@ func readLine(r *bufio.Reader) (string, error) {
 	return line[:len(line)-2], nil
 }
 
-// readReply decodifica uma resposta RESP2: simple string -> string, erro ->
-// redisError, inteiro -> int64, bulk -> string (nulo -> nil), array ->
-// []interface{} (nulo -> nil).
+// readReply decodes a RESP2 reply: simple string to string, error to
+// redisError, integer to int64, bulk to string, array to []interface{}; a
+// null bulk or array to nil.
 func readReply(r *bufio.Reader) (interface{}, error) {
 	line, err := readLine(r)
 	if err != nil {
@@ -265,7 +266,7 @@ func (rc *redisClient) lrange(key string) ([]string, error) {
 	return bulkStrings(v), nil
 }
 
-// bulkStrings: elementos texto de uma resposta array (nulo => vazio).
+// bulkStrings returns the string elements of an array reply; empty for null.
 func bulkStrings(v interface{}) []string {
 	arr, _ := v.([]interface{})
 	out := make([]string, 0, len(arr))
@@ -277,8 +278,7 @@ func bulkStrings(v interface{}) []string {
 	return out
 }
 
-// hgetall: o array campo, valor, campo, valor... vira mapa (chave ausente
-// => mapa vazio).
+// hgetall returns the hash as a map; empty if the key does not exist.
 func (rc *redisClient) hgetall(key string) (map[string]string, error) {
 	v, err := rc.do("HGETALL", key)
 	if err != nil {
@@ -300,12 +300,11 @@ func (rc *redisClient) hgetall(key string) (map[string]string, error) {
 	return out, nil
 }
 
-// Teto de iteracoes do SCAN: o cursor sempre volta a 0, mas um servidor
-// defeituoso nao pode prender a requisicao num laco.
+// Maximum number of SCAN rounds before giving up on the cursor.
 const scanMaxRounds = 10000
 
-// scanKeys: todas as chaves que casam o padrao (SCAN com cursor, nao KEYS,
-// que bloquearia o Redis), sem repeticao (o SCAN pode repetir chave).
+// scanKeys returns every key that matches the pattern, by SCAN, without
+// repetitions.
 func (rc *redisClient) scanKeys(match string) ([]string, error) {
 	seen := map[string]bool{}
 	var out []string
@@ -339,18 +338,17 @@ func (rc *redisClient) scanKeys(match string) ([]string, error) {
 	}
 }
 
-// Chaves Redis da borda:
-//
-//	clients:blocked              SET    le    — tv3ws (auth-manager): clientes bloqueados (C.4.2.2)
-//	clients:authorized           SET    le    — tv3ws (auth-manager): clientes autorizados pelo
-//	                                    espectador; a borda exige nele o sub do access token
-//	origins:associated           HASH   le    — AoP (core.js): origem -> servico que lancou a app
-//	session:current-service-id   STRING le    — tv3ws (api/user/service.ts): servico corrente
-//	session:current-service      HASH   le    — tv3ws (core.ts): serviceName/serviceId do corrente (C.6.8.3)
-//	services:announced           SET    le    — AoP (aop-transport-layer-metadata-lls): servicos do
-//	                                    Application Catalog, para o 304 (C.6.14.2, C.6.14.5)
-//	bind-context:{serviceId}     LIST   le e escreve — a borda (C.6.8.2/C.6.8.4, bindcontext.go):
-//	                                    {alg,key,registeredAt}, so pelas funcoes tv30_bind_*
+// Redis keys used by the edge, all read and only bind-context:{serviceId}
+// written:
+//   - clients:blocked (SET): clients blocked by the user (C.4.2.2);
+//   - clients:authorized (SET): clients authorized by the viewer;
+//   - origins:associated (HASH): origin to the service that launched the
+//     application;
+//   - session:current-service-id (STRING): the current service;
+//   - session:current-service (HASH): serviceName and serviceId of the
+//     current service;
+//   - services:announced (SET): the services of the Application Catalog;
+//   - bind-context:{serviceId} (LIST): {alg,key,registeredAt}.
 const (
 	keyBlocked        = "clients:blocked"
 	keyAuthorized     = "clients:authorized"
@@ -361,22 +359,24 @@ const (
 	keyBindPrefix     = "bind-context:"
 )
 
-// store eh o que a borda precisa do armazenamento (interface p/ testes).
+// store is the storage access of the edge.
 type store interface {
 	IsBlocked(clientID string) (bool, error)
-	IsAuthorized(clientID string) (bool, error) // SISMEMBER clients:authorized
-	// AssociatedOrigin: HGET origins:associated <origem>, o servico que lancou
-	// a app; ok=false se a origem nao esta na lista.
+	IsAuthorized(clientID string) (bool, error)
+	// AssociatedOrigin returns the service of the origin in
+	// origins:associated; ok is false if the origin is not in the hash.
 	AssociatedOrigin(origin string) (service string, ok bool, err error)
 	CurrentServiceID() (string, error)
-	ServiceInCatalog(serviceID string) (bool, error) // SISMEMBER services:announced
+	ServiceInCatalog(serviceID string) (bool, error)
 	BindKeys(serviceID string) ([]string, error)
 
-	// C.6.8 respondida pela borda
-	AddBindKey(serviceID, raw string) error             // FCALL tv30_bind_registra (RPUSH)
-	RemoveBindKey(serviceID, raw string) (int64, error) // FCALL tv30_bind_remove (LREM 0: todas as iguais)
-	BindServices() ([]string, error)                    // serviceIds com bind-context:* (SCAN)
-	CurrentService() (map[string]string, error)         // HGETALL session:current-service
+	// C.6.8, answered by the edge.
+	AddBindKey(serviceID, raw string) error
+	// RemoveBindKey removes every entry equal to raw, and returns how many.
+	RemoveBindKey(serviceID, raw string) (int64, error)
+	// BindServices returns the serviceIds that have a bind-context key.
+	BindServices() ([]string, error)
+	CurrentService() (map[string]string, error)
 }
 
 type redisStore struct{ c *redisClient }
@@ -391,8 +391,6 @@ func (s *redisStore) IsAuthorized(id string) (bool, error) {
 	return n == 1, err
 }
 
-// origins:associated eh HASH: origem -> servico que lancou a app (o AoP grava
-// com HSET ao lancar e apaga ao encerrar).
 func (s *redisStore) AssociatedOrigin(origin string) (string, bool, error) {
 	v, err := s.c.do("HGET", keyAssociated, origin)
 	if err != nil || v == nil {
@@ -419,23 +417,24 @@ func (s *redisStore) BindKeys(serviceID string) ([]string, error) {
 	return s.c.lrange(keyBindPrefix + serviceID)
 }
 
-// AddBindKey: a funcao confere o esquema da entrada ({alg em HS256, HS512,
-// RS256, RS512; key nao vazia; registeredAt inteiro}) e do serviceId e faz o
-// RPUSH em bind-context:{serviceId}; dado fora do esquema volta como erro
-// TV30ESQUEMA (schemaRefusal) e nada e gravado.
+// AddBindKey appends the entry to bind-context:{serviceId} by
+// tv30_bind_register, which checks the schema of the entry and of the
+// serviceId; data outside the schema gives a TV30SCHEMA error
+// (schemaRefusal), and nothing is written. The call is not retried after
+// the command was sent.
 func (s *redisStore) AddBindKey(serviceID, raw string) error {
-	v, err := s.c.fcall(false, "tv30_bind_registra", serviceID, raw)
+	v, err := s.c.fcall(false, "tv30_bind_register", serviceID, raw)
 	if err != nil {
 		return err
 	}
 	if _, ok := v.(int64); !ok {
-		return errors.New("tv30_bind_registra: resposta inesperada")
+		return errors.New("tv30_bind_register: resposta inesperada")
 	}
 	return nil
 }
 
-// RemoveBindKey: LREM 0 (todas as entradas iguais) pela funcao; repetir e
-// inofensivo, entao pode ser refeito numa conexao nova.
+// RemoveBindKey removes every equal entry by tv30_bind_remove; the call may
+// be retried on a new connection.
 func (s *redisStore) RemoveBindKey(serviceID, raw string) (int64, error) {
 	v, err := s.c.fcall(true, "tv30_bind_remove", serviceID, raw)
 	if err != nil {

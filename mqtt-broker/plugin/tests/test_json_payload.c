@@ -1,13 +1,13 @@
-// Teste de json_payload_parse: so passa payload que, lido inteiro pelo
-// comprimento, seja exatamente um texto JSON.
+// Test of json_payload_parse: only a payload that, read whole by its length,
+// is exactly one JSON text passes.
 //
-//   (em infra/mqtt-broker/plugin)
+//   (in infra/mqtt-broker/plugin)
 //   gcc -std=gnu11 -Wall -Wextra -I include tests/test_json_payload.c
 //       src/json_payload.c -ljson-c -o /tmp/test_json_payload
 //   /tmp/test_json_payload [/tmp/casos.tsv]
 //
-// Com o argumento, grava cada caso (payload em hexadecimal, veredito, 1 se e
-// divergencia conhecida do json-c) para o check_json_payload.py conferir.
+// With the argument, writes each case (payload in hexadecimal, verdict, 1 if
+// it is a known divergence of json-c) for check_json_payload.py to check.
 #include <json-c/json.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,9 +33,10 @@ static void dump_case(const char *p, size_t n, int verdict, int known) {
     fprintf(dump, "\t%d\t%d\n", verdict, known);
 }
 
-// Roda o parse e confere o veredito; devolve o objeto (ou NULL).
+// Runs the parse and checks the verdict; returns the object, or NULL.
 static json_object *run(const char *p, size_t n, int want, int known, const char *caso) {
-    json_object *o = (json_object *)0x1;  // tem de virar NULL na recusa
+    // Must become NULL on a refusal.
+    json_object *o = (json_object *)0x1;
     int r = json_payload_parse(p, n, &o);
     CHECK(r == want, "%s: devolveu %d, esperado %d", caso, r, want);
     if (r == 0) CHECK(o == NULL, "%s: recusa sem *out = NULL", caso);
@@ -43,7 +44,7 @@ static json_object *run(const char *p, size_t n, int want, int known, const char
     return r ? o : NULL;
 }
 
-// Aceito, com o valor esperado (serializacao do json-c, ou "null").
+// Accepted, with the expected value (json-c serialization, or "null").
 static void accept(const char *p, size_t n, const char *want, const char *caso) {
     json_object *o = run(p, n, 1, 0, caso);
     const char *got = o ? json_object_to_json_string_ext(o, JSON_C_TO_STRING_PLAIN) : "null";
@@ -58,7 +59,7 @@ static void reject(const char *p, size_t n, int known, const char *caso) {
 #define ACC(lit, want) accept(lit, sizeof(lit) - 1, want, #lit)
 #define REJ(lit) reject(lit, sizeof(lit) - 1, 0, #lit)
 
-// 1. Texto JSON valido: ws valor ws (RFC 8259, secao 2)
+// 1. Valid JSON text: ws value ws (RFC 8259, section 2).
 static void t_validos(void) {
     ACC("{\"value\":1}", "{\"value\":1}");
     ACC("{\"value\":1} \t\r\n", "{\"value\":1}");
@@ -66,7 +67,8 @@ static void t_validos(void) {
     ACC("\n{ \"a\" : [ 1 , 2 ] ,\r\n \"b\" : { } }\n", "{\"a\":[1,2],\"b\":{}}");
     ACC("123", "123");
     ACC("123 ", "123");
-    ACC("-0", "0");  // o json-c guarda -0 como o inteiro 0
+    // json-c stores -0 as the integer 0.
+    ACC("-0", "0");
     ACC("1.5e-3", "1.5e-3");
     ACC("1E+2", "1E+2");
     ACC("0", "0");
@@ -80,7 +82,7 @@ static void t_validos(void) {
     ACC("[]", "[]");
     ACC("{}", "{}");
     ACC("[{\"a\":[{\"b\":null}]},[]]", "[{\"a\":[{\"b\":null}]},[]]");
-    // o que os publicadores da stack mandam (JSON.stringify)
+    // What the publishers of the stack send (JSON.stringify).
     ACC("{\"top\":\"12%\",\"left\":\"35%\",\"width\":\"60%\",\"height\":\"60%\"}",
         "{\"top\":\"12%\",\"left\":\"35%\",\"width\":\"60%\",\"height\":\"60%\"}");
     ACC("[{\"globalServiceId\":\"g\",\"appVersion\":1,\"appName\":\"n\",\"appIcon\":\"i\",\"bannerIcon\":\"b\","
@@ -91,7 +93,8 @@ static void t_validos(void) {
     ACC("{\"value\":20}", "{\"value\":20}");
 }
 
-// 2. Nao e texto JSON: sobra, NUL, ws fora dos quatro, extensoes do json-c
+// 2. Not a JSON text: trailing data, NUL, ws outside the four, json-c
+// extensions.
 static void t_invalidos(void) {
     REJ("{\"value\":1}lixo");
     REJ("{\"value\":1}\0lixo");
@@ -107,7 +110,8 @@ static void t_invalidos(void) {
     REJ("1e5abc");
     REJ("truex");
     REJ("nullx");
-    REJ("3f2a1b9c-0000-4000-8000-000000000000");  // UUID com digito na frente
+    // A UUID that starts with a digit.
+    REJ("3f2a1b9c-0000-4000-8000-000000000000");
     REJ("a3f2a1b9-0000-4000-8000-000000000000");
     REJ("/appcat");
     REJ("urn:tv30:service:webmedia");
@@ -141,8 +145,8 @@ static void t_invalidos(void) {
     reject(NULL, 0, 0, "NULL");
 }
 
-// 3. Divergencias conhecidas: o json-c 0.15 estrito aceita, a RFC 8259 nao
-// (registradas em json_payload.h; o Python confere que sao mesmo invalidas)
+// 3. Known divergences: json-c 0.15 strict accepts them, RFC 8259 does not
+// (listed in json_payload.h; the Python checker confirms they are invalid).
 static void t_conhecidas(void) {
     const char *k[] = { "NaN", "Infinity", "-Infinity", "1.", "\"a\tb\"", "\"a\x01" "b\"", "\"\xff\"", "\"\xc3(\"" };
     for (size_t i = 0; i < sizeof(k) / sizeof(k[0]); i++) {
@@ -151,7 +155,8 @@ static void t_conhecidas(void) {
     }
 }
 
-// 4. Todo byte depois e antes do valor: so os quatro ws da RFC passam
+// 4. Every byte after and before the value: only the four ws of the RFC
+// pass.
 static void t_bytes(void) {
     const char *vals[] = { "{\"value\":1}", "[1]", "\"x\"", "true", "null" };
     char p[32], caso[64];
@@ -174,20 +179,20 @@ static void t_bytes(void) {
     }
 }
 
-// 5. Pelo comprimento: nada alem de len e lido, e o NUL do fim nao e exigido
+// 5. By the length: nothing beyond len is read, and no final NUL is needed.
 static void t_comprimento(void) {
     accept("123", 2, "12", "123 com len 2");
     accept("{\"a\":1}lixo", 7, "{\"a\":1}", "{\"a\":1}lixo com len 7");
     accept("true!", 4, "true", "true! com len 4");
     reject("{\"a\":1}", 6, 0, "{\"a\":1} com len 6");
-    // buffer exato, sem NUL no fim
+    // Exact buffer, without a final NUL.
     const char *src = "[1,2,3]";
     size_t n = strlen(src);
     char *b = malloc(n);
     memcpy(b, src, n);
     accept(b, n, "[1,2,3]", "buffer sem NUL");
     free(b);
-    // payload grande (1 MiB): array de numeros
+    // Large payload (1 MiB): an array of numbers.
     size_t big = 1 << 20;
     char *g = malloc(big);
     size_t k = 0;

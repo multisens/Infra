@@ -13,11 +13,10 @@ const (
 	modeWarn    = "warn"
 	modeEnforce = "enforce"
 
-	// padrao de desenvolvimento do compose: so para o aviso no log, nunca
-	// como valor assumido
+	// Development JWT_SECRET; when in use, a warning is logged.
 	devSecret = "tv30-dev-secret-nao-usar-em-producao"
 
-	defaultIssuer       = "GenericIssuer" // igual ao tv3ws (auth-manager/manager.ts)
+	defaultIssuer       = "GenericIssuer"
 	defaultRedisHost    = "redis"
 	defaultRedisPort    = "6379"
 	defaultRedisTimeout = 500 * time.Millisecond
@@ -26,33 +25,36 @@ const (
 type config struct {
 	Surface string
 	Mode    string
-	// NonLocalHTTPSOnly: superficie HTTP (Server-BaseURL), onde o nao local so
-	// usa as rotas NonLocalHTTP e recebe 106 nas demais (C.4.1.6).
+	// The HTTP surface (Server-BaseURL): a non-local client may only use the
+	// NonLocalHTTP routes and gets 106 on the others (C.4.1.6).
 	NonLocalHTTPSOnly bool
-	// AllVersions: versoes servidas por alguma rota, em ordem crescente;
-	// LatestVersion vai no API-Version do erro 100 (C.3.6.6).
+	// Versions served by any route, in ascending order; LatestVersion goes in
+	// the API-Version header of error 100 (C.3.6.6).
 	AllVersions   []string
 	LatestVersion string
 	Secret        []byte
 	Issuer        string
 	Routes        *routeTable
-	// APIs implementadas, na ordem da Tabela C.2 (C.6.7.8/C.6.7.9, apiinfo.go)
+	// Implemented APIs, in the order of Table C.2 (C.6.7.8, C.6.7.9).
 	APIs         *apiCatalog
 	RedisAddr    string
 	RedisTimeout time.Duration
-	// cabecalhos CORS (C.4.1.9), de cors.* do routes.json; "" = sem o cabecalho
-	CORSAllowHeaders  string // Access-Control-Allow-Headers de todo OPTIONS
-	CORSExposeHeaders string // Access-Control-Expose-Headers de toda resposta
-	CORSMaxAge        string // Access-Control-Max-Age do preflight, em segundos
+	// CORS headers (C.4.1.9); an empty value omits the header.
+	// Access-Control-Allow-Headers of every OPTIONS response.
+	CORSAllowHeaders string
+	// Access-Control-Expose-Headers of every response.
+	CORSExposeHeaders string
+	// Access-Control-Max-Age of the preflight response, in seconds.
+	CORSMaxAge string
 }
 
-// Padrao da C.4.1.9.3 mais o cabecalho key do DELETE /tv3/bind-context (C.6.8.4).
+// Default of C.4.1.9.3 plus the key header of DELETE /tv3/bind-context
+// (C.6.8.4).
 const defaultCORSAllowHeaders = "Content-Type, Authorization, bind-token, Accept, Accept-Version, key"
 
-// loadConfig le o bloco "tv30-auth" do extra_config["plugin/http-server"]
-// (gerado por generate.js a partir de routes.json) e o ambiente do
-// container. Qualquer valor invalido eh erro: nada de assumir padrao em
-// silencio para algo que mude o que a borda deixa passar.
+// loadConfig reads the "tv30-auth" block of
+// extra_config["plugin/http-server"] and the environment. Returns an error
+// for any invalid value.
 func loadConfig(raw interface{}, getenv func(string) string) (*config, error) {
 	m, ok := raw.(map[string]interface{})
 	if !ok {
@@ -244,7 +246,7 @@ func loadConfig(raw interface{}, getenv func(string) string) (*config, error) {
 		cfg.CORSMaxAge = strconv.FormatInt(int64(d/time.Second), 10)
 	}
 
-	// vazio = enforce; warn so explicito, para cliente que ainda nao obtem o token
+	// Empty means enforce.
 	switch mode := strings.TrimSpace(getenv("AUTH_ENFORCE")); mode {
 	case modeWarn:
 		cfg.Mode = modeWarn

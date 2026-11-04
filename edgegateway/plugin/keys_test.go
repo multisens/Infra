@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// Todas as codificacoes de chave RSA aceitas validam o mesmo token.
+// Every accepted RSA key encoding validates the same token.
 func TestFormatosDeChaveRSA(t *testing.T) {
 	k := testRSAKey(t)
 	spki, _ := x509.MarshalPKIXPublicKey(&k.PublicKey)
@@ -27,11 +27,12 @@ func TestFormatosDeChaveRSA(t *testing.T) {
 	}
 
 	formats := map[string]string{
-		"PEM PUBLIC KEY":             pemOf("PUBLIC KEY", spki),
-		"PEM RSA PUBLIC KEY":         pemOf("RSA PUBLIC KEY", pkcs1pub),
-		"base64 DER SPKI":            std(spki),
-		"base64 DER PKCS#1 publico":  std(pkcs1pub),
-		"base64 DER PKCS#1 privado":  std(pkcs1priv), // forma do exemplo MIIBOgIBAAJB... da norma
+		"PEM PUBLIC KEY":            pemOf("PUBLIC KEY", spki),
+		"PEM RSA PUBLIC KEY":        pemOf("RSA PUBLIC KEY", pkcs1pub),
+		"base64 DER SPKI":           std(spki),
+		"base64 DER PKCS#1 publico": std(pkcs1pub),
+		// The form of the example MIIBOgIBAAJB... of the standard.
+		"base64 DER PKCS#1 privado":  std(pkcs1priv),
 		"base64 DER PKCS#8 privado":  std(pkcs8priv),
 		"PEM RSA PRIVATE KEY":        pemOf("RSA PRIVATE KEY", pkcs1priv),
 		"PEM PRIVATE KEY (PKCS#8)":   pemOf("PRIVATE KEY", pkcs8priv),
@@ -50,10 +51,10 @@ func TestFormatosDeChaveRSA(t *testing.T) {
 	}
 }
 
-// Chave de 512 bits (tamanho do exemplo da norma, {"alg":"RS256","key":
-// "MIIBOgIBAAJB..."}: PKCS#1 privada em base64 de DER). Observacao: com 512
-// bits so da para RS256 — o DigestInfo do SHA-512 (83 bytes + 11 de padding)
-// nao cabe num modulo de 64 bytes, entao RS512 exige chave maior.
+// A 512-bit key, the size of the example of the standard ({"alg":"RS256",
+// "key":"MIIBOgIBAAJB..."}: a PKCS#1 private key in base64 of DER). With 512
+// bits only RS256 fits: the DigestInfo of SHA-512 (83 bytes plus 11 of
+// padding) does not fit a 64-byte modulus.
 func TestChaveRSA512BitsDaNorma(t *testing.T) {
 	k, err := rsa.GenerateKey(rand.Reader, 512)
 	if err != nil {
@@ -85,8 +86,7 @@ func TestChavesInvalidas(t *testing.T) {
 	}
 }
 
-// Casos de testdata/keyformats.json: regressao do parser usado no registro
-// (C.6.8.2) e na validacao do bind-token.
+// Cases of testdata/keyformats.json: regression of the key parser.
 func TestFormatosDeChaveDoFixture(t *testing.T) {
 	raw, err := os.ReadFile("testdata/keyformats.json")
 	if err != nil {

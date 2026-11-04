@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-# Driver de test_errors_json.sh, num container da imagem do broker, na rede do
-# broker descartavel:  python3 errors_json_driver.py <host-do-broker>
-# Saida: uma linha PASS/FAIL por conferencia e o resumo; codigo 0 so sem FAIL.
+# Driver of test_errors_json.sh, in a container of the broker image, on the
+# network of the disposable broker:
+#   python3 errors_json_driver.py <broker-host>
+# Output: one PASS/FAIL line per check and the summary; exit code 0 only
+# without FAIL.
 import json
 import os
 import queue
@@ -12,14 +14,16 @@ import threading
 import time
 
 HOST = sys.argv[1] if len(sys.argv) > 1 else 'localhost'
-LIMIT = 2047  # ERROR_JSON_CAP - 1 (plugin/include/error_json.h)
-TOPIC_MAX, CLIENT_MAX = 512, 256  # tetos de error_json.h (bytes escapados)
+# ERROR_JSON_CAP - 1 (plugin/include/error_json.h).
+LIMIT = 2047
+# Maximums of error_json.h, in escaped bytes.
+TOPIC_MAX, CLIENT_MAX = 512, 256
 
 passes, fails = 0, 0
 
-# Teste de latencia (response_time_tester.c): (nome, id, iteracao, topico da
-# resposta). O topico da resposta e PluginResponseTime<id>/iteration<N>, com o
-# id lido como C string (para no NUL).
+# Latency test (response_time_tester.c): (name, id, iteration, reply topic).
+# The reply topic is PluginResponseTime<id>/iteration<N>, with the id read
+# as a C string (it stops at the NUL).
 RT_CASES = [
     ('latencia: id com aspas e barra invertida', 'rt"q\\b', 1, 'PluginResponseTimert"q\\b/iteration1'),
     ('latencia: id com NUL escapado no meio', 'rt\x00x', 2, 'PluginResponseTimert/iteration2'),
@@ -37,9 +41,10 @@ def check(cond, name, detail=''):
         print('FAIL ' + name + ('  -- ' + detail if detail else ''), flush=True)
 
 
-# ---------------------------------------------------------------- assinante --
-# Topico, TAB (caractere real no formato) e payload em hexadecimal (%x): os
-# bytes exatos de cada mensagem, sem depender de quebra de linha no payload.
+# -------------------------------------------------------------- subscriber --
+# Topic, TAB (a real character in the format) and payload in hexadecimal
+# (%x): the exact bytes of each message, whatever line breaks the payload
+# has.
 sub = subprocess.Popen(
     ['mosquitto_sub', '-h', HOST, '-q', '0',
      '-t', 'errors/#', '-t', 'sensor/room1/temperature', '-t', 'aop/display/layers/popup/#',
@@ -91,7 +96,7 @@ def collect(until_topic, timeout=6.0):
     return got
 
 
-# espera o assinante ficar ativo
+# Waits for the subscriber to be active.
 ready = False
 for i in range(60):
     publish('zz/teste-errors-json/pronto', b'%d' % i)
@@ -115,8 +120,8 @@ BAMT_DETAILS = ("Item at index 0: Property 'backgroundColor': String 'x\"y\\z\n'
 BAMT_OK = ('[{"globalServiceId":"g","appVersion":1,"appName":"n","appIcon":"i","bannerIcon":"b",'
            '"backgroundColor":"#000000","foregroundColor":"#ffffff"}]').encode()
 
-# (nome, topico, client_id, payload, esperado). esperado: dict com os campos
-# a conferir na mensagem de erro, ou None = publicacao aceita (sem erro).
+# (name, topic, client_id, payload, expected). expected: dict with the fields
+# to check in the error message, or None for an accepted publication.
 CASES = [
     ('aspas, barra e controles no payload', 'sensor/room1/temperature', 'tv30-t-aspas',
      b'he said "hi" \\ back\n\ttab\r\x01\x1f\x7f fim',
@@ -145,8 +150,8 @@ CASES = [
      b'a' * 1800, dict(error_type='INVALID_JSON', payload='a' * 1800)),
     ('payload de 2000 bytes: mensagem passaria de 2047', 'sensor/room1/temperature', 'tv30-t-2000',
      b'a' * 2000, dict(error_type='INVALID_JSON', cut_unit='a')),
-    # o '[' na frente deixa o payload invalido de saida: so aspas comecariam
-    # com "" (um texto JSON) seguido de sobra
+    # The '[' in front makes the payload invalid from the start: only quotes
+    # would start with "" (a JSON text) followed by trailing data.
     ('3000 aspas (escape dobra o tamanho)', 'sensor/room1/temperature', 'tv30-t-aspas3000',
      b'[' + b'"' * 3000, dict(error_type='INVALID_JSON', cut_unit='"', cut_prefix='[')),
     ('1000 bytes 0x01 (escape de 6 bytes)', 'sensor/room1/temperature', 'tv30-t-ctl1000',
@@ -157,7 +162,7 @@ CASES = [
      b'nope', dict(error_type='INVALID_JSON', payload='nope', topic_cut=True)),
     ('client_id de 300 bytes', 'sensor/room1/temperature', 'c' * 300,
      b'nope', dict(error_type='INVALID_JSON', payload='nope', client_cut=True)),
-    # payload lido inteiro: sobra depois do valor e INVALID_JSON
+    # Payload read whole: data after the value is INVALID_JSON.
     ('JSON com texto depois', 'sensor/room1/temperature', 'tv30-t-lixo',
      b'{"value":1}lixo', dict(error_type='INVALID_JSON', payload='{"value":1}lixo')),
     ('JSON com NUL e texto depois', 'sensor/room1/temperature', 'tv30-t-nul-lixo',
@@ -200,7 +205,8 @@ def validate(name, raw, want, topic, client):
         return
     check(True, name + ': UTF-8 valido')
     try:
-        msg = json.loads(text)  # estrito: recusa controle cru dentro de texto
+        # Strict: refuses a raw control character inside text.
+        msg = json.loads(text)
     except ValueError as e:
         check(False, name + ': JSON valido (json.loads)', '%s; inicio: %r' % (e, raw[:160]))
         return
@@ -257,9 +263,9 @@ for name, topic, client, payload, want in CASES:
     if errs:
         validate(name, errs[0], want, topic, client)
 
-# ----------------------------------------------------- teste de latencia --
-# A resposta em PluginResponseTime<id>/iteration<N> tem de ser JSON valido com
-# o id inteiro.
+# --------------------------------------------------------- latency test --
+# The reply on PluginResponseTime<id>/iteration<N> must be valid JSON with
+# the whole id.
 for i, (name, rid, it, rtopic) in enumerate(RT_CASES):
     body = json.dumps({'testResponsetime': True, 'localtime': '2026-10-12 10:00:00.000', 'id': rid, 'iteration': it})
     rc, err = publish('PublisherResponseTimezz/iteration%d' % it, body.encode(), 'tv30-t-latencia-%d' % i)
@@ -286,11 +292,11 @@ for i, (name, rid, it, rtopic) in enumerate(RT_CASES):
 
 sub.terminate()
 
-# ------------------------------------------------ topico errors/<client_id> --
-# +, # e / viram _; o corte em 255 bytes nao parte caractere UTF-8.
-# Um assinante por caso: topico com UTF-8 invalido derruba o cliente que o
-# recebe (libmosquitto: MOSQ_ERR_MALFORMED_UTF8), e o caso seguinte nao
-# depende do anterior.
+# ----------------------------------------------- topic errors/<client_id> --
+# +, # and / become _; the cut at 255 bytes does not split a UTF-8
+# character. One subscriber per case: a topic with invalid UTF-8 brings down
+# the client that receives it (libmosquitto: MOSQ_ERR_MALFORMED_UTF8), so no
+# case depends on the previous one.
 E_ACUTE, EMOJI = chr(0xE9), chr(0x1F600)
 TOPIC_CASES = [
     ('client_id com +', 'a+b', 'errors/a_b'),

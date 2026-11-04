@@ -25,9 +25,9 @@ func TestNormalizeHost(t *testing.T) {
 	}
 }
 
-// SSDP_ADVERTISE_HOST ausente ou vazio: host detectado (Host vazio, preenchido
-// a cada sessao com o IPv4 da interface); definido sem host e erro. O
-// SERVER_URL nao e fonte do host do anuncio.
+// SSDP_ADVERTISE_HOST absent or empty: detected host (empty Host, filled on
+// each session with the IPv4 of the interface); set without a host is an
+// error. SERVER_URL is not a source of the announced host.
 func TestResolveEndpoint(t *testing.T) {
 	e, err := resolveEndpoint(env(map[string]string{"SSDP_ADVERTISE_HOST": "192.168.2.7", "SERVER_URL": "x"}))
 	if err != nil || e.Host != "192.168.2.7" || e.HTTPPort != 44642 || e.HTTPSPort != 44643 {
@@ -69,14 +69,15 @@ func TestWarnings(t *testing.T) {
 	if len(w) != 1 || !strings.Contains(w[0], "EDGE_HTTP_PORT=8080") {
 		t.Fatalf("porta: %v", w)
 	}
-	// host detectado e porta padrao: nenhum aviso
+	// Detected host and default port: no warning.
 	if w = warnings(endpoint{"", 44642, 44643}); len(w) != 0 {
 		t.Fatalf("detectado: %v", w)
 	}
 }
 
-// A rota padrao vem do sistema (socket UDP "conectado"), nos tres sistemas:
-// numa maquina com rede, o endereco e um IPv4 nao loopback; sem rede, vazio.
+// The default route comes from the system (a "connected" UDP socket), on the
+// three systems: on a machine with network, the address is a non-loopback
+// IPv4; without network, empty.
 func TestDefaultRouteAddr(t *testing.T) {
 	if a := defaultRouteAddr(); a != "" {
 		if ip := net.ParseIP(a); ip == nil || ip.To4() == nil || ip.IsLoopback() {
@@ -101,8 +102,8 @@ func TestChooseInterface(t *testing.T) {
 	if err != nil || c.Name != "docker0" || c.Addr != "172.17.0.1" || len(c.Warnings) != 1 {
 		t.Fatalf("forcada divergente: %+v %v", c, err)
 	}
-	// forcada fora da lista (sem IPv4 ou fora do ar; a existencia do nome e
-	// conferida na partida, por checkForced): falta de rede
+	// Forced outside the list (without IPv4 or down; the existence of the name
+	// is checked at startup, by checkForced): lack of network.
 	if _, err = chooseInterface("192.168.2.7", "eth9", ifs, route); err == nil || !strings.Contains(err.Error(), "eth9") || !isNetDown(err) {
 		t.Fatalf("forcada sem IPv4 deveria ser falta de rede: %v", err)
 	}
@@ -113,7 +114,7 @@ func TestChooseInterface(t *testing.T) {
 		!strings.Contains(err.Error(), "nenhuma interface") {
 		t.Fatalf("sem interface deveria ser falta de rede: %v", err)
 	}
-	// host detectado: a interface da rota padrao, sem aviso
+	// Detected host: the interface of the default route, without a warning.
 	c, err = chooseInterface("", "", ifs, route)
 	if err != nil || c.Name != "wlp2s0" || c.Addr != "192.168.2.7" || c.Source != "default-route" || len(c.Warnings) != 0 {
 		t.Fatalf("detectado: %+v %v", c, err)

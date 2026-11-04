@@ -12,26 +12,22 @@ import (
 	"strings"
 )
 
-// Broadcaster security APIs (C.6.8), respondidas pela borda. As chaves ficam em
-// bind-context:{serviceId}, LIST de JSON {"alg","key","registeredAt"(ms)},
-// gravada so pelas funcoes do Redis (redis.go). Classe e access token de cada
-// rota sao conferidos antes, pela politica da rota (evaluate).
+// Broadcaster security APIs (C.6.8), answered by the edge. The keys are in
+// bind-context:{serviceId}, a LIST of JSON {"alg","key","registeredAt"},
+// registeredAt in ms.
 
-// Menor modulo RSA (bytes) que comporta a assinatura PKCS#1 v1.5: DigestInfo
-// (19 bytes de cabecalho + o hash) mais 11 de preenchimento. Com menos, a
-// chave registra mas nenhum token valida; a Tabela C.49 preve 101 para "key
-// format incompatible with the specified algorithm". A chave de 512 bits do
-// exemplo da norma serve para RS256, nao para RS512.
+// Smallest RSA modulus, in bytes, that holds a PKCS#1 v1.5 signature:
+// DigestInfo (19 header bytes plus the hash) plus 11 bytes of padding.
 var minRSAModulusBytes = map[string]int{algRS256: 19 + 32 + 11, algRS512: 19 + 64 + 11}
 
-// Teto do corpo do registro: o padrao do express.json (100 KiB).
+// Maximum size of the registration body, 100 KiB.
 const maxRegisterBody = 100 << 10
 
-// checkRegistration: corpo do POST /tv3/bind-context (Tabela C.49), nas regras
-// do express.json: 101 se o corpo nao for objeto JSON (inclusive Content-Type
-// que nao e application/json), se o alg nao for suportado ou se a chave for
-// incompativel com ele; 105 se faltar alg ou key. Corpo vazio com Content-Type
-// JSON vale {} e da 105.
+// checkRegistration checks the body of POST /tv3/bind-context (Table C.49):
+// 101 if the body is not a JSON object, or the Content-Type is not
+// application/json, if the alg is not supported or if the key is
+// incompatible with it; 105 if alg or key is missing. An empty body with a
+// JSON Content-Type is read as {} and gives 105.
 func checkRegistration(r *http.Request) (alg, key string, code int, detail string) {
 	const notObject = "message body must be a JSON object with alg and key, body"
 	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -92,15 +88,15 @@ func checkRegistration(r *http.Request) (alg, key string, code int, detail strin
 	return alg, key, 0, ""
 }
 
-// storedEntry: o elemento gravado em bind-context:{serviceId}.
+// storedEntry is the element written to bind-context:{serviceId}.
 type storedEntry struct {
 	Alg          string `json:"alg"`
 	Key          string `json:"key"`
 	RegisteredAt int64  `json:"registeredAt"`
 }
 
-// parseStoredEntry: elemento lido do Redis; ok=false se malformado (alg fora
-// dos quatro ou key ausente/nao texto).
+// parseStoredEntry decodes an element read from Redis. Returns false if it
+// is malformed: alg not supported, or key missing or not a string.
 func parseStoredEntry(raw string) (storedKey, bool) {
 	var e struct {
 		Alg *string `json:"alg"`
@@ -112,11 +108,9 @@ func parseStoredEntry(raw string) (storedKey, bool) {
 	return storedKey{Alg: *e.Alg, Key: *e.Key}, true
 }
 
-// sameKey: mesma chave? Texto igual sem espacos nas pontas (cabecalho HTTP
-// chega aparado) ou, para RSA, a mesma chave publica em outra codificacao.
-// Casa o cabecalho "key" da revogacao (C.6.8.4), que nao traz alg: a
-// revogacao de "s" remove tambem um segredo HS registrado como "s " (efeito
-// aceito).
+// sameKey reports whether two keys are the same: equal text after trimming
+// the spaces at the ends or, for RSA, the same public key in any encoding.
+// No alg is compared.
 func sameKey(a, b string) bool {
 	if strings.TrimSpace(a) == strings.TrimSpace(b) {
 		return true
@@ -132,9 +126,9 @@ func sameKey(a, b string) bool {
 	return pa.E == pb.E && pa.N.Cmp(pb.N) == 0
 }
 
-// sameRegisteredKey: duplicata no registro (C.6.8.2). HS: igualdade EXATA (a
-// verificacao usa os bytes sem aparar, entao "s" e "s " sao segredos
-// diferentes); RSA: a mesma chave publica (sameKey).
+// sameRegisteredKey reports whether a registered key duplicates another
+// (C.6.8.2): for HS, exact equality, since the signature check uses the
+// untrimmed bytes; for RSA, the same public key (sameKey).
 func sameRegisteredKey(alg, a, b string) bool {
 	if alg == algHS256 || alg == algHS512 {
 		return a == b
@@ -142,14 +136,12 @@ func sameRegisteredKey(alg, a, b string) bool {
 	return sameKey(a, b)
 }
 
-// C.6.8.2 (Tabela C.49): registra {alg, key} para o servico corrente. Sem
-// servico, 300 ("No DTV service currently in use"): a tabela nao lista erro
-// para esse caso.
+// C.6.8.2, Table C.49: registers {alg, key} for the current service; an
+// already registered key is not added again. Without a current service,
+// 300.
 //
-// Leitura e escrita nao sao atomicas: dois registros simultaneos da mesma chave
-// podem gravar uma duplicata, inofensiva (qualquer chave da lista valida; a
-// revogacao remove todas as iguais). A duplicata e detectada aqui porque chaves
-// RSA se comparam pela chave publica, o que a funcao do Redis nao faz.
+// Reading and writing are not atomic: two concurrent registrations of the
+// same key may store it twice.
 func (h *authHandler) bindRegister(r *http.Request, _ map[string]string) edgeReply {
 	alg, key, code, detail := checkRegistration(r)
 	if code != 0 {
@@ -162,7 +154,8 @@ func (h *authHandler) bindRegister(r *http.Request, _ map[string]string) edgeRep
 	if sid == "" {
 		return edgeReply{Code: 300, Detail: "no DTV service selected for the bind context"}
 	}
-	// serviceContextId = globalServiceId do servico corrente (Tabela 6, C.3.5)
+	// serviceContextId is the globalServiceId of the current service (Table 6,
+	// C.3.5).
 	ok := edgeReply{Body: struct {
 		ServiceContextID string `json:"serviceContextId"`
 	}{sid}}
@@ -188,21 +181,22 @@ func (h *authHandler) bindRegister(r *http.Request, _ map[string]string) edgeRep
 	return ok
 }
 
-// Item de boundServices: mesma estrutura da resposta da C.6.3.1 (Tabela C.8,
-// "serviceId": integer). session:current-service guarda o serviceId em texto;
-// aqui ele volta a numero quando eh numerico.
+// boundService is an item of boundServices, with the structure of the
+// response of C.6.3.1 (Table C.8, "serviceId": integer). The serviceId,
+// stored as text, is set only when it is numeric.
 type boundService struct {
 	ServiceContextID string  `json:"serviceContextId"`
 	ServiceName      string  `json:"serviceName,omitempty"`
 	ServiceID        *uint64 `json:"serviceId,omitempty"`
 }
 
-// C.6.8.3 (Tabela C.50): servicos, entre todos com chave registrada, cujas
-// chaves validam o bind-token. Aqui o bind-token e argumento da API, e nao
-// credencial da rota. 104 sem o cabecalho; 108 se nao e JWT; 101 se nenhuma
-// chave valida a assinatura; 108 se ela confere mas o token esta fora do prazo
-// (a Tabela C.50 nao trata o caso; a assinatura vem antes, C.4.1.4). Lista
-// ilegivel ou entrada malformada e ignorada com log.
+// C.6.8.3, Table C.50: lists the services, among all with a registered
+// key, whose keys validate
+// the bind-token, here an argument of the API and not the credential of the
+// route. 104 without the header; 108 if it is not a JWT; 101 if no key
+// validates the signature; 108 if the signature is valid but the token is
+// out of its validity period. An unreadable list or a malformed entry is
+// logged and skipped.
 func (h *authHandler) bindList(r *http.Request, _ map[string]string) edgeReply {
 	tok := strings.TrimSpace(r.Header.Get("bind-token"))
 	if tok == "" {
@@ -243,9 +237,8 @@ func (h *authHandler) bindList(r *http.Request, _ map[string]string) edgeReply {
 		return edgeReply{Code: 108, Detail: err.Error()}
 	}
 
-	// Nome e id so se conhecem para o servico corrente (session:current-
-	// service); para os demais nao ha fonte no testbed e os campos sao
-	// omitidos (C.3.2.2).
+	// Name and id are set only for the current service
+	// (session:current-service), and omitted for the others (C.3.2.2).
 	cur, err := h.store.CurrentServiceID()
 	if err != nil {
 		return redisDown(err)
@@ -283,10 +276,10 @@ func numericServiceID(s string) (uint64, bool) {
 	return n, err == nil
 }
 
-// C.6.8.4 (Tabela C.51): remove do servico corrente toda entrada com a mesma
-// chave (o cabecalho "key" nao traz alg). Sucesso mesmo se a chave nao existe
-// ou nao ha servico corrente. Nao libera os recursos compartilhados da
-// aplicacao, como pede a C.4.4.
+// C.6.8.4, Table C.51: removes from the current service every entry with
+// the same key, whatever its alg.
+// Succeeds even if the key does not exist or there is no current service.
+// TODO: release the shared resources of the application (C.4.4).
 func (h *authHandler) bindRemove(r *http.Request, _ map[string]string) edgeReply {
 	key := strings.TrimSpace(r.Header.Get("key"))
 	if key == "" {

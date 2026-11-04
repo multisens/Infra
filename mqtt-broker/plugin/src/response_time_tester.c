@@ -10,7 +10,7 @@
 
 extern mosquitto_plugin_id_t *mosq_pid;
 
-// buffer da resposta, com o NUL
+// Response buffer, with the NUL.
 #define RESPONSE_CAP 512
 
 static char* format_timestamp() {
@@ -62,8 +62,8 @@ void handle_response_time_test(const char* topic, const char* payload) {
     
     const char *pub_time_str = json_object_get_string(publisher_time);
     const char *id = json_object_get_string(publisher_id);
-    // comprimento real do id: string JSON com \u0000 no meio sai inteira na
-    // resposta; id que nao e string vale o seu texto JSON
+    // Real length of the id: a JSON string with \u0000 inside goes whole in
+    // the reply; an id that is not a string is its JSON text.
     size_t id_len = json_object_is_type(publisher_id, json_type_string)
         ? (size_t)json_object_get_string_len(publisher_id) : strlen(id);
     int iter = json_object_get_int(iteration);
@@ -86,8 +86,9 @@ void handle_response_time_test(const char* topic, const char* payload) {
         return;
     }
     
-    // id escapado por error_json_string; resposta maior que RESPONSE_CAP - 1
-    // bytes nao sai, e o buffer e liberado aqui sempre que o broker nao fica com ele
+    // The id is escaped by error_json_string; a reply longer than
+    // RESPONSE_CAP - 1 bytes is not sent, and the buffer is freed here unless
+    // the broker took it.
     char id_json[RESPONSE_CAP];
     int len = -1;
     if (error_json_string(id_json, sizeof(id_json), id, id_len) >= 0) {
@@ -98,7 +99,7 @@ void handle_response_time_test(const char* topic, const char* payload) {
     
     if (len > 0 && len < RESPONSE_CAP &&
         mosquitto_broker_publish(NULL, response_topic, len, response_buffer, 0, 0, NULL) == MOSQ_ERR_SUCCESS) {
-        // o broker ficou com o buffer (e o libera)
+        // The broker took the buffer, and frees it.
         response_buffer = NULL;
         mosquitto_log_printf(MOSQ_LOG_INFO, "Response time test: topic=%s, diffTime=%lld ms", response_topic, diff_time);
     }

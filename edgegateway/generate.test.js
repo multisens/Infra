@@ -1,6 +1,6 @@
 'use strict';
-// Testes do generate.js, sem dependencias: node --test generate.test.js.
-// Rodam tambem no build da imagem: tabela que quebra a regra nao vira imagem.
+// Tests of generate.js, without dependencies: node --test generate.test.js.
+// They also run in the image build.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
@@ -11,7 +11,7 @@ const real = () => JSON.parse(fs.readFileSync(path.join(__dirname, 'routes.json'
 const key = r => `${r.method} ${r.path}`;
 const keys = rs => rs.map(key).sort();
 
-// tabela minima valida, para os casos sinteticos
+// Minimal valid table, for the synthetic cases.
 function mini(routes) {
   return {
     backends: { external: { linux: 'https://x:1' }, internal: { linux: 'http://x:2' } },
@@ -29,8 +29,8 @@ const plugin = (files, s) => files[`krakend-${s}.linux.json`].extra_config['plug
 const pk = r => `${r.method} ${r.path}`;
 const EXCLUSIVAS_DO_LOCAL = [
   'DELETE /tv3/bind-context',
-  'DELETE /tv3/remote-device/device/{handle}',
-  'GET /tv3/remote-device/device/{handle}',
+  'DELETE /tv3/notifications/{handle}',
+  'GET /tv3/notifications/{className}',
   'GET /tv3/remote-device/devices/{classId}',
   'POST /tv3/bind-context',
 ];
@@ -40,7 +40,7 @@ test('as duas superficies tem todas as rotas', () => {
   for (const s of ['external', 'internal']) assert.equal(g.routesOf(t, s).length, t.routes.length, s);
   for (const r of t.routes) assert.deepEqual(g.surfacesOf(r), ['external', 'internal'], key(r));
   const files = g.generate(t);
-  for (const s of ['external', 'internal']) assert.equal(plugin(files, s).routes.length, 26, s);
+  for (const s of ['external', 'internal']) assert.equal(plugin(files, s).routes.length, 27, s);
 });
 
 test('na externa, 106 nas exclusivas do cliente local e na C.6.1.2 (C.4.1.8); na interna, nenhuma', () => {
@@ -48,7 +48,8 @@ test('na externa, 106 nas exclusivas do cliente local e na C.6.1.2 (C.4.1.8); na
   const com106 = s => t.routes.filter(r => g.surfaceErrorOf(r, s) === 106).map(key).sort();
   assert.deepEqual(com106('external'), [...EXCLUSIVAS_DO_LOCAL, 'GET /tv3/authorize'].sort());
   assert.deepEqual(com106('internal'), []);
-  // o /tv3/token (C.6.1.3) e o GET /tv3/bind-context (C.6.8.3) continuam na externa
+  // /tv3/token (C.6.1.3) and GET /tv3/bind-context (C.6.8.3) stay on the
+  // external surface.
   for (const k of ['GET /tv3/token', 'GET /tv3/bind-context', 'POST /tv3/remote-device', 'DELETE /tv3/remote-device/{handle}']) {
     assert.equal(g.surfaceErrorOf(t.routes.find(r => key(r) === k), 'external'), 0, k);
   }
@@ -56,7 +57,8 @@ test('na externa, 106 nas exclusivas do cliente local e na C.6.1.2 (C.4.1.8); na
   const ext = plugin(files, 'external').routes.filter(r => r.surface_error).map(pk).sort();
   assert.deepEqual(ext, com106('external'));
   assert.ok(plugin(files, 'internal').routes.every(r => !r.surface_error));
-  // e os endpoints continuam registrados no roteador da externa (o plugin responde antes)
+  // The endpoints stay registered in the router of the external surface (the
+  // plugin answers first).
   for (const v of Object.keys(t.backends.external)) {
     const eps = files[`krakend-external.${v}.json`].endpoints.map(e => `${e.method} ${e.endpoint}`);
     for (const r of t.routes.filter(r => g.surfaceErrorOf(r, 'external') === 106)) {
@@ -82,9 +84,9 @@ test('no_service 300 na C.6.4.7 e da C.6.14.1 a C.6.14.6; nao na C.6.16.3', () =
   for (const r of t.routes.filter(r => r.no_service)) assert.equal(r.auth, 'token+bind', key(r));
   const files = g.generate(t);
   for (const s of ['external', 'internal']) assert.equal(plugin(files, s).routes.filter(r => r.no_service === 300).length, 8, s);
-  // validacao: valor e auth
-  assert.ok(g.checkTable(mini([{ method: 'GET', path: '/a', auth: 'token+bind', no_service: 108 }])).some(e => /no_service 108 invalido/.test(e)));
-  assert.ok(g.checkTable(mini([{ method: 'GET', path: '/a', auth: 'token', no_service: 300 }])).some(e => /so vale em rota token\+bind/.test(e)));
+  // Validation: value and auth.
+  assert.ok(g.checkTable(mini([{ method: 'GET', path: '/a', auth: 'token+bind', no_service: 108 }])).some(e => /no_service 108 invalid/.test(e)));
+  assert.ok(g.checkTable(mini([{ method: 'GET', path: '/a', auth: 'token', no_service: 300 }])).some(e => /only applies to a token\+bind route/.test(e)));
 });
 
 test('not_in_catalog 304 so na C.6.14.2 e na C.6.14.5 com {serviceContextId}; nao em current-service', () => {
@@ -94,18 +96,18 @@ test('not_in_catalog 304 so na C.6.14.2 e na C.6.14.5 com {serviceContextId}; na
   const files = g.generate(t);
   for (const s of ['external', 'internal']) {
     assert.deepEqual(plugin(files, s).routes.filter(r => r.not_in_catalog === 304).map(pk).sort(), ['GET /tv3/{serviceContextId}/users/{userid}', 'POST /tv3/{serviceContextId}/users/{userid}'], s);
-    assert.match(files[`openapi-${s}.json`].paths['/tv3/{serviceContextId}/users/{userid}'].get.description, /fora do Application Catalog: 304/);
+    assert.match(files[`openapi-${s}.json`].paths['/tv3/{serviceContextId}/users/{userid}'].get.description, /outside the Application Catalog: 304/);
   }
-  // validacao: valor, auth e o parametro no caminho
+  // Validation: value, auth and the parameter in the path.
   const one = r => g.checkTable(mini([{ method: 'GET', auth: 'token+bind', ...r }]));
-  assert.ok(one({ path: '/tv3/{serviceContextId}/x', not_in_catalog: 300 }).some(e => /not_in_catalog 300 invalido/.test(e)));
-  assert.ok(one({ path: '/tv3/{serviceContextId}/x', auth: 'token', not_in_catalog: 304 }).some(e => /so vale em rota token\+bind com \{serviceContextId\}/.test(e)));
-  assert.ok(one({ path: '/tv3/current-service/x', not_in_catalog: 304 }).some(e => /so vale em rota token\+bind com \{serviceContextId\}/.test(e)));
+  assert.ok(one({ path: '/tv3/{serviceContextId}/x', not_in_catalog: 300 }).some(e => /not_in_catalog 300 invalid/.test(e)));
+  assert.ok(one({ path: '/tv3/{serviceContextId}/x', auth: 'token', not_in_catalog: 304 }).some(e => /only applies to a token\+bind route with \{serviceContextId\}/.test(e)));
+  assert.ok(one({ path: '/tv3/current-service/x', not_in_catalog: 304 }).some(e => /only applies to a token\+bind route with \{serviceContextId\}/.test(e)));
   assert.deepEqual(one({ path: '/tv3/{serviceContextId}/x', not_in_catalog: 304 }), []);
 });
 
-// POST /tv3/{serviceContextId}/users nao esta na Tabela C.2: nenhuma
-// superficie a tem, e a borda responde 100.
+// POST /tv3/{serviceContextId}/users is not in Table C.2: no surface has it,
+// and the edge answers 100.
 test('POST /tv3/{serviceContextId}/users fora da tabela', () => {
   const t = real();
   assert.ok(!t.routes.some(r => key(r) === 'POST /tv3/{serviceContextId}/users'), 'rota fora da norma');
@@ -124,17 +126,17 @@ test('o campo "surfaces" por rota eh recusado (a superficie eh derivada)', () =>
   const t = mini([{ method: 'GET', path: '/health', auth: 'none', surfaces: ['internal'] }]);
   const errs = g.checkTable(t);
   assert.equal(errs.length, 1, errs.join('\n'));
-  assert.match(errs[0], /GET \/health: o campo "surfaces" nao vale por rota/);
+  assert.match(errs[0], /GET \/health: the "surfaces" field is not valid per route/);
 });
 
 test('superficies e backends tem de casar com SURFACE_RULES', () => {
   const sem = mini([{ method: 'GET', path: '/health', auth: 'none' }]);
   delete sem.surfaces.external;
-  assert.ok(g.checkTable(sem).some(e => e.startsWith('surfaces.external: superficie ausente')));
+  assert.ok(g.checkTable(sem).some(e => e.startsWith('surfaces.external: missing surface')));
 
   const extra = mini([{ method: 'GET', path: '/health', auth: 'none' }]);
   extra.surfaces.dmz = { port: 1, title: 'dmz' };
-  assert.ok(g.checkTable(extra).some(e => e.startsWith('surfaces.dmz: superficie sem regra')));
+  assert.ok(g.checkTable(extra).some(e => e.startsWith('surfaces.dmz: surface with no rule')));
 
   const semBackend = mini([{ method: 'GET', path: '/health', auth: 'none' }]);
   delete semBackend.backends.internal;
@@ -171,7 +173,7 @@ test('em cada config KrakenD, rotas do plugin = rotas da superficie, e um endpoi
     assert.deepEqual(keys(plugin.routes), esperadas, `${name}: rotas do plugin`);
     const pares = g.routesOf(t, surface).flatMap(r => g.internalPathsOf(r).map(p => `${r.method} ${p}`)).sort();
     assert.deepEqual(cfg.endpoints.map(e => `${e.method} ${e.endpoint}`).sort(), pares, `${name}: endpoints`);
-    // destino: o backend da variante, no mesmo caminho interno
+    // Target: the backend of the variant, on the same internal path.
     for (const e of cfg.endpoints) {
       assert.deepEqual(e.backend, [{ url_pattern: e.endpoint, host: [t.backends[surface][variant]], encoding: 'no-op' }], `${name}: ${e.method} ${e.endpoint}`);
     }
@@ -183,22 +185,32 @@ test('caminho interno: /v<X.Y> antes do publico de 100 em diante; abaixo de 100,
   assert.equal(g.internalPathOf('/tv3/remote-device/devices/{classId}', '99.9'), '/tv3/remote-device/devices/{classId}');
   assert.equal(g.internalPathOf('/tv3/remote-device/devices/{classId}', '100.0'), '/v100.0/tv3/remote-device/devices/{classId}');
   assert.equal(g.internalPathOf('/tv3/x', '101.12'), '/v101.12/tv3/x');
-  // as versoes da norma dividem o caminho publico; cada extensao tem o seu
+  // The versions of the standard share the public path; each extension has
+  // its own.
   assert.deepEqual(g.internalPathsOf({ path: '/tv3/x', versions: ['101.0', '2.1', '2.0', '100.0'] }), ['/tv3/x', '/v100.0/tv3/x', '/v101.0/tv3/x']);
   assert.deepEqual(g.internalPathsOf({ path: '/tv3/x', versions: ['100.0'] }), ['/v100.0/tv3/x']);
   assert.deepEqual(g.internalPathsOf({ path: '/tv3/x' }), ['/tv3/x']);
 
   const files = g.generate(real());
   const eps = files['krakend-internal.linux.json'].endpoints.map(e => `${e.method} ${e.endpoint}`);
-  for (const k of ['GET /tv3/remote-device/devices/{classId}', 'GET /v100.0/tv3/remote-device/devices/{classId}',
-    'GET /v100.0/tv3/remote-device/device/{handle}', 'DELETE /v100.0/tv3/remote-device/device/{handle}']) {
+  const V100_ENDPOINTS = [
+    'POST /v100.0/tv3/remote-device',
+    'POST /v100.0/tv3/remote-device/{handle}',
+    'DELETE /v100.0/tv3/remote-device/{handle}',
+    'GET /v100.0/tv3/remote-device/devices/{classId}',
+    'GET /v100.0/tv3/notifications/{className}',
+    'DELETE /v100.0/tv3/notifications/{handle}',
+  ];
+  for (const k of ['POST /tv3/remote-device', 'POST /tv3/remote-device/{handle}', 'DELETE /tv3/remote-device/{handle}', 'GET /tv3/remote-device/devices/{classId}', ...V100_ENDPOINTS]) {
     assert.ok(eps.includes(k), k);
   }
-  // rota so da 100.0 nao tem endpoint no caminho publico
-  assert.ok(!eps.includes('GET /tv3/remote-device/device/{handle}'));
-  assert.ok(!eps.includes('DELETE /tv3/remote-device/device/{handle}'));
-  assert.equal(eps.filter(k => k.includes(' /v')).length, 3);
-  // o plugin e o OpenAPI so conhecem o caminho publico: /v... vindo do cliente da 100
+  // A route only of 100.0 has no endpoint on the public path.
+  for (const k of ['GET /tv3/notifications/{className}', 'DELETE /tv3/notifications/{handle}']) {
+    assert.ok(!eps.includes(k), k);
+  }
+  assert.deepEqual(eps.filter(k => k.includes(' /v')).sort(), [...V100_ENDPOINTS].sort());
+  // The plugin and the OpenAPI know only the public path: a /v... path sent
+  // by the client gets 100.
   for (const s of ['external', 'internal']) {
     assert.ok(plugin(files, s).routes.every(r => r.path.startsWith('/tv3/') || ['/health', '/manifest'].includes(r.path)), s);
     assert.ok(Object.keys(files[`openapi-${s}.json`].paths).every(p => !p.startsWith('/v')), `openapi-${s}`);
@@ -207,7 +219,7 @@ test('caminho interno: /v<X.Y> antes do publico de 100 em diante; abaixo de 100,
 
 test('caminho declarado com o prefixo /v<X.Y> e recusado', () => {
   for (const p of ['/v100.0/tv3/x', '/v2.0/tv3/x', '/v100.0']) {
-    assert.ok(g.checkTable(mini([{ method: 'GET', path: p }])).some(e => /reservado ao caminho interno/.test(e)), p);
+    assert.ok(g.checkTable(mini([{ method: 'GET', path: p }])).some(e => /reserved to the internal path/.test(e)), p);
   }
   for (const p of ['/v', '/video/x', '/v100/tv3/x', '/tv3/v100.0/x']) {
     assert.deepEqual(g.checkTable(mini([{ method: 'GET', path: p }])), [], p);
@@ -223,14 +235,15 @@ test('CORS do plugin: allow_headers, expose_headers e max_age do routes.json che
     assert.deepEqual(plugin.cors_allow_headers, t.cors.allow_headers, name);
     assert.deepEqual(plugin.cors_expose_headers, t.cors.expose_headers, name);
     assert.equal(plugin.cors_max_age, t.cors.max_age, name);
-    // sem o modulo CORS do KrakenD: ele envolve o plugin e responderia o
-    // preflight antes dele
+    // Without the KrakenD CORS module: it wraps the plugin and would answer the
+    // preflight before it.
     assert.ok(!('security/cors' in cfg.extra_config), name);
   }
-  // sem max_age e sem expose_headers no routes.json, o plugin nao recebe os campos
+  // Without max_age and expose_headers in routes.json, the plugin gets no
+  // such fields.
   const c = g.pluginConfig(mini([{ method: 'GET', path: '/a' }]), 'internal');
   assert.ok(!('cors_max_age' in c) && !('cors_expose_headers' in c));
-  // bloco cors: so os campos que o plugin usa, nos formatos certos
+  // cors block: only the fields the plugin uses, in the right formats.
   const comCors = cors => { const m = mini([{ method: 'GET', path: '/a' }]); m.cors = cors; return g.checkTable(m); };
   assert.deepEqual(comCors({ allow_headers: ['Content-Type'], expose_headers: ['X-A'], max_age: '12h' }), []);
   for (const [nome, cors] of Object.entries({
@@ -252,7 +265,7 @@ test('as duas superficies listam todas as APIs, na ordem da Tabela C.2', () => {
   const todas = [...new Set(t.routes.filter(r => r.api).map(r => r.api.id))].sort();
   assert.deepEqual([...apis('internal')].sort(), todas);
   assert.deepEqual(apis('external'), apis('internal'));
-  assert.equal(todas.length, 20);
+  assert.equal(todas.length, 22);
 });
 
 test('OpenAPI: as duas superficies com todas as rotas; a externa documenta o 106 da C.4.1.8', () => {
@@ -261,49 +274,67 @@ test('OpenAPI: as duas superficies com todas as rotas; a externa documenta o 106
   assert.deepEqual(Object.keys(ext.paths['/tv3/bind-context']).sort(), ['delete', 'get', 'post']);
   assert.deepEqual(Object.keys(int.paths['/tv3/bind-context']).sort(), ['delete', 'get', 'post']);
   assert.equal(ext.paths['/tv3/bind-context'].post['x-tv30-surface-error'], 106);
-  assert.match(ext.paths['/tv3/bind-context'].post.description, /responde 106 a qualquer requisicao/);
+  assert.match(ext.paths['/tv3/bind-context'].post.description, /answers 106 to any request/);
   assert.ok(!('x-tv30-surface-error' in int.paths['/tv3/bind-context'].post));
   assert.ok(!('x-tv30-surface-error' in ext.paths['/tv3/bind-context'].get));
-  assert.match(int.paths['/tv3/current-service'].get.description, /nao local recebe 106 nesta superficie/);
-  assert.doesNotMatch(int.paths['/tv3/token'].get.description, /nao local recebe 106/);
+  assert.match(int.paths['/tv3/current-service'].get.description, /non-local client gets 106 on this surface/);
+  assert.doesNotMatch(int.paths['/tv3/token'].get.description, /non-local client gets 106/);
   assert.deepEqual(ext.paths['/health'].get['x-tv30-surfaces'], ['external', 'internal']);
   assert.match(ext.info.description, /C\.4\.1\.8/);
-  assert.equal(ext.servers[0].url, 'https://localhost:44643'); // TLS na 44643
+  // TLS on 44643.
+  assert.equal(ext.servers[0].url, 'https://localhost:44643');
   assert.equal(int.servers[0].url, 'http://localhost:44642');
 });
 
-test('versoes por rota: a C.6.15.5 serve 2.0 e 100.0, as rotas por handle so 100.0', () => {
+test('versoes por rota: registro, atualizacao, cancelamento e listagem servem 2.0 e 100.0; notificacoes so 100.0', () => {
   const t = real();
   const files = g.generate(t);
   const pr = plugin(files, 'internal').routes;
   const vers = k => pr.find(r => pk(r) === k).versions;
-  assert.deepEqual(vers('GET /tv3/remote-device/devices/{classId}'), ['2.0', '100.0']);
-  assert.deepEqual(vers('GET /tv3/remote-device/device/{handle}'), ['100.0']);
-  assert.deepEqual(vers('DELETE /tv3/remote-device/device/{handle}'), ['100.0']);
-  // as demais, so a 2.0 (sem o campo no routes.json)
-  for (const r of pr.filter(r => !r.path.startsWith('/tv3/remote-device/device'))) {
-    if (pk(r) !== 'GET /tv3/remote-device/devices/{classId}') assert.deepEqual(r.versions, ['2.0'], pk(r));
+  const BOTH = ['POST /tv3/remote-device', 'POST /tv3/remote-device/{handle}', 'DELETE /tv3/remote-device/{handle}', 'GET /tv3/remote-device/devices/{classId}'];
+  const ONLY_100 = ['GET /tv3/notifications/{className}', 'DELETE /tv3/notifications/{handle}'];
+  for (const k of BOTH) {
+    assert.deepEqual(vers(k), ['2.0', '100.0'], k);
   }
-  // a C.6.7.8 informa a mais recente da API
+  for (const k of ONLY_100) {
+    assert.deepEqual(vers(k), ['100.0'], k);
+  }
+  // The others, only 2.0 (no field in routes.json).
+  for (const r of pr.filter(r => !BOTH.includes(pk(r)) && !ONLY_100.includes(pk(r)))) {
+    assert.deepEqual(r.versions, ['2.0'], pk(r));
+  }
+  // C.6.7.8 reports the latest version of the API.
   const apis = plugin(files, 'external').apis;
-  assert.equal(apis.find(a => a.id === 'tv3ws-remotedevice-communication').version, '100.0');
-  assert.ok(apis.filter(a => a.id !== 'tv3ws-remotedevice-communication').every(a => a.version === '2.0'));
-  // o cabecalho interno vai em input_headers de toda rota, e nao no OpenAPI
-  for (const v of Object.keys(t.backends.internal)) {
-    for (const e of files[`krakend-internal.${v}.json`].endpoints) assert.ok(e.input_headers.includes('X-TV30-API-Version'), `${e.method} ${e.endpoint}`);
+  const V100_APIS = ['tv3ws-remotedevice-register', 'tv3ws-remotedevice-cancel', 'tv3ws-remotedevice-communication',
+    'tv3ws-register-notifications', 'tv3ws-deregister-notifications'];
+  for (const id of V100_APIS) {
+    assert.equal(apis.find(a => a.id === id).version, '100.0', id);
   }
-  assert.ok(!files['openapi-internal.json'].paths['/tv3/current-service'].get.parameters.some(p => p.name === 'X-TV30-API-Version'));
+  assert.ok(apis.filter(a => !V100_APIS.includes(a.id)).every(a => a.version === '2.0'));
+  // The internal header goes in input_headers of every route, not in the
+  // OpenAPI.
+  const INTERNAL = ['X-TV30-API-Version', 'X-TV30-Host', 'X-TV30-Client-Class', 'X-TV30-Client-Id'];
+  for (const v of Object.keys(t.backends.internal)) {
+    for (const e of files[`krakend-internal.${v}.json`].endpoints) {
+      for (const h of INTERNAL) {
+        assert.ok(e.input_headers.includes(h), `${e.method} ${e.endpoint}: ${h}`);
+      }
+    }
+  }
+  for (const h of INTERNAL) {
+    assert.ok(!files['openapi-internal.json'].paths['/tv3/current-service'].get.parameters.some(p => p.name === h), h);
+  }
   assert.deepEqual(files['openapi-internal.json'].paths['/tv3/remote-device/devices/{classId}'].get['x-tv30-versions'], ['2.0', '100.0']);
 });
 
 test('validacao de versions e de api.version (a mais recente da rota)', () => {
   const r = extra => mini([{ method: 'GET', path: '/a', api: { id: 'tv3ws-a', section: 'C.6.1.2', version: '2.0' }, ...extra }]);
   assert.deepEqual(g.checkTable(r({})), []);
-  assert.ok(g.checkTable(r({ versions: [] })).some(e => /versions nao eh lista nao vazia/.test(e)));
-  assert.ok(g.checkTable(r({ versions: ['2'] })).some(e => /fora do formato X\.Y/.test(e)));
-  assert.ok(g.checkTable(r({ versions: ['2.0', '2.0'] })).some(e => /repetida/.test(e)));
-  assert.ok(g.checkTable(r({ versions: ['2.0', '100.0'] })).some(e => /diferente da mais recente que a rota serve \(100\.0\)/.test(e)));
-  assert.ok(g.checkTable(mini([{ method: 'GET', path: '/a', headers: ['Accept-Version', 'X-TV30-API-Version'] }])).some(e => /cabecalho interno da borda/.test(e)));
+  assert.ok(g.checkTable(r({ versions: [] })).some(e => /versions is not a non-empty list/.test(e)));
+  assert.ok(g.checkTable(r({ versions: ['2'] })).some(e => /outside the X\.Y format/.test(e)));
+  assert.ok(g.checkTable(r({ versions: ['2.0', '2.0'] })).some(e => /repeated version/.test(e)));
+  assert.ok(g.checkTable(r({ versions: ['2.0', '100.0'] })).some(e => /differs from the latest version the route serves \(100\.0\)/.test(e)));
+  assert.ok(g.checkTable(mini([{ method: 'GET', path: '/a', headers: ['Accept-Version', 'X-TV30-API-Version'] }])).some(e => /internal header of the edge/.test(e)));
 });
 
 test('TLS so na superficie segura, com o certificado do tls-init', () => {

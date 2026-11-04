@@ -1,14 +1,18 @@
 #!/bin/bash
-# Teste de integracao do plugin (errors_json_driver.py): mensagem e topico de
-# errors/<client_id>, leitura do payload inteiro e resposta do teste de latencia.
-# Imagem com tag propria e broker descartavel numa rede propria; nao toca a stack.
+# Integration test of the plugin (errors_json_driver.py): message and topic
+# of errors/<client_id>, reading of the whole payload and reply of the
+# latency test. An image with its own tag and a disposable broker on its own
+# network; the stack is not touched.
 #
 #   bash infra/mqtt-broker/plugin/tests/test_errors_json.sh
-#   IMG=<imagem> NOBUILD=1 bash ...   usa uma imagem ja construida (e nao a remove)
-#   KEEP_IMG=1 bash ...               nao remove a imagem construida
+#   IMG=<image> NOBUILD=1 bash ...
+#       uses an image already built, and does not remove it
+#   KEEP_IMG=1 bash ...
+#       does not remove the built image
 set -u
 AQUI=$(cd "$(dirname "$0")" && pwd)
-BROKER_DIR=$(cd "$AQUI/../.." && pwd)   # infra/mqtt-broker
+# infra/mqtt-broker
+BROKER_DIR=$(cd "$AQUI/../.." && pwd)
 IMG=${IMG:-tv30-mosquitto:teste-errors-json}
 P=${PREFIXO:-tv30-teste-errors-json}
 NET=$P-net
@@ -32,8 +36,8 @@ if [ -z "${NOBUILD:-}" ]; then
     echo "FAIL build da imagem"
     exit 1
   fi
-  # saida do teste de unidade no build; sem ela, o passo veio do cache (o
-  # mesmo codigo ja passou num build anterior)
+  # Output of the unit tests in the build; without it, the step came from
+  # the cache.
   grep -E "^#[0-9]+ [0-9.]+ (test_error_json:|test_json_payload:|python3 json:)" "$LOG" | sed 's/^#[0-9]* [0-9.]* //' | grep . \
     || echo "(passo dos testes de unidade em cache no build: o mesmo codigo ja passou antes)"
 fi

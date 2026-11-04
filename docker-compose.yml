@@ -1,57 +1,58 @@
-# Infra do TV30, incluida pelo docker-compose.yml da raiz (que define o preflight
-# e o tls-init de que o edgegateway depende); sozinho nao sobe. Na raiz do TV30:
-#   docker compose up -d                                         # stack inteira (COMPOSE_PROFILES do .env)
-#   docker compose --profile mqtt build edgegateway redis mosquitto  # so as imagens da infra
+# TV30 infrastructure, included by the root docker-compose.yml, which defines
+# the preflight and tls-init services the edgegateway depends on; it does
+# not start on its own. In the TV30 root:
+#   whole stack (COMPOSE_PROFILES of .env):
+#     docker compose up -d
+#   only the infrastructure images:
+#     docker compose --profile mqtt build edgegateway redis mosquitto
 
 include:
   - path: ./redis/docker-compose.yml
 
 services:
-  # Borda num container so: superficies externa (44643) e interna (44642, C.3.4)
-  # e documentacao (8085), geradas no build de edgegateway/routes.json. Se um
-  # processo interno cai, o container cai.
+  # Edge in a single container: external (44643) and internal (44642, C.3.4)
+  # surfaces and documentation (8085), generated at build time from
+  # edgegateway/routes.json. If an inner process exits, the container exits.
   edgegateway:
     image: ${DOCKERHUB_NS:-tv30}/tv30-edgegateway:${IMAGE_TAG:-latest}
     build:
       context: ./edgegateway
     container_name: edgegateway
     environment:
-      # linux = backends pelo DNS da rede; windows = host.docker.internal (serve
-      # tambem ao dev-host em Linux, com o servico rodando no host)
+      # linux: backends by the network DNS; windows: host.docker.internal, also
+      # for the dev-host on Linux, with the service running on the host.
       EDGE_VARIANT: ${EDGE_VARIANT:-linux}
-      # JWT_SECRET/JWT_ISSUER tem de ser os do tv3ws, que emite o access token.
-      # REDIS_HOST fica redis tambem na variante windows: o Redis e o do container.
       JWT_SECRET: ${JWT_SECRET:-tv30-dev-secret-nao-usar-em-producao}
       JWT_ISSUER: ${JWT_ISSUER:-GenericIssuer}
+      # redis also in the windows variant.
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      # enforce = recusa com 404 e corpo C.3.2; warn (transitorio) = as recusas de
-      # credencial (104, 107, 108) so logam e marcam X-TV30-Auth-Warn. 100, 106,
-      # 300 e 200 saem nos dois modos. Valor invalido derruba o container.
+      # enforce: refusal with 404 and a C.3.2 body; warn: the credential
+      # refusals (104, 107, 108) are only logged and marked with
+      # X-TV30-Auth-Warn. An invalid value brings the container down.
       AUTH_ENFORCE: ${AUTH_ENFORCE:-enforce}
     extra_hosts:
-      # host.docker.internal em Linux, para o dev-host (inocuo no deploy padrao)
+      # host.docker.internal on Linux, for the dev-host.
       - "host.docker.internal:host-gateway"
-    # 44643 fixa por padrao: o /manifest do tv3ws anuncia <host>:EDGE_HTTPS_PORT e
-    # nao conhece a porta que o Docker escolheria. Outra porta de host pede o mesmo
-    # numero no EDGE_HTTPS_PORT do tv3ws; so o numero (EDGE_EXT_PUBLISH=44643)
-    # deixa o Docker escolher, e o /manifest nao a anuncia.
     ports:
-      - "44642:44642"   # superficie interna, porta fixa da norma (C.3.4)
-      - "${EDGE_EXT_PUBLISH:-44643:44643}"   # superficie externa
-      - "8085"          # docs: porta de host dinamica
+      # Internal surface, port fixed by the standard (C.3.4).
+      - "44642:44642"
+      # External surface.
+      - "${EDGE_EXT_PUBLISH:-44643:44643}"
+      # Documentation, on a host port chosen by Docker.
+      - "8085"
     depends_on:
-      # o preflight (compose raiz) barra a subida se a 44642 estiver ocupada
+      # The preflight stops the startup if 44642 is in use.
       preflight:
         condition: service_completed_successfully
-      # o plugin le o Redis (clientes bloqueados, origens, servico corrente, bind-context)
+      # The plugin reads Redis.
       redis:
         condition: service_healthy
-      # certificado do receptor (compose raiz)
+      # Receiver certificate.
       tls-init:
         condition: service_completed_successfully
     volumes:
-      # TLS da 44643, terminado na borda
+      # TLS certificate of the external surface.
       - ../.tv30/tls:/etc/tv30/tls:ro
     networks:
       - ginga_net
@@ -66,16 +67,14 @@ services:
     profiles:
       - mqtt
     ports:
-      - "1883:1883"   # MQTT: porta fixa
-      # MQTT por WebSocket: porta de host aleatoria por padrao (`docker compose
-      # port mosquitto 9001`); MQTT_WS_PUBLISH=9003:9001 a fixa. A pagina da TV
-      # usa o /mqtt do AoP, que repassa para a 9001 interna; no dev-host o AoP
-      # usa a porta publicada.
+      - "1883:1883"
+      # MQTT over WebSocket: a host port chosen by Docker by default
+      # (`docker compose port mosquitto 9001`); MQTT_WS_PUBLISH=9003:9001 fixes
+      # it.
       - "${MQTT_WS_PUBLISH:-9001}"
     volumes:
       - mosquitto_data:/mosquitto/data
       - mosquitto_logs:/mosquitto/log
-    # o broker nao consulta o Redis: sem env de Redis nem depends_on
     networks:
       - ginga_net
     restart: unless-stopped

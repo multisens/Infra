@@ -1,6 +1,5 @@
-// Anunciante SSDP do testbed (C.3.4). Roda nativo no host, fora do Docker: no
-// Mac e no Windows o multicast de um container nao sai da VM do Docker. So
-// divulga onde esta o /manifest e responde a buscas.
+// SSDP announcer of the testbed (C.3.4). Runs natively on the host, outside
+// Docker. It only announces where the /manifest is and answers searches.
 package main
 
 import (
@@ -25,13 +24,13 @@ func logf(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "[ssdp] "+format+"\n", a...)
 }
 
-// netDown marca a falta de rede: espera e tenta de novo, sem encerrar.
+// netDown marks a lack of network: wait and try again, without exiting.
 type netDown struct{ err error }
 
 func (e netDown) Error() string { return e.err.Error() }
 func (e netDown) Unwrap() error { return e.err }
 
-// netErrnos e errAddrInUse dependem do sistema: sockopt_other.go e
+// netErrnos and errAddrInUse depend on the system: sockopt_other.go and
 // sockopt_windows.go.
 
 func isNetDown(err error) bool {
@@ -47,7 +46,7 @@ func isNetDown(err error) bool {
 	return false
 }
 
-// stepError: a etapa que falhou, para o log ("FALHA em <etapa>: ...").
+// stepError: the step that failed, for the log ("FALHA em <etapa>: ...").
 type stepError struct {
 	what string
 	err  error
@@ -58,18 +57,21 @@ func (e *stepError) Unwrap() error { return e.err }
 
 func step(what string, err error) error { return &stepError{what, err} }
 
-// network e injetavel: os testes usam uma rede falsa (main_test.go).
+// network is injectable, so the tests can use a fake network.
 type network interface {
-	Interfaces() []ifaceInfo                    // de pe, fora loopback, com IPv4
-	Lookup(name string) (exists, loopback bool) // a interface existe na maquina?
+	// Up, not loopback, with IPv4.
+	Interfaces() []ifaceInfo
+	// Whether the interface exists on the machine.
+	Lookup(name string) (exists, loopback bool)
 	DefaultRoute() string
 	Open(ch choice) (ssdpConn, error)
 }
 
-// ssdpConn: escuta do grupo pela interface escolhida + envio com origem no
-// IPv4 dela.
+// ssdpConn listens to the group on the chosen interface and sends with its
+// IPv4 as the source.
 type ssdpConn interface {
-	Send(msg []byte) error // multicast para o grupo
+	// Multicast to the group.
+	Send(msg []byte) error
 	Reply(msg []byte, to *net.UDPAddr) error
 	Read(buf []byte) (int, *net.UDPAddr, error)
 	Close()
@@ -89,20 +91,20 @@ func (realNet) Lookup(name string) (bool, bool) {
 }
 
 func (realNet) Open(ch choice) (ssdpConn, error) {
-	// a interface existia na escolha; sumir agora e falta de rede
+	// The interface existed when chosen; its absence now is a lack of network.
 	ifi, err := net.InterfaceByName(ch.Name)
 	if err != nil {
 		return nil, step("interface "+ch.Name, netDown{err})
 	}
 	group := &net.UDPAddr{IP: net.ParseIP(ssdpGroup), Port: ssdpPort}
-	// Escuta: UDP 1900 (SO_REUSEADDR), entrando no grupo so pela interface
-	// escolhida. EADDRINUSE aqui = 1900 presa sem SO_REUSEADDR.
+	// Listening: UDP 1900 (SO_REUSEADDR), joining the group only on the chosen
+	// interface. EADDRINUSE here means 1900 held without SO_REUSEADDR.
 	lc, err := net.ListenMulticastUDP("udp4", ifi, group)
 	if err != nil {
 		return nil, step("socket UDP 1900 (escuta do grupo)", err)
 	}
-	// Envio: socket proprio no IPv4 da interface (origem fixa), multicast
-	// pela mesma interface.
+	// Sending: a socket of its own on the IPv4 of the interface (fixed
+	// source), multicast on the same interface.
 	snd, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP(ch.Addr)})
 	if err != nil {
 		lc.Close()
@@ -129,8 +131,8 @@ func (c *udpConn) Reply(msg []byte, to *net.UDPAddr) error {
 func (c *udpConn) Read(buf []byte) (int, *net.UDPAddr, error) { return c.lc.ReadFromUDP(buf) }
 func (c *udpConn) Close()                                     { c.lc.Close(); c.snd.Close() }
 
-// setMulticastOut: o NOTIFY sai pela interface escolhida (e nao pela rota
-// padrao) e com TTL fixo.
+// setMulticastOut sends the NOTIFY through the chosen interface, not the
+// default route, with a fixed TTL.
 func setMulticastOut(conn *net.UDPConn, addr string, ttl int) error {
 	ip := net.ParseIP(addr).To4()
 	if ip == nil {
@@ -144,7 +146,8 @@ func setMulticastOut(conn *net.UDPConn, addr string, ttl int) error {
 	}
 	var serr error
 	if err := raw.Control(func(fd uintptr) {
-		serr = setMulticastOpts(fd, a, ttl) // por sistema: sockopt_*.go
+		// Per system: sockopt_*.go.
+		serr = setMulticastOpts(fd, a, ttl)
 	}); err != nil {
 		return err
 	}
@@ -152,29 +155,36 @@ func setMulticastOut(conn *net.UDPConn, addr string, ttl int) error {
 }
 
 type announcer struct {
-	net      network
-	getenv   func(string) string
-	logf     func(format string, a ...any)
-	now      func() time.Time
-	after    func(time.Duration) <-chan time.Time           // espera entre tentativas
-	ticker   func(time.Duration) (<-chan time.Time, func()) // NOTIFY periodico
+	net    network
+	getenv func(string) string
+	logf   func(format string, a ...any)
+	now    func() time.Time
+	// Wait between attempts.
+	after func(time.Duration) <-chan time.Time
+	// Periodic NOTIFY.
+	ticker   func(time.Duration) (<-chan time.Time, func())
 	stop     <-chan os.Signal
 	interval time.Duration
 }
 
-// session: um par de sockets aberto numa interface, ate a rede cair.
+// session is a pair of sockets open on an interface, until the network goes
+// down.
 type session struct {
-	ch      choice
-	ep      endpoint // com o host desta sessao (o detectado, sem SSDP_ADVERTISE_HOST)
-	auto    bool     // host detectado: a troca de rede encerra a sessao
+	ch choice
+	// With the host of this session (the detected one, without
+	// SSDP_ADVERTISE_HOST).
+	ep endpoint
+	// Detected host: a network change ends the session.
+	auto    bool
 	forced  string
 	udn     string
 	conn    ssdpConn
 	readErr chan error
 }
 
-// netChanged: a interface ou o IPv4 da rota padrao mudaram com o anuncio no
-// ar (host detectado). Nao e falta de rede: o laco anuncia de novo na hora.
+// netChanged: the interface or the IPv4 of the default route changed while
+// announcing with the detected host. Not a lack of network: the loop
+// announces again at once.
 type netChanged struct{ from, to choice }
 
 func (e netChanged) Error() string {
@@ -190,13 +200,14 @@ func (s *session) sendAll(alive bool) error {
 	return nil
 }
 
-// read responde as buscas ate o socket fechar (fim da sessao) ou falhar.
+// read answers searches until the socket closes (end of session) or fails.
 func (a *announcer) read(s *session) {
 	buf := make([]byte, 4096)
 	for {
 		n, src, err := s.conn.Read(buf)
 		if err != nil {
-			if !errors.Is(err, net.ErrClosed) { // fechado por nos: fim normal
+			// A socket closed by the session is a normal end.
+			if !errors.Is(err, net.ErrClosed) {
 				s.readErr <- err
 			}
 			return
@@ -206,7 +217,7 @@ func (a *announcer) read(s *session) {
 			continue
 		}
 		for _, r := range answers(st, s.udn, s.ep.location(), a.now()) {
-			// Endereco ruim de um cliente nao derruba o anunciante: so avisa.
+			// A bad address of a client only gives a warning.
 			if err := s.conn.Reply([]byte(r), src); err != nil && !errors.Is(err, net.ErrClosed) {
 				a.logf("AVISO resposta a %s nao enviada: %v", src, err)
 			}
@@ -214,8 +225,8 @@ func (a *announcer) read(s *session) {
 	}
 }
 
-// start: uma tentativa — escolhe interface e IPv4 de origem com a rede de
-// agora, abre os sockets e manda o primeiro NOTIFY.
+// start makes one attempt: chooses the interface and source IPv4 with the
+// current network, opens the sockets and sends the first NOTIFY.
 func (a *announcer) start(ep endpoint, forced, udn string) (*session, []string, error) {
 	ch, err := chooseInterface(ep.Host, forced, a.net.Interfaces(), a.net.DefaultRoute)
 	if err != nil {
@@ -227,7 +238,8 @@ func (a *announcer) start(ep endpoint, forced, udn string) (*session, []string, 
 	}
 	auto := ep.Host == ""
 	if auto {
-		ep.Host = ch.Addr // host detectado: o IPv4 da interface
+		// Detected host: the IPv4 of the interface.
+		ep.Host = ch.Addr
 	}
 	s := &session{ch: ch, ep: ep, auto: auto, forced: forced, udn: udn, conn: conn, readErr: make(chan error, 1)}
 	go a.read(s)
@@ -239,10 +251,10 @@ func (a *announcer) start(ep endpoint, forced, udn string) (*session, []string, 
 	return s, append(warnings(ep), ch.Warnings...), nil
 }
 
-// classify: erro de socket e falta de rede quando o errno diz isso ou quando
-// a interface/IPv4 escolhidos ja nao existem (o errno varia com o kernel: o
-// que importa e que a origem do anuncio sumiu). EADDRINUSE e sempre
-// configuracao (a 1900 presa sem SO_REUSEADDR).
+// classify: a socket error is a lack of network when the errno says so or
+// when the chosen interface or IPv4 no longer exists, whatever the errno.
+// EADDRINUSE is always a configuration error (1900 held without
+// SO_REUSEADDR).
 func (a *announcer) classify(ch choice, err error) error {
 	if isNetDown(err) || errors.Is(err, errAddrInUse) {
 		return err
@@ -262,13 +274,13 @@ func (a *announcer) stopped() (os.Signal, bool) {
 	}
 }
 
-// serve anuncia ate um sinal (stop=true) ou ate um erro.
+// serve announces until a signal (stop=true) or an error.
 func (a *announcer) serve(s *session) (stop bool, err error) {
 	tick, stopTick := a.ticker(a.interval)
 	defer stopTick()
 	for {
-		// sinal pendente tem prioridade sobre o tick (sem ssdp:alive depois
-		// do byebye)
+		// A pending signal has priority over the tick, so that no ssdp:alive
+		// follows the byebye.
 		sig, ok := a.stopped()
 		if !ok {
 			select {
@@ -294,9 +306,9 @@ func (a *announcer) serve(s *session) (stop bool, err error) {
 	}
 }
 
-// checkNetwork: com o host detectado, a rota padrao de agora tem de ser a da
-// sessao. Mudou: byebye (melhor esforco: o IPv4 antigo pode ja ter sumido) e
-// netChanged; sumiu: falta de rede.
+// checkNetwork: with the detected host, the current default route must be
+// the one of the session. Changed: byebye (best effort, the old IPv4 may be
+// gone) and netChanged; gone: lack of network.
 func (a *announcer) checkNetwork(s *session) error {
 	if !s.auto {
 		return nil
@@ -319,11 +331,12 @@ func (a *announcer) fatal(err error) int {
 	return 1
 }
 
-// run devolve o codigo de saida: 0 num sinal, 1 em erro de configuracao. A
-// falta de rede nao encerra: fecha os sockets, avisa ao entrar e ao sair do
-// estado e tenta de novo com espera crescente, escolhendo de novo a interface.
+// run returns the exit code: 0 on a signal, 1 on a configuration error. A
+// lack of network does not exit: it closes the sockets, warns on entering
+// and leaving that state and tries again with an increasing wait, choosing
+// the interface again.
 func (a *announcer) run() int {
-	// Configuracao: conferida uma vez, antes de tudo (o ambiente nao muda).
+	// Configuration, checked once before anything else.
 	ep, err := resolveEndpoint(a.getenv)
 	if err != nil {
 		return a.fatal(step("configuracao do anuncio (SSDP_ADVERTISE_HOST, EDGE_HTTP_PORT, EDGE_HTTPS_PORT)", err))
@@ -338,9 +351,11 @@ func (a *announcer) run() int {
 	}
 
 	wait := retryMin
-	var downSince time.Time // zero = anunciando (ou ainda sem a 1a tentativa)
+	// Zero while announcing, or before the first attempt.
+	var downSince time.Time
 	tries := 0
-	shown := map[string]bool{} // avisos da sessao anterior: nao se repetem
+	// Warnings of the previous session, not repeated.
+	shown := map[string]bool{}
 	for {
 		s, warns, err := a.start(ep, forced, udn)
 		if err == nil {
@@ -385,8 +400,8 @@ func (a *announcer) run() int {
 				"de novo a interface e o IP; o proximo aviso sai quando a rede voltar.", err, wait, retryMax)
 		}
 		tries++
-		// a espera e criada antes de olhar o sinal: um sinal que chegue
-		// junto com ela nao se perde na escolha do select
+		// The wait is created before looking at the signal, so that a signal
+		// that arrives with it is not lost in the select.
 		c := a.after(wait)
 		sig, ok := a.stopped()
 		if !ok {
@@ -406,8 +421,7 @@ func (a *announcer) run() int {
 	}
 }
 
-// stopFile: o "sinal" do arquivo de parada (SSDP_STOP_FILE), criado pelo comando
-// de descida: no Windows nao ha SIGTERM para processo em segundo plano.
+// stopFile: the "signal" of the stop file (SSDP_STOP_FILE).
 type stopFile string
 
 func (f stopFile) String() string { return "arquivo de parada " + string(f) }

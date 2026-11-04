@@ -15,9 +15,8 @@ import (
 	"time"
 )
 
-// Algoritmos de assinatura do bind-token que a norma manda suportar
-// (C.4.1.4.8): HS256, HS512, RS256, RS512. Qualquer outro (inclusive
-// "none") eh invalido.
+// Bind-token signature algorithms (C.4.1.4.8). Any other alg, "none"
+// included, is invalid.
 const (
 	algHS256 = "HS256"
 	algHS512 = "HS512"
@@ -29,7 +28,7 @@ func supportedAlg(a string) bool {
 	return a == algHS256 || a == algHS512 || a == algRS256 || a == algRS512
 }
 
-// jwtToken eh um JWS compacto ja decodificado (ainda NAO verificado).
+// jwtToken is a decoded compact JWS whose signature is not yet verified.
 type jwtToken struct {
 	alg          string
 	claims       map[string]interface{}
@@ -37,9 +36,9 @@ type jwtToken struct {
 	signature    []byte
 }
 
-// parseJWT: primeira frente da validacao (C.4.1.4) — formato. JWS compacto
-// com 3 partes base64url, cabecalho e payload JSON, `alg` presente, sem
-// cifragem (JWE tem 5 partes; o bind-token "shall not be encrypted").
+// parseJWT checks the JWT format, the first front of C.4.1.4.1: a compact
+// JWS of 3 base64url parts, header and payload as JSON objects, `alg`
+// present, no `enc` and no `crit` in the header (C.4.1.3: not encrypted).
 func parseJWT(tok string) (*jwtToken, error) {
 	parts := strings.Split(tok, ".")
 	if len(parts) != 3 {
@@ -70,7 +69,7 @@ func parseJWT(tok string) (*jwtToken, error) {
 		return nil, fmt.Errorf("JWT cifrado (enc) nao eh aceito")
 	}
 	if _, crit := hdr["crit"]; crit {
-		// RFC 7515 4.1.11: extensao critica desconhecida => rejeitar.
+		// RFC 7515 4.1.11: an unknown critical extension is rejected.
 		return nil, fmt.Errorf("cabecalho JWT com crit nao suportado")
 	}
 
@@ -83,14 +82,14 @@ func parseJWT(tok string) (*jwtToken, error) {
 	return &jwtToken{alg: alg, claims: claims, signingInput: parts[0] + "." + parts[1], signature: sig}, nil
 }
 
-// b64url aceita base64url sem padding (RFC 7515) e tolera padding.
+// b64url decodes base64url with or without padding.
 func b64url(s string) ([]byte, error) {
 	return base64.RawURLEncoding.DecodeString(strings.TrimRight(s, "="))
 }
 
-// verifySignature confere a assinatura com a chave dada. key eh []byte para
-// HS* e *rsa.PublicKey para RS*; tipo errado = assinatura invalida (isso
-// impede a confusao de algoritmo: chave RSA publica usada como segredo HMAC).
+// verifySignature checks the signature with the given key: []byte for HS*,
+// *rsa.PublicKey for RS*. Returns false if alg differs from the token's, the
+// signature is empty or the key has the wrong type.
 func (t *jwtToken) verifySignature(alg string, key interface{}) bool {
 	if t.alg != alg || len(t.signature) == 0 {
 		return false
@@ -128,7 +127,8 @@ func (t *jwtToken) verifySignature(alg string, key interface{}) bool {
 	return false
 }
 
-// numericClaim le uma NumericDate (segundos, inteiro ou fracionario).
+// numericClaim reads a NumericDate, integer or fractional seconds. Returns
+// whether the claim is present, and an error if it is not a number.
 func (t *jwtToken) numericClaim(name string) (float64, bool, error) {
 	v, present := t.claims[name]
 	if !present {
@@ -150,8 +150,8 @@ func (t *jwtToken) stringClaim(name string) string {
 	return s
 }
 
-// checkTime: nbf/exp (e iat quando pedido). Mesma regra do jsonwebtoken
-// usado pelo tv3ws: expirado se agora >= exp; inativo se nbf > agora.
+// checkTime checks nbf and exp, and iat when checkIat is set: invalid if
+// now >= exp, nbf > now or iat > now; with requireExp, also if exp is absent.
 func (t *jwtToken) checkTime(now time.Time, requireExp, checkIat bool) error {
 	sec := float64(now.Unix())
 	nbf, hasNbf, err := t.numericClaim("nbf")
@@ -183,15 +183,15 @@ func (t *jwtToken) checkTime(now time.Time, requireExp, checkIat bool) error {
 	return nil
 }
 
-// accessClaims: o que a borda usa do access token emitido pelo tv3ws
-// (tv3ws/src/modules/auth-manager/manager.ts: iat, nbf, exp, iss, sub, class).
+// accessClaims holds the access token claims read by the edge.
 type accessClaims struct {
 	Sub   string
 	Class string
 }
 
-// verifyAccessToken: o access token e emitido pelo tv3ws em HS256 com
-// JWT_SECRET. O alg e fixo aqui, e nao o que o cabecalho do token declara.
+// verifyAccessToken checks a "Bearer <accessToken>" header: HS256 with
+// secret, whatever alg the header declares; exp required; nbf; iss equal to
+// issuer; class claim required, one of the client classes.
 func verifyAccessToken(authorization string, secret []byte, issuer string, now time.Time) (*accessClaims, error) {
 	scheme, tok, ok := strings.Cut(strings.TrimSpace(authorization), " ")
 	if !ok || !strings.EqualFold(scheme, "Bearer") {
@@ -207,7 +207,6 @@ func verifyAccessToken(authorization string, secret []byte, issuer string, now t
 	if !t.verifySignature(algHS256, secret) {
 		return nil, errors.New("assinatura do access token invalida")
 	}
-	// exp obrigatorio: sem ele o token nunca expiraria (o tv3ws sempre o emite)
 	if err := t.checkTime(now, true, false); err != nil {
 		return nil, err
 	}
@@ -216,23 +215,22 @@ func verifyAccessToken(authorization string, secret []byte, issuer string, now t
 	}
 	c := &accessClaims{Sub: t.stringClaim("sub"), Class: t.stringClaim("class")}
 	if !validClass(c.Class) {
-		// mesmo padrao do tv3ws (getRequestClass): sem classe => autonomo.
-		c.Class = classAutonomous
+		return nil, fmt.Errorf("class %q do access token invalida", c.Class)
 	}
 	return c, nil
 }
 
-// bindKey eh uma entrada de bind-context:{serviceId} ja com a chave
-// decodificada (material = []byte para HS*, *rsa.PublicKey para RS*).
+// bindKey is an entry of bind-context:{serviceId} with the decoded key:
+// []byte for HS*, *rsa.PublicKey for RS*.
 type bindKey struct {
 	Alg      string
 	material interface{}
 }
 
-// verifyBindToken aplica as 4 frentes da C.4.1.4, nesta ordem: formato JWT,
-// assinatura (qualquer chave registrada do servico com o mesmo alg valida;
-// C.4.1.3), nbf/exp, iat. Relogio do host, sem tolerancia: a norma compara com
-// o System Time Fragment (C.4.1.3), e a emissora simulada roda na mesma maquina.
+// verifyBindToken applies the four fronts of C.4.1.4.1 in order: JWT format,
+// signature (any key of the service with the same alg validates it,
+// C.4.1.3), nbf and exp, iat. Times are compared with the host clock, with
+// no leeway.
 func verifyBindToken(tok string, keys []bindKey, now time.Time) error {
 	t, err := parseJWT(strings.TrimSpace(tok))
 	if err != nil {

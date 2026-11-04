@@ -1,6 +1,6 @@
-// Cliente RESP2 minimo, so com a biblioteca padrao do node (roda num
-// node:20-alpine sem npm install). Um comando por vez; erro do Redis rejeita
-// com Error cuja message e o texto do erro e redis = true.
+// Minimal RESP2 client, on the node standard library only (runs on a
+// node:20-alpine without npm install). One command at a time; a Redis error
+// rejects with an Error whose message is the error text and redis = true.
 'use strict';
 const net = require('net');
 
@@ -13,7 +13,7 @@ function encode(args) {
     return Buffer.concat(parts.map(p => (Buffer.isBuffer(p) ? p : Buffer.from(p, 'utf8'))));
 }
 
-// parse(buf, pos) -> [valor, proximaPos] ou null se faltam bytes
+// parse(buf, pos) returns [value, nextPos], or null if bytes are missing.
 function parse(buf, pos) {
     const eol = buf.indexOf('\r\n', pos);
     if (eol < 0) return null;
@@ -50,9 +50,9 @@ function parse(buf, pos) {
 function connect(host = process.env.REDIS_HOST || '127.0.0.1', port = Number(process.env.REDIS_PORT || 6379)) {
     return new Promise((resolve, reject) => {
         const sock = net.connect(port, host);
-        // pedacos acumulados; so junta quando ha bytes para a proxima resposta
-        // (bulk grande, como o teste do teto de 20 MB, chega em centenas de
-        // pedacos)
+        // Accumulated chunks, joined only when there are bytes for the next
+        // reply (a large bulk, as in the 20 MB limit test, comes in hundreds of
+        // chunks).
         let chunks = [];
         let total = 0;
         let need = 1;

@@ -11,10 +11,9 @@ import (
 	"testing"
 )
 
-// Teste estatico: a borda so grava no Redis por FCALL das funcoes tv30, que
-// conferem o esquema. Falha se o codigo (sem os _test.go) tiver um texto que
-// seja nome de comando de escrita. Mesma lista de infra/redis/test/escritas.js,
-// repetida porque este roda no build da imagem, sem o resto do repositorio.
+// Static test: the edge writes to Redis only by FCALL of the tv30 functions,
+// which check the schema. Fails if the code, without the _test.go files, has
+// a string that is the name of a write command.
 var comandosEscrita = strings.Fields(`APPEND BITFIELD BITOP BLMOVE BLMPOP BLPOP BRPOP BRPOPLPUSH BZMPOP BZPOPMAX BZPOPMIN
  COPY DECR DECRBY DEL EVAL EVALSHA EVAL_RO EVALSHA_RO EXEC EXPIRE EXPIREAT FLUSHALL FLUSHDB FUNCTION GEOADD
  GETDEL GETEX GETSET HDEL HEXPIRE HINCRBY HINCRBYFLOAT HMSET HPERSIST HPEXPIRE HSET HSETNX INCR INCRBY
@@ -24,10 +23,10 @@ var comandosEscrita = strings.Fields(`APPEND BITFIELD BITOP BLMOVE BLMPOP BLPOP 
  XAUTOCLAIM XCLAIM XDEL XGROUP XTRIM ZADD ZDIFFSTORE ZINCRBY ZINTERSTORE ZMPOP ZPOPMAX ZPOPMIN ZRANGESTORE
  ZREM ZREMRANGEBYLEX ZREMRANGEBYRANK ZREMRANGEBYSCORE ZUNIONSTORE`)
 
-// funcoes que a borda pode chamar (familia bind-context:{serviceId})
-var funcoesDaBorda = map[string]bool{"tv30_bind_registra": true, "tv30_bind_remove": true}
+// Functions the edge may call (bind-context:{serviceId} family).
+var edgeFunctions = map[string]bool{"tv30_bind_register": true, "tv30_bind_remove": true}
 
-var nomeDeFuncao = regexp.MustCompile(`^tv30_[a-z_]+$`)
+var functionName = regexp.MustCompile(`^tv30_[a-z0-9_]+$`)
 
 func TestEscritasSoPorFuncoes(t *testing.T) {
 	proibidos := map[string]bool{}
@@ -45,14 +44,16 @@ func TestEscritasSoPorFuncoes(t *testing.T) {
 		if strings.HasSuffix(f, "_test.go") {
 			continue
 		}
-		arq, err := parser.ParseFile(fset, f, nil, 0) // sem comentarios
+		// Without comments.
+		arq, err := parser.ParseFile(fset, f, nil, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
 		lidos++
 		ast.Inspect(arq, func(n ast.Node) bool {
 			if _, ok := n.(*ast.ImportSpec); ok {
-				return false // caminho de import ("sort" nao e o comando SORT)
+				// An import path ("sort" is not the SORT command).
+				return false
 			}
 			lit, ok := n.(*ast.BasicLit)
 			if !ok || lit.Kind != token.STRING {
@@ -63,12 +64,12 @@ func TestEscritasSoPorFuncoes(t *testing.T) {
 				return true
 			}
 			if proibidos[strings.ToUpper(v)] {
-				t.Errorf("%s: comando de escrita %q no codigo da borda; a escrita sai so por FCALL (infra/redis/esquema.json)", fset.Position(lit.Pos()), v)
+				t.Errorf("%s: comando de escrita %q no codigo da borda; a escrita sai so por FCALL (infra/redis/schema.json)", fset.Position(lit.Pos()), v)
 			}
-			if nomeDeFuncao.MatchString(v) {
+			if functionName.MatchString(v) {
 				usadas[v] = true
-				if !funcoesDaBorda[v] {
-					t.Errorf("%s: funcao %q nao e da borda (so %v)", fset.Position(lit.Pos()), v, funcoesDaBorda)
+				if !edgeFunctions[v] {
+					t.Errorf("%s: funcao %q nao e da borda (so %v)", fset.Position(lit.Pos()), v, edgeFunctions)
 				}
 			}
 			return true
@@ -77,7 +78,7 @@ func TestEscritasSoPorFuncoes(t *testing.T) {
 	if lidos < 5 {
 		t.Fatalf("so %d arquivo(s) .go lidos", lidos)
 	}
-	for f := range funcoesDaBorda {
+	for f := range edgeFunctions {
 		if !usadas[f] {
 			t.Errorf("funcao %s sem chamada no codigo", f)
 		}

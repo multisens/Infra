@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// Textos da Tabela C.1, os mesmos do tv3ws (src/util/error.ts).
+// Descriptions of the error codes of Table C.1.
 var errorText = map[int]string{
 	100: "API not found",
 	101: "Illegal argument value",
@@ -27,14 +27,18 @@ var errorText = map[int]string{
 
 const warnHeader = "X-TV30-Auth-Warn"
 
-// verdict eh a decisao sobre uma requisicao. Code 0 = liberada.
+// verdict is the decision on a request; Code 0 lets it pass.
 type verdict struct {
 	Code   int
 	Detail string
 	Class  string
-	Route  string
-	rt     *route            // rota casada (nil = nao declarada)
-	params map[string]string // valores dos {param} do caminho
+	// sub of a valid access token: the clientid.
+	ClientID string
+	Route    string
+	// Matched route; nil if the path is not declared.
+	rt *route
+	// Values of the {param} segments of the path.
+	params map[string]string
 }
 
 func (v verdict) fail(code int, detail string) verdict {
@@ -55,31 +59,28 @@ func newHandler(cfg *config, st store, next http.Handler) *authHandler {
 }
 
 func (h *authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// as versoes da rota dao o API-Version das respostas escritas pela borda
+	// The versions of the route give the API-Version of the responses
+	// written by the edge.
 	vi := versionInfo{served: h.cfg.AllVersions, latest: h.cfg.LatestVersion}
 	if rt, _ := h.cfg.Routes.match(r.Method, r.URL.Path); rt != nil {
 		vi.served = rt.Versions
 	}
 	r = withVersionInfo(r, vi)
-	// O CORS e todo do plugin (C.4.1.9): o modulo CORS do KrakenD envolve o
-	// plugin e responderia o preflight antes dele. ACAO com Set: duplicado, o
-	// Chrome recusa (o tv3ws nao o envia). O Expose-Headers de uma resposta do
-	// backend (o do /manifest) chega somado, numa segunda linha.
+	// CORS (C.4.1.9). Set, not Add: the browser refuses a duplicated
+	// Access-Control-Allow-Origin. An Access-Control-Expose-Headers of the
+	// backend response is added as a second line.
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if h.cfg.CORSExposeHeaders != "" {
 		w.Header().Set("Access-Control-Expose-Headers", h.cfg.CORSExposeHeaders)
 	}
 	if r.Method == http.MethodOptions {
-		// Preflight: respondido em qualquer caminho, com a lista fixa. O modulo
-		// CORS do KrakenD 2.7.2 (rs/cors 1.11.0) recusaria Access-Control-Request-
-		// Headers fora de ordem lexicografica. Num caminho nao declarado o
-		// navegador segue para a requisicao e le o 100 dela.
+		// A preflight is answered on any path, with the fixed list.
 		if r.Header.Get("Access-Control-Request-Method") != "" {
 			writeOptions(w, r, h.cfg.CORSAllowHeaders, h.cfg.CORSMaxAge)
 			return
 		}
-		// OPTIONS sem preflight numa API declarada: ACAO, ACAM e ACAH
-		// (C.4.1.9.3). Caminho nao declarado segue e da 100.
+		// An OPTIONS that is not a preflight, on a declared API: ACAO, ACAM
+		// and ACAH (C.4.1.9.3). On an undeclared path, it goes on and gets 100.
 		if h.cfg.Routes.pathDeclared(r.URL.Path) {
 			writeOptions(w, r, h.cfg.CORSAllowHeaders, "")
 			return
@@ -91,8 +92,8 @@ func (h *authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if class == "" {
 			class = "-"
 		}
-		// caminho com %q: r.URL.Path ja vem decodificado, e um %0A nele
-		// forjaria linhas [tv30-auth] no log.
+		// The path is logged with %q: r.URL.Path is decoded, and a %0A in it
+		// would forge [tv30-auth] lines in the log.
 		if h.cfg.Mode == modeEnforce || !followsMode(v.Code) {
 			logf("DENY surface=%s code=%d %s %q class=%s detalhe=%q", h.cfg.Surface, v.Code, r.Method, r.URL.Path, class, v.Detail)
 			writeError(w, r, v.Code, v.Detail)
@@ -101,8 +102,8 @@ func (h *authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		logf("WARN surface=%s code=%d %s %q class=%s detalhe=%q", h.cfg.Surface, v.Code, r.Method, r.URL.Path, class, v.Detail)
 		w.Header().Set(warnHeader, strconv.Itoa(v.Code))
 	}
-	// Versao (C.3.6.5), depois da credencial; 100 e 101 saem nos dois modos.
-	// Os cabecalhos internos apagam o que vier do cliente.
+	// Version (C.3.6.5), after the credential; 100 and 101 are sent in both
+	// modes. The internal headers overwrite those sent by the client.
 	version, vcode, vdetail := negotiateVersion(r, vi.served)
 	if vcode != 0 {
 		logf("DENY surface=%s code=%d %s %q detalhe=%q", h.cfg.Surface, vcode, r.Method, r.URL.Path, vdetail)
@@ -111,6 +112,7 @@ func (h *authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Header.Set(internalVersionHeader, version)
 	r.Header.Set(internalHostHeader, r.Host)
+	setClientHeaders(r, v)
 	if v.rt != nil && v.rt.Edge != "" {
 		h.serveEdge(w, r, v, version)
 		return
@@ -119,11 +121,28 @@ func (h *authHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.serveNext(w, r)
 }
 
-// serveNext repassa ao roteador e troca por 404 + {error:200} (C.3.2.1,
-// Tabela C.1) as falhas que sairiam fora do formato C.3.2, nos dois modos:
-//   - 5xx: o KrakenD responde 500 sem corpo quando o backend estoura o timeout
-//     do endpoint ou esta fora do ar (o tv3ws so responde erro com 404);
-//   - panic no roteador, que resetaria a conexao.
+// setClientHeaders writes the class and the identity of the client decided
+// by evaluate, removing those sent by the client: associated, only the
+// class; standAlone and nonLocal, the class and the clientid; a client
+// without a class, neither.
+func setClientHeaders(r *http.Request, v verdict) {
+	r.Header.Del(internalClientClassHeader)
+	r.Header.Del(internalClientIDHeader)
+	switch v.Class {
+	case classAssociated:
+		r.Header.Set(internalClientClassHeader, classAssociated)
+	case classStandAlone, classNonLocal:
+		r.Header.Set(internalClientClassHeader, v.Class)
+		r.Header.Set(internalClientIDHeader, v.ClientID)
+	}
+}
+
+// serveNext passes the request on to the router, and replaces with 404 and
+// {error:200} (C.3.2.1, Table C.1), in both modes, the failures that would
+// fall outside the format of C.3.2:
+//   - a 5xx status, as the 500 without body that KrakenD sends when the
+//     backend exceeds the endpoint timeout or is down;
+//   - a panic in the router.
 func (h *authHandler) serveNext(w http.ResponseWriter, r *http.Request) {
 	gw := &guardWriter{ResponseWriter: w}
 	start := h.now()
@@ -137,8 +156,8 @@ func (h *authHandler) serveNext(w http.ResponseWriter, r *http.Request) {
 		}
 		logf("PANIC recuperado surface=%s %s %q: %v", h.cfg.Surface, r.Method, r.URL.Path, p)
 		if gw.sent || gw.hijacked {
-			// o cabecalho ja foi ao cliente: nao ha como trocar a resposta.
-			// Aborta a conexao em vez de emendar um corpo de erro no meio.
+			// The header was already sent, so the response cannot be replaced:
+			// aborts the connection instead of appending an error body.
 			panic(http.ErrAbortHandler)
 		}
 		gw.replace(r, "falha interna do gateway")
@@ -151,21 +170,25 @@ func (h *authHandler) serveNext(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// guardWriter fica entre o plugin e o roteador do KrakenD. Um status 5xx eh
-// RETIDO (nem cabecalho nem corpo chegam ao cliente) para o serveNext troca-
-// lo pelo erro C.3.2; qualquer outro status passa intacto, sem copia.
+// guardWriter wraps the writer of the KrakenD router. A 5xx status is held,
+// with neither header nor body sent to the client, so that replace can send
+// the C.3.2 error; any other status passes unchanged, without a copy.
 type guardWriter struct {
-	// interface embutida: so Header, Write e WriteHeader sao promovidos (um
-	// ReadFrom do writer de baixo, usado pelo io.Copy, furaria a retencao)
+	// Embedded interface: only Header, Write and WriteHeader are promoted. A
+	// ReadFrom of the underlying writer, used by io.Copy, would bypass the
+	// hold.
 	http.ResponseWriter
-	status   int  // status final escrito (0 = nenhum ainda)
-	held     int  // status 5xx retido (0 = nenhum)
-	sent     bool // status final ja repassado ao cliente
+	// Final status written; 0 for none yet.
+	status int
+	// Held 5xx status; 0 for none.
+	held int
+	// The final status was passed on to the client.
+	sent     bool
 	hijacked bool
 }
 
-// O gin.ResponseWriter (gin v1.9.1, do KrakenD 2.7.2) faz type assertion sem
-// ok para estas tres interfaces no writer de baixo: faltando uma, panic.
+// gin.ResponseWriter (gin v1.9.1, in KrakenD 2.7.2) asserts these three
+// interfaces on the underlying writer without ok: a missing one panics.
 var (
 	_ http.Flusher       = (*guardWriter)(nil)
 	_ http.Hijacker      = (*guardWriter)(nil)
@@ -175,12 +198,14 @@ var (
 func (g *guardWriter) WriteHeader(code int) {
 	if g.status != 0 {
 		if g.held == 0 {
-			g.ResponseWriter.WriteHeader(code) // superfluo: o net/http avisa
+			// A superfluous call, passed on for net/http to log it.
+			g.ResponseWriter.WriteHeader(code)
 		}
 		return
 	}
 	if code >= 100 && code < 200 && code != http.StatusSwitchingProtocols {
-		g.ResponseWriter.WriteHeader(code) // 1xx informativo: nao fecha o status
+		// An informational 1xx does not set the final status.
+		g.ResponseWriter.WriteHeader(code)
 		return
 	}
 	g.status = code
@@ -197,12 +222,14 @@ func (g *guardWriter) Write(b []byte) (int, error) {
 		g.WriteHeader(http.StatusOK)
 	}
 	if g.held != 0 {
-		return len(b), nil // descartado: o corpo do 5xx nao sai
+		// The body of a held 5xx is discarded.
+		return len(b), nil
 	}
 	return g.ResponseWriter.Write(b)
 }
 
-// Flush com 5xx retido nao faz nada: repassado, mandaria o cabecalho.
+// Flush does nothing while a 5xx is held, since flushing would send the
+// header.
 func (g *guardWriter) Flush() {
 	if g.held != 0 {
 		return
@@ -231,15 +258,16 @@ func (g *guardWriter) CloseNotify() <-chan bool {
 	if cn, ok := g.ResponseWriter.(http.CloseNotifier); ok {
 		return cn.CloseNotify()
 	}
-	return make(chan bool) // nunca dispara
+	// A channel that never fires.
+	return make(chan bool)
 }
 
-// Unwrap: para o http.ResponseController (prazos de leitura/escrita).
+// Unwrap returns the underlying writer, for http.ResponseController.
 func (g *guardWriter) Unwrap() http.ResponseWriter { return g.ResponseWriter }
 
-// replace escreve o erro 200 no lugar da resposta retida. Os cabecalhos do
-// backend saem (nao descrevem o corpo novo); ficam os de CORS, sem os quais o
-// navegador nao le o corpo, os X-Krakend* e o aviso do modo warn.
+// replace writes error 200 in place of the held response. The backend
+// headers are removed, except CORS, without which the browser does not read
+// the body, Vary, X-Krakend* and the warn mode header.
 func (g *guardWriter) replace(r *http.Request, detail string) {
 	hd := g.ResponseWriter.Header()
 	for k := range hd {
@@ -251,8 +279,9 @@ func (g *guardWriter) replace(r *http.Request, detail string) {
 	writeC32(g.ResponseWriter, r, 200, detail)
 }
 
-// followsMode: so as recusas de credencial (104, 107, 108) obedecem ao modo;
-// em warn viram aviso. 100, 101, 106, 300, 304 e 200 saem nos dois modos.
+// followsMode reports whether the code follows the mode: only the
+// credential refusals 104, 107 and 108, which in warn mode become a warning.
+// Any other code is sent in both modes.
 func followsMode(code int) bool {
 	return code == 104 || code == 107 || code == 108
 }
@@ -263,9 +292,10 @@ func keptOnReplace(k string) bool {
 		strings.HasPrefix(k, "X-Krakend") || k == http.CanonicalHeaderKey(warnHeader)
 }
 
-// evaluate decide, nesta ordem: rota (100), superficie (106), classe (106),
-// nao local por HTTP (106), access token (107), servico selecionado (300),
-// servico do caminho no catalogo (304) e bind-token (104/108). Falha no Redis => 200.
+// evaluate decides, in this order: route (100), surface (106), class (106),
+// non-local over HTTP (106), access token (107), selected service (300),
+// service of the path in the catalog (304) and bind-token (104, 108). A
+// Redis failure gives 200.
 func (h *authHandler) evaluate(r *http.Request) verdict {
 	rt, params := h.cfg.Routes.match(r.Method, r.URL.Path)
 	if rt == nil {
@@ -286,13 +316,13 @@ func (h *authHandler) evaluate(r *http.Request) verdict {
 	if authz != "" {
 		if claims, tokenErr = verifyAccessToken(authz, h.cfg.Secret, h.cfg.Issuer, now); tokenErr == nil {
 			v.Class = claims.Class
+			v.ClientID = claims.Sub
 		}
 	}
-	// Sem Authorization, um Origin em origins:associated identifica o local
-	// associado (a C.4.1.7 deixa o mecanismo a implementacao; fora do navegador
-	// o Origin e forjavel). Com Authorization invalido o Origin tambem e
-	// consultado, senao bastaria um Authorization qualquer para escapar do 106;
-	// nas rotas que excluem o associado, ele da 106 mesmo com token valido.
+	// Without Authorization, an Origin in origins:associated identifies a
+	// local associated client. The Origin is also looked up with an invalid
+	// Authorization on a route with classes, and with any Authorization on a
+	// route that excludes the associated client, which then gets 106.
 	excludesAssoc := rt.Classes != nil && !rt.allows(classAssociated)
 	originAssoc, originSvc := false, ""
 	if origin := r.Header.Get("Origin"); origin != "" && ((claims == nil && (authz == "" || rt.Classes != nil)) || excludesAssoc) {
@@ -324,8 +354,8 @@ func (h *authHandler) evaluate(r *http.Request) verdict {
 		return v.fail(106, "cliente nao local por HTTP fora da C.6.1.2/C.6.1.3: use o Server-SecureBaseURL (C.4.1.6)")
 	}
 
-	// Associado pelo Origin: sem access token e, no proprio contexto de
-	// servico, sem bind-token (C.4.1.1).
+	// Associated by the Origin: no access token and, in its own service
+	// context, no bind-token (C.4.1.1).
 	if v.Class == classAssociated && claims == nil {
 		if v = h.requireService(v); v.Code != 0 || rt.Auth != authTokenBind {
 			return v
@@ -333,8 +363,8 @@ func (h *authHandler) evaluate(r *http.Request) verdict {
 		if v = h.requireCatalog(v); v.Code != 0 {
 			return v
 		}
-		// C.4.1.1, "referencing their own service context": fora do servico
-		// que lancou a app (origins:associated), a regra geral do bind-token.
+		// Outside the service of its origin in origins:associated, the
+		// bind-token is required.
 		ctx, err := h.pathContext(params)
 		if err != nil {
 			return v.fail(200, "redis indisponivel ("+err.Error()+")")
@@ -354,9 +384,9 @@ func (h *authHandler) evaluate(r *http.Request) verdict {
 	if tokenErr != nil {
 		return v.fail(107, tokenErr.Error())
 	}
-	// Bloqueado (C.4.2.2) ou fora de clients:authorized: 107. O bloqueio e
-	// conferido antes e mantem a mensagem dele; token sem sub nunca esta no
-	// conjunto.
+	// Blocked (C.4.2.2) or not in clients:authorized: 107. The block is
+	// checked first, with its own detail; a token without sub is never in the
+	// set.
 	if claims.Sub == "" {
 		return v.fail(107, "access token sem sub: cliente fora de clients:authorized")
 	}
@@ -378,8 +408,9 @@ func (h *authHandler) evaluate(r *http.Request) verdict {
 		return h.requireService(v)
 	}
 
-	// Servico DTV selecionado (300) e servico do caminho no catalogo (304)
-	// antes do bind-token: sem eles nao ha chave registrada, e tudo daria 108.
+	// Selected DTV service (300) and service of the path in the catalog (304)
+	// before the bind-token: without them there is no registered key, and
+	// every request would get 108.
 	if v = h.requireService(v); v.Code != 0 {
 		return v
 	}
@@ -394,10 +425,10 @@ func (h *authHandler) evaluate(r *http.Request) verdict {
 	return h.checkBindToken(v, r, ctx, now, "")
 }
 
-// pathContext: o {serviceContextId} do caminho, que e o globalServiceId do BAM
-// (Tabela 6; C.3.5), ou o servico corrente em current-service e nas rotas sem
-// o parametro ("" = nenhum selecionado). Fora do catalogo, o requireCatalog
-// ja respondeu 304 nas rotas que o conferem.
+// pathContext returns the {serviceContextId} of the path, the
+// globalServiceId of the BAM (Table 6; C.3.5), or the current service for
+// current-service and for routes without the parameter; "" if none is
+// selected.
 func (h *authHandler) pathContext(params map[string]string) (string, error) {
 	if scid, ok := params["serviceContextId"]; ok && scid != "current-service" {
 		return scid, nil
@@ -414,7 +445,8 @@ func (h *authHandler) checkBindToken(v verdict, r *http.Request, ctx string, now
 		return v.fail(104, "bind-token ausente"+why)
 	}
 	if ctx == "" {
-		// rota sem NoService (C.6.16.3): sem servico nao ha chave que valide
+		// On a route without NoService, as C.6.16.3, there is no key to
+		// validate with.
 		return v.fail(108, "sem servico corrente: nenhuma chave registrada"+why)
 	}
 	raw, err := h.store.BindKeys(ctx)
@@ -427,9 +459,8 @@ func (h *authHandler) checkBindToken(v verdict, r *http.Request, ctx string, now
 	return v
 }
 
-// requireService: nas rotas com NoService, sem servico DTV selecionado responde
-// esse codigo ("300: If the DTV function is not in use in the receiver"), para
-// todo cliente, inclusive o associado.
+// requireService fails with the NoService code of the route when no DTV
+// service is selected, for every client, the associated one included.
 func (h *authHandler) requireService(v verdict) verdict {
 	if v.rt == nil || v.rt.NoService == 0 {
 		return v
@@ -444,9 +475,10 @@ func (h *authHandler) requireService(v verdict) verdict {
 	return v
 }
 
-// requireCatalog: nas rotas com NotInCatalog, o {serviceContextId} explicito
-// fora de services:announced (os servicos do Application Catalog) responde
-// esse codigo, para todo cliente. current-service e o servico sintonizado.
+// requireCatalog fails with the NotInCatalog code of the route when the
+// {serviceContextId} of the path is not in services:announced, the services
+// of the Application Catalog, for every client. current-service is not
+// checked.
 func (h *authHandler) requireCatalog(v verdict) verdict {
 	if v.rt == nil || v.rt.NotInCatalog == 0 {
 		return v
@@ -465,15 +497,16 @@ func (h *authHandler) requireCatalog(v verdict) verdict {
 	return v
 }
 
-// writeError responde a requisicao BLOQUEADA pela decisao do plugin: sem o
-// aviso do modo warn (a resposta ja eh o erro).
+// writeError answers a request refused by the plugin, without the warn mode
+// header.
 func writeError(w http.ResponseWriter, r *http.Request, code int, detail string) {
 	w.Header().Del(warnHeader)
 	writeC32(w, r, code, detail)
 }
 
-// writeC32 responde no formato C.3.2 (404 + {error, description}), com ACAO *
-// (sem ele o navegador veria erro de CORS em vez do corpo) e API-Version.
+// writeC32 answers in the format of C.3.2, 404 and {error, description},
+// with API-Version and Access-Control-Allow-Origin: *, without which the
+// browser shows a CORS error instead of the body.
 func writeC32(w http.ResponseWriter, r *http.Request, code int, detail string) {
 	desc := errorText[code]
 	if detail != "" {
@@ -492,9 +525,9 @@ func writeC32(w http.ResponseWriter, r *http.Request, code int, detail string) {
 	w.Write(body)
 }
 
-// writeOptions responde o OPTIONS (C.4.1.9.3) com ACAO, ACAM e ACAH fixos, sem
-// olhar o que o preflight pede: quem decide se a lista cobre o pedido e o
-// navegador. maxAge so no preflight. Status 200 (C.3.2.1), sem corpo.
+// writeOptions answers OPTIONS (C.4.1.9.3) with fixed ACAO, ACAM and ACAH,
+// whatever the preflight asks, and with Access-Control-Max-Age when maxAge
+// is set. Status 200 (C.3.2.1), no body.
 func writeOptions(w http.ResponseWriter, r *http.Request, allowHeaders, maxAge string) {
 	hd := w.Header()
 	hd.Set("Access-Control-Allow-Origin", "*")
@@ -508,10 +541,9 @@ func writeOptions(w http.ResponseWriter, r *http.Request, allowHeaders, maxAge s
 	w.WriteHeader(http.StatusOK)
 }
 
-// apiVersion: o API-Version dos erros C.3.2 e do OPTIONS escritos pela borda.
-// A versao negociada; no 100, a mais recente do servidor (C.3.6.6, "the latest
-// version supported by the server"); no 101, a 2.0, porque um cabecalho fora
-// do formato X.Y nao pede versao nenhuma.
+// apiVersion returns the API-Version of the C.3.2 errors and of the OPTIONS
+// responses written by the edge: the negotiated version; on 100, the latest
+// version of the server (C.3.6.6); on 101, 2.0.
 func apiVersion(r *http.Request) string {
 	vi := versionInfoOf(r)
 	switch v, code, _ := negotiateVersion(r, vi.served); code {
