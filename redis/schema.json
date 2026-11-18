@@ -276,7 +276,7 @@
     { "name": "tv30_v100_remote_device_write", "arguments": "<handle> <field> <value> [...] (the whole record)", "effect": "rewrites the whole hash v100.0:remote-device:{handle} (DEL + HSET)", "returns": "1", "callers": ["tv3ws (projection of the registrations of 100.0)"] },
     { "name": "tv30_v100_remote_device_remove", "arguments": "<handle>", "effect": "DEL v100.0:remote-device:{handle}", "returns": "1 if removed, 0 if absent", "callers": ["tv3ws (projection of the registrations of 100.0)"] },
     { "name": "tv30_v100_remote_devices_clear", "arguments": "(none)", "effect": "DEL of every v100.0:remote-device:*", "returns": "number of keys removed", "callers": ["tv3ws (boot)"] },
-    { "name": "tv30_audit", "readOnly": true, "arguments": "(none)", "effect": "goes through the families and the invariants and returns what is outside the schema", "returns": "list of [key, family, reason]; empty = everything in the schema", "callers": ["tests (scripts/test-auth.sh, scripts/test-consolidacao.sh, infra/redis/test)", "developer: docker exec redis redis-cli FCALL_RO tv30_audit 0"] },
+    { "name": "tv30_audit", "readOnly": true, "arguments": "(none)", "effect": "goes through the families and the invariants and returns what is outside the schema", "returns": "list of [key, family, reason]; empty = everything in the schema", "callers": ["tests (scripts/test-auth.sh, scripts/test-edge-redis.sh, infra/redis/test)", "developer: docker exec redis redis-cli FCALL_RO tv30_audit 0"] },
     { "name": "tv30_version", "readOnly": true, "arguments": "(none)", "effect": "none", "returns": "the version of this schema", "callers": ["developer: docker exec redis redis-cli FCALL_RO tv30_version 0"] }
   ],
 

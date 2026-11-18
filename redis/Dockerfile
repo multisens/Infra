@@ -14,7 +14,7 @@ RUN python emit_seed.py userData.json /seed.resp
 # redis-commander with a pinned version: the UI login depends on HTTP_USER
 # and HTTP_PASSWORD, which 0.9.0 maps; without them the UI starts open,
 # without a warning. Before changing the version, check the mapping
-# (scripts/test-consolidacao.sh).
+# (scripts/test-edge-redis.sh).
 FROM redis:7-alpine
 RUN apk add --no-cache nodejs npm dumb-init && \
     npm install -g --omit=dev redis-commander@0.9.0 && \
