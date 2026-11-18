@@ -1,4 +1,4 @@
-// Fails if tv3ws, aop, the edge plugin, the initial load or the manual
+// Fails if tv3ws, aop-shell, the edge plugin, the initial load or the manual
 // migration writes to a family in scope outside the adapter of the functions
 // (rules in ./writes.js). Needs the whole TV30:
 //   node --test infra/redis/test/writes.test.js

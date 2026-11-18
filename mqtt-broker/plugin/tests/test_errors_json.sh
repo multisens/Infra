@@ -13,7 +13,7 @@ set -u
 AQUI=$(cd "$(dirname "$0")" && pwd)
 # infra/mqtt-broker
 BROKER_DIR=$(cd "$AQUI/../.." && pwd)
-IMG=${IMG:-tv30-mosquitto:teste-errors-json}
+IMG=${IMG:-tv30-mqtt-broker:teste-errors-json}
 P=${PREFIXO:-tv30-teste-errors-json}
 NET=$P-net
 BRK=$P-broker

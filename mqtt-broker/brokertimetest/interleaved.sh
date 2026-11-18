@@ -6,8 +6,8 @@ OUT=$B/interleaved.jsonl
 : > "$OUT"
 for rep in 1 2 3 4 5; do
   for cfg in "mqtt-vanilla perftest/echo vanilla" \
-             "mosquitto perftest/echo neutro" \
-             "mosquitto sensor/room1/temperature validacao"; do
+             "mqtt-broker perftest/echo neutro" \
+             "mqtt-broker sensor/room1/temperature validacao"; do
     set -- $cfg
     docker run --rm -v "$B":/app -w /app --network ginga_net \
       -e MQTT_HOST=$1 -e TOPIC=$2 -e LABEL=$3-r$rep \

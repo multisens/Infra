@@ -11,7 +11,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: tv30-mosquitto
+          - name: tv30-mqtt-broker
             context: ./mqtt-broker
             dockerfile: ./mqtt-broker/infra/Dockerfile
           - name: tv30-edgegateway

@@ -1,5 +1,5 @@
 # AoP — Application-Oriented Platform (Node JS)
-# Build context: ./aop
+# Build context: ./aop-shell
 # Additional contexts (via --build-context):
 #   tv30-data    -> infra/user-files-template
 #   tv30-scripts -> infra/dockerfiles
@@ -7,7 +7,7 @@
 FROM node:23-alpine
 WORKDIR /app
 COPY package*.json ./
-# Nao usar --omit=dev: aop/src/server.js importa http-proxy-middleware
+# Nao usar --omit=dev: aop-shell/src/server.js importa http-proxy-middleware
 # que esta em devDependencies (bug do package.json upstream).
 RUN npm ci && npm cache clean --force
 ENV NODE_ENV=production

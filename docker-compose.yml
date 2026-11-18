@@ -4,7 +4,7 @@
 #   whole stack (COMPOSE_PROFILES of .env):
 #     docker compose up -d
 #   only the infrastructure images:
-#     docker compose --profile mqtt build edgegateway redis mosquitto
+#     docker compose --profile mqtt build edgegateway redis mqtt-broker
 
 include:
   - path: ./redis/docker-compose.yml
@@ -58,8 +58,8 @@ services:
       - ginga_net
     restart: unless-stopped
 
-  mosquitto:
-    image: ${DOCKERHUB_NS:-tv30}/tv30-mosquitto:${IMAGE_TAG:-latest}
+  mqtt-broker:
+    image: ${DOCKERHUB_NS:-tv30}/tv30-mqtt-broker:${IMAGE_TAG:-latest}
     build:
       context: ./mqtt-broker
       dockerfile: infra/Dockerfile
@@ -69,7 +69,7 @@ services:
     ports:
       - "1883:1883"
       # MQTT over WebSocket: a host port chosen by Docker by default
-      # (`docker compose port mosquitto 9001`); MQTT_WS_PUBLISH=9003:9001 fixes
+      # (`docker compose port mqtt-broker 9001`); MQTT_WS_PUBLISH=9003:9001 fixes
       # it.
       - "${MQTT_WS_PUBLISH:-9001}"
     volumes:

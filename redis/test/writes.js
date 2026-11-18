@@ -343,8 +343,8 @@ function tv30Modules(root) {
                 'src/modules/remotedevice-manager/manager.ts': 'remote-devices:*, remote-device:* (mirror of the remote devices)',
             },
         },
-        aop: {
-            root: path.join(root, 'aop'), sources: 'src', adapter: 'src/redis-functions.js', redisClient: 'src/redis-client.js',
+        'aop-shell': {
+            root: path.join(root, 'aop-shell'), sources: 'src', adapter: 'src/redis-functions.js', redisClient: 'src/redis-client.js',
             directOutOfScope: {},
         },
     };

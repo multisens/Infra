@@ -5,8 +5,8 @@
 #   (default: functions; exits != 0 if any fails)
 #   functions  functions.test.js against the library on a redis:7-alpine
 #   static     writes.test.js: no service writes directly to a family in
-#              scope (needs the whole TV30: tv3ws/ and aop/ next to infra/)
-#   contract   the real adapters of tv3ws, aop and the Go plugin against the
+#              scope (needs the whole TV30: tv3ws/ and aop-shell/ next to infra/)
+#   contract   the real adapters of tv3ws, aop-shell and the Go plugin against the
 #              functions
 #   image      image build and start: load, schema version, healthcheck, a
 #              new start, and the commander exiting bringing the container
@@ -69,14 +69,14 @@ mode_functions() {
 
 mode_static() {
   echo; echo "== static: infra/redis/test/writes.test.js =="
-  [ -d "$ROOT/tv3ws/src" ] && [ -d "$ROOT/aop/src" ] || { echo "ERROR: needs the whole TV30 (tv3ws/ and aop/ next to infra/)"; return 1; }
+  [ -d "$ROOT/tv3ws/src" ] && [ -d "$ROOT/aop-shell/src" ] || { echo "ERROR: needs the whole TV30 (tv3ws/ and aop-shell/ next to infra/)"; return 1; }
   docker run --rm -v "$ROOT:/tv30:ro" -w /tv30/infra/redis/test "$NODE_IMG" node --test writes.test.js
 }
 
 mode_contract() {
   echo; echo "== contract: real adapters x functions =="
-  [ -d "$ROOT/tv3ws/node_modules" ] && [ -d "$ROOT/aop/node_modules" ] \
-    || { echo "ERROR: needs tv3ws/node_modules and aop/node_modules (npm install in both)"; return 1; }
+  [ -d "$ROOT/tv3ws/node_modules" ] && [ -d "$ROOT/aop-shell/node_modules" ] \
+    || { echo "ERROR: needs tv3ws/node_modules and aop-shell/node_modules (npm install in both)"; return 1; }
   start_redis || return 1
   docker run --rm --network "$NET" -e REDIS_HOST="$RDS" -e REDIS_PORT=6379 \
     -v "$ROOT:/tv30:ro" -w /tv30/infra/redis/test "$NODE_IMG" node --test contract.test.js || return 1

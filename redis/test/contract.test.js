@@ -1,4 +1,4 @@
-// Contract: the real adapters of tv3ws and aop against the functions on a
+// Contract: the real adapters of tv3ws and aop-shell against the functions on a
 // real Redis (the doubles of the unit tests mimic only the effect). What each
 // service writes passes the schema, and data outside it comes back as
 // TV30SCHEMA. Run by run.sh contract.
@@ -12,7 +12,7 @@ const { connect } = require('./resp');
 
 const TV30 = path.join(__dirname, '..', '..', '..');
 const TV3WS = path.join(TV30, 'tv3ws');
-const AOP = path.join(TV30, 'aop');
+const AOP = path.join(TV30, 'aop-shell');
 
 // The AoP writes the avatar to <USER_DATA_PATH>/thumbs/<id>.svg. TV30 is
 // mounted read-only, so here USER_DATA_PATH is a temporary directory, set
@@ -26,7 +26,7 @@ process.env.JWT_SECRET = 'tv30-test-secret';
 process.env.JWT_ISSUER = 'GenericIssuer';
 // The same format as the fileName type of schema.json.
 const AVATAR_FORMATO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(svg|png|jpg|jpeg|webp)$/;
-// An SVG of the palette of the AoP form (aop/src/modules/profile-manager/
+// An SVG of the palette of the AoP form (aop-shell/src/modules/profile-manager/
 // avatar.js, color Azul), as the creation screen sends it.
 const SVG_AZUL = '<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">' +
     '<rect width="100" height="100" rx="30" fill="#4d5b7c"/>' +
