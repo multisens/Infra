@@ -5,7 +5,7 @@
     "Redis, the functions and this schema belong to the testbed, not to ABNT NBR 25608;",
     "the 'source' field of each rule says where it came from (section of the standard, schemas.json of the broker or code)."
   ],
-  "version": "10",
+  "version": "11",
   "library": "tv30",
   "errorPrefix": "TV30SCHEMA",
 
@@ -187,10 +187,43 @@
     {
       "family": "services:announced",
       "key": "services:announced",
-      "type": "set",
-      "owner": "aop-transport-layer-metadata-lls (in the process of the AoP)",
-      "description": "Services announced in the LLS: the globalServiceId (Table 6) of each BAM of the received BAMTs, which is the serviceContextId of the routes (C.3.5). Rewritten whole at each BAMT received or withdrawn and on the start of the AoP; the same content goes to the retained topic aop/services. The Application Catalog of the AoP lists these services, and the edge answers 304 in C.6.14.2 and C.6.14.5 to a service outside here.",
-      "members": { "ref": "serviceId" },
+      "type": "hash",
+      "owner": "aop-application-catalog (in the process of the AoP)",
+      "description": "The Application Catalog: each Bootstrap Application listed, by its globalServiceId (Table 6), which is the serviceContextId of the routes (C.3.5), to its record: the RF channel and the SLT entry it came from and its BAM (ACFR-37). Rewritten whole at each scan marker, after the computation of ACFR-12 and ACFR-21 to ACFR-28; the listed globalServiceIds go to the retained topic aop/services. The edge answers 304 in C.6.14.2 and C.6.14.5 to a service outside here.",
+      "otherFields": {
+        "name": { "ref": "serviceId" },
+        "value": {
+          "type": "json",
+          "fields": {
+            "bsid": { "type": "integer", "min": 0, "max": 65535, "required": true, "source": "SLT@bsid of the RF channel (ATSC A/331, 6.3)" },
+            "serviceId": { "type": "integer", "min": 0, "max": 65535, "required": true, "source": "SLT.Service@serviceId" },
+            "majorChannelNo": { "type": "integer", "min": 1, "max": 999, "source": "SLT.Service@majorChannelNo; with minorChannelNo, the virtual channel number (ACFR-06)" },
+            "minorChannelNo": { "type": "integer", "min": 1, "max": 999, "source": "SLT.Service@minorChannelNo" },
+            "mainAvOverTheAir": { "type": "boolean", "required": true, "source": "main audiovisual content over the air (ACFR-23, ACFR-26, ACFR-28); added to the SLT by the testbed" },
+            "receptionQuality": { "type": "integer", "min": 0, "max": 100, "required": true, "source": "in place of the CNR of the signaling channel (ACFR-28); added to the SLT by the testbed" },
+            "groupingType": { "type": "enum", "values": ["optionalGrouping", "mandatoryGrouping", "noGrouping"], "source": "BAMT@groupingType (ABNT NBR 25602, 8.2.2)" },
+            "bam": {
+              "type": "json",
+              "required": true,
+              "source": "BAM of the BAMT (ABNT NBR 25608, 8.4.4, Table 6), the form of the broker topic tlm/lls/+/bamt",
+              "fields": {
+                "globalServiceId": { "type": "text", "min": 1, "max": 256, "required": true, "source": "Table 6; the definition serviceId" },
+                "appVersion": { "type": "integer", "min": 0, "max": 255, "required": true, "source": "Table 6" },
+                "appName": { "type": "text", "min": 1, "max": 20, "required": true, "source": "Table 6" },
+                "appDescription": { "type": "text", "min": 1, "max": 40, "source": "Table 6" },
+                "backgroundColor": { "type": "text", "min": 7, "max": 7, "required": true, "source": "Table 6: #RRGGBB" },
+                "foregroundColor": { "type": "text", "min": 7, "max": 7, "required": true, "source": "Table 6: #RRGGBB" },
+                "additionalServices": { "type": "jsonList", "items": { "type": "integer", "min": 0, "max": 65535 }, "source": "Table 6" },
+                "appIcon": { "type": "text", "min": 1, "max": 16384, "required": true, "source": "Table 6: SVG up to 16 kB" },
+                "bannerIcon": { "type": "text", "min": 1, "max": 16384, "required": true, "source": "Table 6: SVG up to 16 kB" },
+                "fallbackMediaURLs": { "type": "jsonList", "items": { "type": "text", "min": 1, "max": 2048 }, "source": "Table 6" }
+              },
+              "otherFields": false
+            }
+          },
+          "otherFields": false
+        }
+      },
       "functions": ["tv30_announced_services"]
     },
     {
@@ -270,7 +303,7 @@
     { "name": "tv30_origin_register", "arguments": "<origin> <service id>", "effect": "HSET origins:associated", "returns": "1", "callers": ["AoP (launch of an application)"] },
     { "name": "tv30_origin_remove", "arguments": "<origin>", "effect": "HDEL origins:associated", "returns": "1 if removed, 0 if absent", "callers": ["AoP (end or change of application)"] },
     { "name": "tv30_origins_clear", "arguments": "(none)", "effect": "DEL origins:associated", "returns": "1 if present, 0 otherwise", "callers": ["AoP (boot)"] },
-    { "name": "tv30_announced_services", "arguments": "[<service id> ...] (none = no announced service)", "effect": "rewrites the whole set services:announced (DEL + SADD); without arguments, only the DEL", "returns": "number of services in the set", "callers": ["AoP (aop-transport-layer-metadata-lls: BAMT received or withdrawn, start)"] },
+    { "name": "tv30_announced_services", "arguments": "[<service id> <JSON record> ...] (none = empty catalog)", "effect": "rewrites the whole hash services:announced (DEL + HSET), whatever the type it had; without arguments, only the DEL", "returns": "number of services in the hash", "callers": ["AoP (aop-application-catalog: scan marker)"] },
     { "name": "tv30_bind_register", "arguments": "<service id> <JSON entry>", "effect": "RPUSH bind-context:{serviceId}", "returns": "length of the list", "callers": ["edge (C.6.8.2)"] },
     { "name": "tv30_bind_remove", "arguments": "<service id> <exact JSON entry>", "effect": "LREM bind-context:{serviceId} 0", "returns": "number of entries removed", "callers": ["edge (C.6.8.4)"] },
     { "name": "tv30_v100_remote_device_write", "arguments": "<handle> <field> <value> [...] (the whole record)", "effect": "rewrites the whole hash v100.0:remote-device:{handle} (DEL + HSET)", "returns": "1", "callers": ["tv3ws (projection of the registrations of 100.0)"] },

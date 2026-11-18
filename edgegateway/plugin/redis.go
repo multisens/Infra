@@ -409,7 +409,7 @@ func (s *redisStore) CurrentServiceID() (string, error) {
 }
 
 func (s *redisStore) ServiceInCatalog(id string) (bool, error) {
-	n, err := s.c.intCmd("SISMEMBER", keyAnnounced, id)
+	n, err := s.c.intCmd("HEXISTS", keyAnnounced, id)
 	return n == 1, err
 }
 

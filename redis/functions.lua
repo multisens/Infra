@@ -342,7 +342,8 @@ local function originReason(v)
 end
 
 -- nil if v satisfies the rule, otherwise the reason. inJson: v came from a
--- JSON value (integer and number; the rest, JSON string).
+-- JSON value (integer, boolean, nested object or list; the rest, JSON
+-- string). A nested object or list is checked as its JSON text.
 local reason
 reason = function(rule, v, inJson)
   local t = rule.type
@@ -359,7 +360,18 @@ reason = function(rule, v, inJson)
       end
       return nil
     end
-    if type(v) ~= 'string' then
+    if t == 'boolean' then
+      if type(v) ~= 'boolean' then
+        return 'must be true or false in the JSON'
+      end
+      return nil
+    end
+    if t == 'json' or t == 'jsonList' then
+      if type(v) ~= 'table' then
+        return 'must be a JSON ' .. (t == 'json' and 'object' or 'list')
+      end
+      v = cjson.encode(v)
+    elseif type(v) ~= 'string' then
       return 'must be text in the JSON'
     end
   end
@@ -902,19 +914,23 @@ end
 -- Services announced in the LLS.
 
 OP.tv30_announced_services = function(args)
-  local fam = family('services:announced')
-  for _, s in ipairs(args) do
-    local m = reason(fam.members, s)
-    if m then
-      fail(fam.key .. ' member ' .. sample(s) .. ': ' .. m)
-    end
+  if #args % 2 ~= 0 then
+    fail('usage: tv30_announced_services [<service id> <JSON record> ...] (got ' .. #args .. ' argument(s))')
   end
-  ensureType(fam, fam.key)
+  local fam = family('services:announced')
+  local h = {}
+  for i = 1, #args, 2 do
+    if h[args[i]] ~= nil then
+      fail(fam.key .. ' field ' .. sample(args[i]) .. ': repeated')
+    end
+    h[args[i]] = args[i + 1]
+  end
+  ensure(fam.key, hashReasons(fam, {}, h, nil))
   redis.call('DEL', fam.key)
   if #args > 0 then
-    inBatches('SADD', fam.key, args)
+    inBatches('HSET', fam.key, args)
   end
-  return redis.call('SCARD', fam.key)
+  return redis.call('HLEN', fam.key)
 end
 
 -- bind-context.

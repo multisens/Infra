@@ -67,6 +67,12 @@ const SVC = {
 };
 const CLIENTE = { class: 'standAlone', refreshToken: 'rt-1', accessToken: 'at-1' };
 const ENTRADA = { alg: 'HS256', key: 'segredo', registeredAt: 1760000000000 };
+// A valid BAM and a valid record of services:announced.
+const BAM = {
+    globalServiceId: 'urn:tv30:service:a', appVersion: 1, appName: 'Canal A', backgroundColor: '#000000',
+    foregroundColor: '#ffffff', appIcon: SVG_EM_LINHA, bannerIcon: SVG_EM_LINHA, fallbackMediaURLs: ['http://x.example/a.mpd'],
+};
+const REGISTRO = { bsid: 10, serviceId: 1001, majorChannelNo: 10, minorChannelNo: 1, mainAvOverTheAir: true, receptionQuality: 80, bam: BAM };
 const ORIGEM = 'http://users-test.apps.localhost:8080';
 const RD_HANDLE = '2b7f6c1e-4d3a-4f8b-9c2d-1e0f3a4b5c6d';
 const RD = {
@@ -124,6 +130,24 @@ function violacoes(regra, emJson = false) {
     const out = [];
     const t = regra.type;
     if (emJson) {
+        if (t === 'boolean') {
+            out.push(['true', 'true or false in the JSON', 'booleano em texto JSON']);
+            out.push([1, 'true or false in the JSON', 'numero no lugar de booleano']);
+            return out;
+        }
+        if (t === 'json' || t === 'jsonList') {
+            const tipo = t === 'json' ? 'JSON object' : 'JSON list';
+            out.push(['texto', tipo, 'texto no lugar de JSON aninhado']);
+            // The violations of the text form, as nested values; those that
+            // are not JSON are covered by the case above.
+            for (const [v, m, d] of violacoes(regra)) {
+                let aninhado;
+                try { aninhado = JSON.parse(v); } catch { continue; }
+                if (typeof aninhado !== 'object' || aninhado === null) continue;
+                out.push([aninhado, m, `aninhado: ${d}`]);
+            }
+            return out;
+        }
         if (t === 'integer') {
             out.push(['12', 'integer number in the JSON', 'inteiro em texto JSON']);
             out.push([1.5, 'integer number in the JSON', 'fracionario']);
@@ -224,7 +248,7 @@ function violacoes(regra, emJson = false) {
                     out.push([JSON.stringify(o), `member "${nome}" required`, `sem ${nome}`]);
                 }
                 for (const [v, m, d] of violacoes(rr, true)) {
-                    out.push([JSON.stringify({ ...valido, [nome]: v }), [`member "${nome}": `, m], `${nome}: ${d}`]);
+                    out.push([JSON.stringify({ ...valido, [nome]: v }), [`member "${nome}": `, ...[].concat(m)], `${nome}: ${d}`]);
                 }
             }
             if (regra.otherFields === false) out.push([JSON.stringify({ ...valido, inventado: 1 }), 'member "inventado" not in the schema', 'member extra']);
@@ -237,7 +261,8 @@ function violacoes(regra, emJson = false) {
             out.push(['"texto"', 'JSON list', 'string JSON']);
             out.push(['', 'JSON list', 'empty']);
             for (const [v, m, d] of violacoes(resolve(regra.items), true)) {
-                out.push([JSON.stringify(['ok', v]), ['item 1: ', m], `item: ${d}`]);
+                const primeiro = resolve(regra.items).type === 'integer' ? 0 : 'ok';
+                out.push([JSON.stringify([primeiro, v]), ['item 1: ', ...[].concat(m)], `item: ${d}`]);
             }
             break;
         default:
@@ -284,14 +309,24 @@ function aceitacoes(regra) {
             'a'.repeat(regra.maxName) + '.' + regra.extensions[0], 'Avatar_1-x.webp', 'a.png.svg', 'a..b.svg', 'a-.jpeg', 'a_.svg', 'a.b.c.png',
         ];
         case 'origin': return ['http://users-test.apps.localhost:8080', 'http://a.apps.localhost', 'https://x.example', 'https://x.example:8443', 'http://[::1]:8099', 'http://127.0.0.1:65535'];
-        case 'json': return ['HS256', 'HS512', 'RS256', 'RS512'].map(alg => JSON.stringify({ ...jsonValido(regra), alg }));
+        case 'json':
+            if (regra.fields.bam) {
+                return [JSON.stringify(REGISTRO), JSON.stringify({ ...REGISTRO, mainAvOverTheAir: false, groupingType: 'mandatoryGrouping' })];
+            }
+            return ['HS256', 'HS512', 'RS256', 'RS512'].map(alg => JSON.stringify({ ...jsonValido(regra), alg }));
         case 'jsonList': return ['[]', '["light"]', '["light","wind"]', '[""]'];
         default: throw new Error(`tipo de regra sem gerador de aceitacoes neste teste: ${regra.type}`);
     }
 }
 
 function jsonValido(regra) {
-    assert.ok(regra.fields.alg && regra.fields.key && regra.fields.registeredAt, 'o gerador de JSON so conhece a entrada de bind-context');
+    if (regra.fields.bam) {
+        return { ...REGISTRO };
+    }
+    if (regra.fields.appName) {
+        return { ...BAM };
+    }
+    assert.ok(regra.fields.alg && regra.fields.key && regra.fields.registeredAt, 'o gerador de JSON so conhece bind-context, services:announced e o BAM');
     return { ...ENTRADA };
 }
 
@@ -336,7 +371,10 @@ const SLOTS = {
         { rotulo: 'nome de campo', regra: f => f.otherFields.name, chamada: v => ['tv30_origin_register', [v, 'urn:tv30:service:users-test']], trecho: 'field name:' },
         { rotulo: 'valor', regra: f => f.otherFields.value, chamada: v => ['tv30_origin_register', [ORIGEM, v]], trecho: 'field "' },
     ],
-    'services:announced': [{ rotulo: 'member', regra: f => f.members, chamada: v => ['tv30_announced_services', ['urn:tv30:service:ok', v]], trecho: 'services:announced member' }],
+    'services:announced': [
+        { rotulo: 'nome de campo', regra: f => f.otherFields.name, chamada: v => ['tv30_announced_services', [v, JSON.stringify(REGISTRO)]], trecho: 'field name:' },
+        { rotulo: 'registro', regra: f => f.otherFields.value, chamada: v => ['tv30_announced_services', ['urn:tv30:service:a', v]], trecho: 'field "' },
+    ],
     'v100.0:remote-device:{handle}': [
         { rotulo: '{handle}', regra: f => f.parts.handle, chamada: v => ['tv30_v100_remote_device_write', [v, ...plano(RD)]], trecho: '{handle} of the key:' },
         ...campoSlots(campo => v => ['tv30_v100_remote_device_write', [RD_HANDLE, ...plano({ ...RD, [campo]: v })]]),
@@ -754,19 +792,26 @@ test('origens: registra, remove, limpa', async () => {
     assert.equal(await fcall('tv30_origin_remove', ORIGEM), 0);
 });
 
-test('servicos anunciados: o conjunto regravado inteiro; repetido conta uma vez; sem argumento, apaga', async () => {
-    assert.equal(await fcall('tv30_announced_services', 'urn:tv30:service:a', 'urn:tv30:service:b', 'urn:tv30:service:a'), 2);
-    assert.deepEqual((await r('SMEMBERS', 'services:announced')).sort(), ['urn:tv30:service:a', 'urn:tv30:service:b']);
-    // What left the BAMT leaves the set.
-    assert.equal(await fcall('tv30_announced_services', 'urn:tv30:service:b', 'urn:tv30:service:c'), 2);
-    assert.deepEqual((await r('SMEMBERS', 'services:announced')).sort(), ['urn:tv30:service:b', 'urn:tv30:service:c']);
+test('servicos anunciados: o hash regravado inteiro; sem argumento, apaga; o conjunto de versao anterior e substituido', async () => {
+    const reg = (gsid) => JSON.stringify({ ...REGISTRO, bam: { ...BAM, globalServiceId: gsid } });
+    const A = 'urn:tv30:service:a', B = 'urn:tv30:service:b', C = 'urn:tv30:service:c';
+    assert.equal(await fcall('tv30_announced_services', A, reg(A), B, reg(B)), 2);
+    assert.deepEqual((await r('HKEYS', 'services:announced')).sort(), [A, B]);
+    assert.deepEqual(JSON.parse(await r('HGET', 'services:announced', A)), JSON.parse(reg(A)));
+    // What left the catalog leaves the hash.
+    assert.equal(await fcall('tv30_announced_services', B, reg(B), C, reg(C)), 2);
+    assert.deepEqual((await r('HKEYS', 'services:announced')).sort(), [B, C]);
     assert.deepEqual(await auditoria(), []);
     assert.equal(await fcall('tv30_announced_services'), 0);
     assert.equal(await r('EXISTS', 'services:announced'), 0);
     assert.equal(await fcall('tv30_announced_services'), 0);
-    // More services than one SADD batch.
-    const muitos = Array.from({ length: 1000 }, (_, i) => `urn:tv30:service:s${i}`);
-    assert.equal(await fcall('tv30_announced_services', ...muitos), 1000);
+    // The set of the previous schema version gives way to the hash.
+    await r('SADD', 'services:announced', A);
+    assert.equal(await fcall('tv30_announced_services', A, reg(A)), 1);
+    assert.equal(await r('TYPE', 'services:announced'), 'hash');
+    // More services than one HSET batch.
+    const muitos = Array.from({ length: 300 }, (_, i) => `urn:tv30:service:s${i}`).flatMap(g => [g, reg(g)]);
+    assert.equal(await fcall('tv30_announced_services', ...muitos), 300);
     assert.deepEqual(await auditoria(), []);
 });
 
@@ -824,13 +869,11 @@ test('atomicidade: tipo errado numa chave posterior ou member invalido no fim na
     await recusa('bind remove em STRING', 'tv30_bind_remove', ['urn:a', 'x'], ['in Redis is string']);
     // Announced services: the previous set intact.
     await limpo();
-    await fcall('tv30_announced_services', 'urn:antes');
-    await recusa('ultimo servico vazio', 'tv30_announced_services', ['urn:a', 'urn:b', ''], ['services:announced member "": empty']);
-    await recusa('servico longo demais', 'tv30_announced_services', ['urn:a', 'x'.repeat(257)], ['maximum 256']);
-    await limpo();
-    await r('SET', 'services:announced', 'x');
-    await recusa('services:announced STRING', 'tv30_announced_services', ['urn:a'], ['services:announced in Redis is string, the schema asks for set']);
-    await recusa('services:announced STRING, sem argumento', 'tv30_announced_services', [], ['in Redis is string']);
+    await fcall('tv30_announced_services', 'urn:antes', JSON.stringify(REGISTRO));
+    await recusa('registro sem par', 'tv30_announced_services', ['urn:a', JSON.stringify(REGISTRO), 'urn:b'], ['usage:']);
+    await recusa('servico repetido', 'tv30_announced_services', ['urn:a', JSON.stringify(REGISTRO), 'urn:a', JSON.stringify(REGISTRO)], ['repeated']);
+    await recusa('servico longo demais', 'tv30_announced_services', ['x'.repeat(257), JSON.stringify(REGISTRO)], ['maximum 256']);
+    assert.deepEqual(await r('HKEYS', 'services:announced'), ['urn:antes'], 'a recusa deixa o catalogo anterior');
 });
 
 // ----------------------------------------------------------------- audit --
@@ -846,7 +889,7 @@ test('auditoria: cada tipo de problema gravado a mao aparece com chave, familia 
     await fcall('tv30_client_block', 'c2');
     await fcall('tv30_origin_register', ORIGEM, 'urn:s');
     await fcall('tv30_bind_register', 'urn:s', JSON.stringify(ENTRADA));
-    await fcall('tv30_announced_services', 'urn:s', 'urn:t');
+    await fcall('tv30_announced_services', 'urn:s', JSON.stringify(REGISTRO));
     assert.deepEqual(await auditoria(), [], 'todas as familias validas');
     const valido = await snapshot();
 
@@ -868,8 +911,8 @@ test('auditoria: cada tipo de problema gravado a mao aparece com chave, familia 
         [['HSET', 'client:c1', 'class', 'admin'], ['client:c1', 'client:{id}', 'field class:']],
         [['HSET', 'origins:associated', 'http://X.example', 'urn:s'], ['origins:associated', 'origins:associated', 'field name: host must be in lowercase']],
         [['RPUSH', 'bind-context:urn:s', '{"alg":"none","key":"k","registeredAt":1}'], ['bind-context:urn:s', 'bind-context:{serviceId}', 'item 1: member "alg"']],
-        [['SADD', 'services:announced', ''], ['services:announced', 'services:announced', 'member "": empty']],
-        [['SET', 'services:announced', 'x'], ['services:announced', 'services:announced', 'in Redis is string, the schema asks for set']],
+        [['HSET', 'services:announced', 'urn:s', '{"bsid":10}'], ['services:announced', 'services:announced', 'member "bam" required']],
+        [['SET', 'services:announced', 'x'], ['services:announced', 'services:announced', 'in Redis is string, the schema asks for hash']],
         [['HSET', 'services:outra', 'a', '1'], ['services:outra', '-', 'key without family']],
         [['SET', 'users:index', 'x'], ['users:index', 'users:index', 'in Redis is string, the schema asks for set']],
         [['SADD', 'users:index', FANTASMA, ORFAO, SEM_HASH, 'f0f0f0f0-0000-4000-8000-000000000004', 'f0f0f0f0-0000-4000-8000-000000000005'], ['users:index', 'users:index', '6 members, above the limit of 5']],

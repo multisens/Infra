@@ -132,7 +132,8 @@ func TestContractFunctions(t *testing.T) {
 
 	// 304 on services:announced written by its function.
 	const fora = "urn:tv30:test:contrato-go-fora"
-	must("tv30_announced_services", sid, "urn:tv30:test:contrato-go-outro")
+	must("tv30_announced_services", sid, catalogRecord(sid), "urn:tv30:test:contrato-go-outro",
+		catalogRecord("urn:tv30:test:contrato-go-outro"))
 	defer s.c.fcall(true, "tv30_announced_services")
 	if in, err := s.ServiceInCatalog(sid); err != nil || !in {
 		t.Fatalf("servico anunciado: %v %v", in, err)
@@ -146,4 +147,12 @@ func TestContractFunctions(t *testing.T) {
 		t.Fatalf("servico do catalogo segue para o bind-token: %d %q", v.Code, v.Detail)
 	}
 	t.Logf("contrato: entrada da borda aceita, %d entradas invalidas recusadas, API C.6.8 completa sobre as funcoes, 304 sobre services:announced", 5)
+}
+
+// A valid record of services:announced for the service gsid.
+func catalogRecord(gsid string) string {
+	const svg = `<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>`
+	return `{"bsid":10,"serviceId":1001,"mainAvOverTheAir":true,"receptionQuality":80,"bam":{` +
+		`"globalServiceId":"` + gsid + `","appVersion":1,"appName":"A","backgroundColor":"#000000",` +
+		`"foregroundColor":"#ffffff","appIcon":"` + svg + `","bannerIcon":"` + svg + `"}}`
 }

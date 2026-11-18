@@ -231,32 +231,45 @@ test('AoP: perfil padrao na base sem perfil cumpre o esquema; o unico perfil nao
     assert.equal(await r('SISMEMBER', 'users:index', p.id), 1);
 });
 
-test('AoP: aop-transport-layer-metadata-lls de verdade — BAMT -> services:announced pela funcao, o mesmo em aop/services; retirada; recusa', async () => {
+test('AoP: aop-application-catalog de verdade — marco de varredura -> services:announced pela funcao, a lista em aop/services; conjunto da versao anterior substituido; recusa', async () => {
     const lls = require(path.join(AOP, 'src', 'modules', 'transport-layer-metadata-lls'));
-    await r('SADD', 'services:announced', 'urn:tv30:service:da-partida-anterior');
+    const catalog = require(path.join(AOP, 'src', 'modules', 'application-catalog', 'catalog'));
+    // The set of the previous schema version.
+    await r('SADD', 'services:announced', 'urn:tv30:service:da-versao-anterior');
     const publicados = [];
-    await lls.start((t, m) => publicados.push([t, m]));
-    assert.equal(await r('EXISTS', 'services:announced'), 0, 'a partida tira a lista anterior');
-    const bam = (g, n) => ({ globalServiceId: g, appVersion: 1, appName: n, appIcon: '<svg/>', bannerIcon: '<svg/>', backgroundColor: '#000000', foregroundColor: '#ffffff' });
+    catalog.start((t, m) => publicados.push([t, m]));
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"/>';
     const W = 'urn:tv30:service:webmedia', U = 'urn:tv30:service:uff', X = 'Ação Ü!';
-    await lls.receive(JSON.stringify({ BAM: [bam(W, 'WebMedia'), bam(U, 'UFF')] }), 'tlm/lls/bs1/bamt');
-    await lls.receive(JSON.stringify({ BAM: [bam(U, 'UFF'), bam(X, 'X')] }), 'tlm/lls/bs2/bamt');
-    assert.deepEqual((await r('SMEMBERS', 'services:announced')).sort(), [W, U, X].sort());
+    const svc = (serviceId, g, minor, main = true) => ({ serviceId, globalServiceId: g, serviceCategory: 30, majorChannelNo: 10,
+        minorChannelNo: minor, mainAvOverTheAir: main, receptionQuality: 80 });
+    const bam = (g, n) => ({ globalServiceId: g, appVersion: 1, appName: n, appIcon: svg, bannerIcon: svg, backgroundColor: '#000000', foregroundColor: '#ffffff' });
+    const marco = (...rf) => JSON.stringify({ completedAt: '2026-01-01T00:00:00Z', rfChannels: rf });
+    lls.receive(JSON.stringify({ bsid: [10], bandwidth: 6, Service: [svc(1, W, 1), svc(2, U, 2), svc(3, X, 3, false)] }), 'tlm/lls/10/slt');
+    lls.receive(JSON.stringify({ groupingType: 'noGrouping', BAM: [bam(W, 'WebMedia'), bam(U, 'UFF'), bam(X, 'X')] }), 'tlm/lls/10/bamt');
+    await catalog.receiveScan(marco(10));
+    assert.equal(await r('TYPE', 'services:announced'), 'hash');
+    assert.deepEqual((await r('HKEYS', 'services:announced')).sort(), [W, U, X].sort());
     assert.deepEqual(publicados.at(-1), ['aop/services', JSON.stringify([W, U, X].map(serviceContextId => ({ serviceContextId })))]);
-    assert.deepEqual((await lls.services()).map(s => s.serviceContextId), [W, U, X]);
+    assert.equal((await catalog.service(U)).serviceId, 2);
+    assert.deepEqual((await catalog.items()).map(i => i.gsid), [W, U, X]);
     assert.deepEqual(await auditoria(), []);
-    await lls.receive('', 'tlm/lls/bs1/bamt');
-    assert.deepEqual((await r('SMEMBERS', 'services:announced')).sort(), [U, X].sort());
-    // A globalServiceId above the idServico of the schema: the function
-    // refuses it and the previous set stays.
+    // Withdrawn from the detected channel: leaves.
+    lls.receive(JSON.stringify({ bsid: [10], bandwidth: 6, Service: [svc(2, U, 2), svc(3, X, 3, false)] }), 'tlm/lls/10/slt');
+    await catalog.receiveScan(marco(10));
+    assert.deepEqual((await r('HKEYS', 'services:announced')).sort(), [U, X].sort());
+    // A BAM outside the schema of the record: the function refuses it and
+    // the previous catalog stays.
     const errorOrig = console.error;
     console.error = () => undefined;
     try {
-        await lls.receive(JSON.stringify({ BAM: [bam('x'.repeat(257), 'Longo')] }), 'tlm/lls/bs3/bamt');
+        lls.receive(JSON.stringify({ BAM: [bam(U, 'x'.repeat(21)), bam(X, 'X')] }), 'tlm/lls/10/bamt');
+        await catalog.receiveScan(marco(10));
     } finally { console.error = errorOrig; }
-    assert.deepEqual((await r('SMEMBERS', 'services:announced')).sort(), [U, X].sort());
-    assert.deepEqual(publicados.at(-1), ['aop/services', JSON.stringify([U, X].map(serviceContextId => ({ serviceContextId })))]);
-    await lls.receive('', 'tlm/lls/bs3/bamt');
+    assert.deepEqual((await r('HKEYS', 'services:announced')).sort(), [U, X].sort());
+    assert.equal(JSON.parse(await r('HGET', 'services:announced', U)).bam.appName, 'UFF');
+    lls.receive('', 'tlm/lls/10/slt');
+    lls.receive('', 'tlm/lls/10/bamt');
+    await r('DEL', 'services:announced');
     assert.deepEqual(await auditoria(), []);
 });
 

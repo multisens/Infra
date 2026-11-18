@@ -359,7 +359,7 @@ func TestRedisComandos(t *testing.T) {
 		f.strs[keyCurrentService] = tSvc
 		f.sets[keyBlocked] = map[string]bool{"cli-bloq": true}
 		f.sets[keyAuthorized] = map[string]bool{"cli-ok": true}
-		f.sets[keyAnnounced] = map[string]bool{tSvc: true}
+		f.hashes[keyAnnounced] = map[string]string{tSvc: "{}"}
 		f.hashes[keyAssociated] = map[string]string{tAssoc: tSvc}
 		// Second element with a CRLF inside: the bulk must be read by its
 		// length.
@@ -383,16 +383,19 @@ func TestRedisComandos(t *testing.T) {
 	if b, err := s.IsAuthorized("cli-bloq"); err != nil || b {
 		t.Fatalf("SISMEMBER fora do conjunto: %v %v", b, err)
 	}
-	// SISMEMBER services:announced
+	// HEXISTS services:announced
 	if b, err := s.ServiceInCatalog(tSvc); err != nil || !b {
-		t.Fatalf("SISMEMBER servico anunciado: %v %v", b, err)
+		t.Fatalf("HEXISTS servico anunciado: %v %v", b, err)
 	}
 	if b, err := s.ServiceInCatalog(tSCID); err != nil || b {
-		t.Fatalf("SISMEMBER servico fora do catalogo: %v %v", b, err)
+		t.Fatalf("HEXISTS servico fora do catalogo: %v %v", b, err)
 	}
 	f.with(func() {
-		if f.cmds["SISMEMBER"] != 6 {
-			t.Errorf("SISMEMBER enviado %d vezes, esperado 6", f.cmds["SISMEMBER"])
+		if f.cmds["SISMEMBER"] != 4 {
+			t.Errorf("SISMEMBER enviado %d vezes, esperado 4", f.cmds["SISMEMBER"])
+		}
+		if f.cmds["HEXISTS"] != 2 {
+			t.Errorf("HEXISTS enviado %d vezes, esperado 2", f.cmds["HEXISTS"])
 		}
 	})
 	// The value of the origin is the service that launched the application.
