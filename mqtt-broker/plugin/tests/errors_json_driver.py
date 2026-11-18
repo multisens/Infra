@@ -113,12 +113,15 @@ while not inbox.empty():
     inbox.get()
 
 FFFD = '\ufffd'
-BAMT_BAD = ('[{"globalServiceId":"g","appVersion":1,"appName":"n","appIcon":"i","bannerIcon":"b",'
-            '"backgroundColor":"x\\"y\\\\z\\n","foregroundColor":"#000000"}]').encode()
-BAMT_DETAILS = ("Item at index 0: Property 'backgroundColor': String 'x\"y\\z\n' "
+SVG = '<svg viewBox=\\"0 0 1 1\\"/>'
+BAMT_BAD = ('{"BAM":[{"globalServiceId":"urn:tv30:service:g","appVersion":1,"appName":"n",'
+            '"appIcon":"' + SVG + '","bannerIcon":"' + SVG + '",'
+            '"backgroundColor":"x\\"y\\\\z\\n","foregroundColor":"#000000"}]}').encode()
+BAMT_DETAILS = ("Property 'BAM': Item at index 0: Property 'backgroundColor': String 'x\"y\\z\n' "
                 "does not match pattern '^#[0-9A-Fa-f]{6}$'")
-BAMT_OK = ('[{"globalServiceId":"g","appVersion":1,"appName":"n","appIcon":"i","bannerIcon":"b",'
-           '"backgroundColor":"#000000","foregroundColor":"#ffffff"}]').encode()
+BAMT_OK = ('{"BAM":[{"globalServiceId":"urn:tv30:service:g","appVersion":1,"appName":"n",'
+           '"appIcon":"' + SVG + '","bannerIcon":"' + SVG + '",'
+           '"backgroundColor":"#000000","foregroundColor":"#ffffff"}]}').encode()
 
 # (name, topic, client_id, payload, expected). expected: dict with the fields
 # to check in the error message, or None for an accepted publication.
@@ -139,8 +142,8 @@ CASES = [
     ('UTF-8 valido no payload', 'sensor/room1/temperature', 'tv30-t-utf8',
      'a\u00e7\u00e3o \u20ac \U0001F600 "x"'.encode(),
      dict(error_type='INVALID_JSON', payload='a\u00e7\u00e3o \u20ac \U0001F600 "x"')),
-    ('aspas e barra no topico', 'tlm/sls/x"y\\z/esg', 'tv30-t-topico',
-     b'nao e json "q"', dict(error_type='INVALID_JSON', topic='tlm/sls/x"y\\z/esg', payload='nao e json "q"')),
+    ('aspas e barra no topico', 'tlm/sls/x"y\\z/bald', 'tv30-t-topico',
+     b'nao e json "q"', dict(error_type='INVALID_JSON', topic='tlm/sls/x"y\\z/bald', payload='nao e json "q"')),
     ('aspas e barra no client_id', 'sensor/room1/temperature', 'cli"q\\b',
      b'nope', dict(error_type='INVALID_JSON', client_id='cli"q\\b', payload='nope')),
     ('texto puro com aspas fora do maxLength', 'aop/currentUser', 'tv30-t-texto',
@@ -158,7 +161,7 @@ CASES = [
      b'\x01' * 1000, dict(error_type='INVALID_JSON', cut_unit='\x01')),
     ('800 emojis (4 bytes cada)', 'sensor/room1/temperature', 'tv30-t-emoji',
      '\U0001F600'.encode() * 800, dict(error_type='INVALID_JSON', cut_unit='\U0001F600')),
-    ('topico de 612 bytes', 'tlm/sls/' + 'x' * 600 + '/esg', 'tv30-t-topicolongo',
+    ('topico de 613 bytes', 'tlm/sls/' + 'x' * 600 + '/bald', 'tv30-t-topicolongo',
      b'nope', dict(error_type='INVALID_JSON', payload='nope', topic_cut=True)),
     ('client_id de 300 bytes', 'sensor/room1/temperature', 'c' * 300,
      b'nope', dict(error_type='INVALID_JSON', payload='nope', client_cut=True)),

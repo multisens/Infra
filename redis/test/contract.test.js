@@ -239,8 +239,8 @@ test('AoP: aop-transport-layer-metadata-lls de verdade — BAMT -> services:anno
     assert.equal(await r('EXISTS', 'services:announced'), 0, 'a partida tira a lista anterior');
     const bam = (g, n) => ({ globalServiceId: g, appVersion: 1, appName: n, appIcon: '<svg/>', bannerIcon: '<svg/>', backgroundColor: '#000000', foregroundColor: '#ffffff' });
     const W = 'urn:tv30:service:webmedia', U = 'urn:tv30:service:uff', X = 'Ação Ü!';
-    await lls.receive(JSON.stringify([bam(W, 'WebMedia'), bam(U, 'UFF')]), 'tlm/lls/bs1/bamt');
-    await lls.receive(JSON.stringify([bam(U, 'UFF'), bam(X, 'X')]), 'tlm/lls/bs2/bamt');
+    await lls.receive(JSON.stringify({ BAM: [bam(W, 'WebMedia'), bam(U, 'UFF')] }), 'tlm/lls/bs1/bamt');
+    await lls.receive(JSON.stringify({ BAM: [bam(U, 'UFF'), bam(X, 'X')] }), 'tlm/lls/bs2/bamt');
     assert.deepEqual((await r('SMEMBERS', 'services:announced')).sort(), [W, U, X].sort());
     assert.deepEqual(publicados.at(-1), ['aop/services', JSON.stringify([W, U, X].map(serviceContextId => ({ serviceContextId })))]);
     assert.deepEqual((await lls.services()).map(s => s.serviceContextId), [W, U, X]);
@@ -252,7 +252,7 @@ test('AoP: aop-transport-layer-metadata-lls de verdade — BAMT -> services:anno
     const errorOrig = console.error;
     console.error = () => undefined;
     try {
-        await lls.receive(JSON.stringify([bam('x'.repeat(257), 'Longo')]), 'tlm/lls/bs3/bamt');
+        await lls.receive(JSON.stringify({ BAM: [bam('x'.repeat(257), 'Longo')] }), 'tlm/lls/bs3/bamt');
     } finally { console.error = errorOrig; }
     assert.deepEqual((await r('SMEMBERS', 'services:announced')).sort(), [U, X].sort());
     assert.deepEqual(publicados.at(-1), ['aop/services', JSON.stringify([U, X].map(serviceContextId => ({ serviceContextId })))]);
