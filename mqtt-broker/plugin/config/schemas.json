@@ -1157,5 +1157,159 @@
     "type": "string",
     "minLength": 1,
     "description": "O clientid do cliente bloqueado pelo telespectador no menu de historico de autorizacoes (C.4.2.2), NAO retido, publicado pelo Access Panel depois de gravar o bloqueio no Redis. O tv3ws libera os recursos do cliente (C.4.4)."
+  },
+  "tlm/tuned": {
+    "description": "Tuning: the service of the Bootstrap Application instance launched and the instant it became the current service (implementation document, 5.2). Retained; the empty message means no service tuned. Publisher: aop-shell (aop-application-lifecycle-manager).",
+    "type": "object",
+    "properties": {
+      "serviceId": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 65535
+      },
+      "rfChannelId": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 65535
+      },
+      "tunedAt": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+      }
+    },
+    "required": [
+      "serviceId",
+      "rfChannelId",
+      "tunedAt"
+    ],
+    "additionalProperties": false
+  },
+  "tlm/object/+/available": {
+    "description": "Object event 'available' of the service {serviceId}: an enumerated object became available, or passed with a new lastModified (implementation document, 5.6). Not retained. Publisher: aop-cc (aop-transport-layer-object-proxy).",
+    "type": "object",
+    "properties": {
+      "serviceId": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 65535
+      },
+      "tsi": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 4294967295
+      },
+      "contentLocation": {
+        "type": "string",
+        "pattern": "^[^/.[:space:]?#][^[:space:]?#]*$"
+      },
+      "url": {
+        "type": "string",
+        "pattern": "^[A-Za-z][A-Za-z0-9+.-]*://[^[:space:]]+$"
+      },
+      "contentType": {
+        "type": "string",
+        "minLength": 1
+      },
+      "lastModified": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+      },
+      "expires": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+      },
+      "appContextIdList": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "filterCodes": {
+        "type": "array",
+        "items": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "at": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+      }
+    },
+    "required": [
+      "serviceId",
+      "tsi",
+      "contentLocation",
+      "url",
+      "contentType",
+      "lastModified",
+      "at"
+    ],
+    "additionalProperties": false
+  },
+  "tlm/object/+/expired": {
+    "description": "Object event 'expired' of the service {serviceId}: an enumerated object stopped being available (implementation document, 5.6). Not retained. Publisher: aop-cc (aop-transport-layer-object-proxy).",
+    "type": "object",
+    "properties": {
+      "serviceId": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 65535
+      },
+      "tsi": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 4294967295
+      },
+      "contentLocation": {
+        "type": "string",
+        "pattern": "^[^/.[:space:]?#][^[:space:]?#]*$"
+      },
+      "url": {
+        "type": "string",
+        "pattern": "^[A-Za-z][A-Za-z0-9+.-]*://[^[:space:]]+$"
+      },
+      "contentType": {
+        "type": "string",
+        "minLength": 1
+      },
+      "lastModified": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+      },
+      "expires": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+      },
+      "appContextIdList": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "filterCodes": {
+        "type": "array",
+        "items": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "at": {
+        "type": "string",
+        "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+      }
+    },
+    "required": [
+      "serviceId",
+      "tsi",
+      "contentLocation",
+      "url",
+      "contentType",
+      "lastModified",
+      "at"
+    ],
+    "additionalProperties": false
   }
 }
