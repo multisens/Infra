@@ -30,6 +30,13 @@ test('plugin da borda (Go): nenhum comando de escrita alem de FCALL', (t) => {
     t.diagnostic(`${r.files} arquivo(s) .go (sem os _test.go)`);
 });
 
+test('aop-cc (Go): nenhum comando de escrita alem de FCALL no adaptador', (t) => {
+    const r = checkGo(path.join(TV30, 'aop-cc', 'internal', 'storage'));
+    assert.deepEqual(r.violations, [], r.violations.join('\n'));
+    assert.ok(r.files > 0);
+    t.diagnostic(`${r.files} arquivo(s) .go (sem os _test.go)`);
+});
+
 test('carga inicial e migracao manual (Python): so FCALL tv30_profile_write', (t) => {
     const files = [path.join(INFRA, 'redis', 'emit_seed.py'), path.join(INFRA, 'mqtt-broker', 'infra', 'migrate_to_redis.py')];
     const r = checkPy(files);
@@ -46,6 +53,8 @@ test('funcoes chamadas pelos adaptadores existem e cobrem as familias de cada do
     for (const cfg of Object.values(MODULES)) checkJsModule(cfg).adapterFunctions.forEach(f => used.add(f));
     const go = fs.readFileSync(path.join(INFRA, 'edgegateway', 'plugin', 'redis.go'), 'utf8');
     for (const m of go.matchAll(/"(tv30_[a-z0-9_]+)"/g)) used.add(m[1]);
+    const cc = fs.readFileSync(path.join(TV30, 'aop-cc', 'internal', 'storage', 'storage.go'), 'utf8');
+    for (const m of cc.matchAll(/"(tv30_[a-z0-9_]+)"/g)) used.add(m[1]);
     // Initial load (test above).
     used.add('tv30_profile_write');
     for (const f of used) assert.ok(declared.has(f), `${f} declarada no schema.json`);

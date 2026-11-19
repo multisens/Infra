@@ -667,6 +667,23 @@ OP.tv30_session_service = function(args)
   return 1
 end
 
+-- The running broadcaster application.
+
+OP.tv30_current_app = function(args)
+  local fam = family('session:current-app')
+  local h = fieldPairs(args, 1, 'tv30_current_app [<field> <value> ...]', true)
+  if #args == 0 then
+    ensureType(fam, fam.key)
+    redis.call('DEL', fam.key)
+    return 0
+  end
+  ensure(fam.key, hashReasons(fam, {}, h, nil))
+  ensureType(fam, fam.key)
+  redis.call('DEL', fam.key)
+  inBatches('HSET', fam.key, flatten(h))
+  return 1
+end
+
 -- Profiles.
 
 OP.tv30_profile_write = function(args)
@@ -1151,6 +1168,7 @@ local WRITE_FUNCTIONS = {
   'tv30_client_authorize',
   'tv30_client_block',
   'tv30_client_write',
+  'tv30_current_app',
   'tv30_origin_register',
   'tv30_origin_remove',
   'tv30_origins_clear',

@@ -5,7 +5,7 @@
     "Redis, the functions and this schema belong to the testbed, not to ABNT NBR 25608;",
     "the 'source' field of each rule says where it came from (section of the standard, schemas.json of the broker or code)."
   ],
-  "version": "11",
+  "version": "12",
   "library": "tv30",
   "errorPrefix": "TV30SCHEMA",
 
@@ -62,6 +62,20 @@
       },
       "otherFields": false,
       "functions": ["tv30_session_service"]
+    },
+    {
+      "family": "session:current-app",
+      "key": "session:current-app",
+      "type": "hash",
+      "owner": "aop-application-lifecycle-manager (in the process of aop-cc)",
+      "description": "The broadcaster application running in the graphics layer, rewritten whole at each launch and deleted at its end. Absent = no broadcaster application running (the Bootstrap Application, or no service).",
+      "fields": {
+        "serviceContextId": { "type": "text", "min": 1, "max": 256, "required": true, "source": "the globalServiceId of the service of the application (SLT; ABNT NBR 25608, 8.4.4, Table 6)" },
+        "appId": { "type": "text", "min": 1, "max": 256, "required": true, "source": "BALD @appId (ABNT NBR 25608, 10.1.2, Table 10)" },
+        "origin": { "type": "origin", "required": true, "source": "the origin of the application, the same as in origins:associated" }
+      },
+      "otherFields": false,
+      "functions": ["tv30_current_app"]
     },
     {
       "family": "users:index",
@@ -176,8 +190,8 @@
       "family": "origins:associated",
       "key": "origins:associated",
       "type": "hash",
-      "owner": "AoP",
-      "description": "Own origin of each launched broadcaster application -> globalServiceId of the service that launched the app. Without a current service, the AoP does not register. Cleared on the boot of the AoP.",
+      "owner": "aop-application-lifecycle-manager (in the process of aop-cc)",
+      "description": "Own origin of each launched broadcaster application -> globalServiceId of the service that launched the app. Registered before the application is announced, removed at its end, cleared on the boot of aop-cc.",
       "otherFields": {
         "name": { "type": "origin", "source": "the origin as the browser sends it in Origin (RFC 6454): http/https scheme and host in lowercase, port only if not the default" },
         "value": { "ref": "serviceId" }
@@ -292,6 +306,7 @@
     { "name": "tv30_session_user", "arguments": "<id of the current profile, or empty>", "effect": "SET session:current-user", "returns": "1", "callers": ["tv3ws (mirror of aop/currentUser; C.6.14.4)"] },
     { "name": "tv30_session_service_id", "arguments": "<id of the current service, or empty>", "effect": "SET session:current-service-id", "returns": "1", "callers": ["tv3ws (mirror of aop/currentService)"] },
     { "name": "tv30_session_service", "arguments": "<field> <value> [<field> <value> ...]", "effect": "rewrites the whole hash session:current-service (DEL + HSET)", "returns": "1", "callers": ["tv3ws (core.ts, change of service)"] },
+    { "name": "tv30_current_app", "arguments": "[<field> <value> ...] (none = no application running)", "effect": "rewrites the whole hash session:current-app (DEL + HSET); without arguments, only the DEL", "returns": "1 if written, 0 if only deleted", "callers": ["aop-cc (aop-application-lifecycle-manager: launch and end of a broadcaster application)"] },
     { "name": "tv30_profile_write", "arguments": "<id> <n> <service 1> ... <service n> <field> <value> [...]", "effect": "SADD users:index; rewrites user:{id} (DEL + HSET); adds the n services to user:{id}:consent. An id outside users:index with the set at the limit (maxMembers) is refused", "returns": "1", "callers": ["AoP (profile creation and default profile)", "initial load (emit_seed.py)", "migrate_to_redis.py (manual debugging)"] },
     { "name": "tv30_profile_last_access", "arguments": "<id> <instant in ms>", "effect": "HSET user:{id} lastAccess, only if the id is in users:index", "returns": "1 if written, 0 if the profile does not exist", "callers": ["AoP (change of current user)"] },
     { "name": "tv30_profile_remove", "arguments": "<id>", "effect": "SREM users:index; DEL user:{id}, user:{id}:consent and every user:{id}:broadcaster-attrs:*", "returns": "number of keys and members removed", "callers": ["AoP (profile removal by the viewer, in the profile manager)"] },
@@ -300,9 +315,9 @@
     { "name": "tv30_client_authorize", "arguments": "<id> <field> <value> [...]", "effect": "HSET client:{id}; SREM clients:blocked; SADD clients:authorized", "returns": "1", "callers": ["tv3ws (C.6.1.2, pop-up accepted for a local client)", "tv3ws (C.6.1.3, challenge of a non-local client checked)"] },
     { "name": "tv30_client_block", "arguments": "<id>", "effect": "SREM clients:authorized; SADD clients:blocked", "returns": "1", "callers": ["tv3ws (C.6.1.2, pop-up refused)"] },
     { "name": "tv30_client_add_authorized", "arguments": "<id>", "effect": "SADD clients:authorized, if the id is not in clients:blocked", "returns": "1 if added, 0 otherwise", "callers": ["tv3ws (boot: clients older than the set)"] },
-    { "name": "tv30_origin_register", "arguments": "<origin> <service id>", "effect": "HSET origins:associated", "returns": "1", "callers": ["AoP (launch of an application)"] },
-    { "name": "tv30_origin_remove", "arguments": "<origin>", "effect": "HDEL origins:associated", "returns": "1 if removed, 0 if absent", "callers": ["AoP (end or change of application)"] },
-    { "name": "tv30_origins_clear", "arguments": "(none)", "effect": "DEL origins:associated", "returns": "1 if present, 0 otherwise", "callers": ["AoP (boot)"] },
+    { "name": "tv30_origin_register", "arguments": "<origin> <service id>", "effect": "HSET origins:associated", "returns": "1", "callers": ["aop-cc (aop-application-lifecycle-manager: launch of an application)"] },
+    { "name": "tv30_origin_remove", "arguments": "<origin>", "effect": "HDEL origins:associated", "returns": "1 if removed, 0 if absent", "callers": ["aop-cc (aop-application-lifecycle-manager: end or change of application)"] },
+    { "name": "tv30_origins_clear", "arguments": "(none)", "effect": "DEL origins:associated", "returns": "1 if present, 0 otherwise", "callers": ["aop-cc (aop-application-lifecycle-manager: boot)"] },
     { "name": "tv30_announced_services", "arguments": "[<service id> <JSON record> ...] (none = empty catalog)", "effect": "rewrites the whole hash services:announced (DEL + HSET), whatever the type it had; without arguments, only the DEL", "returns": "number of services in the hash", "callers": ["AoP (aop-application-catalog: scan marker)"] },
     { "name": "tv30_bind_register", "arguments": "<service id> <JSON entry>", "effect": "RPUSH bind-context:{serviceId}", "returns": "length of the list", "callers": ["edge (C.6.8.2)"] },
     { "name": "tv30_bind_remove", "arguments": "<service id> <exact JSON entry>", "effect": "LREM bind-context:{serviceId} 0", "returns": "number of entries removed", "callers": ["edge (C.6.8.4)"] },

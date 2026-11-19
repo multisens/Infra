@@ -74,6 +74,7 @@ const BAM = {
 };
 const REGISTRO = { bsid: 10, serviceId: 1001, majorChannelNo: 10, minorChannelNo: 1, mainAvOverTheAir: true, receptionQuality: 80, bam: BAM };
 const ORIGEM = 'http://users-test.apps.localhost:8080';
+const APP = { serviceContextId: 'urn:tv30:service:users-test', appId: 'urn:tv30:app:1', origin: 'http://ctx-0123456789abcdef.apps.localhost:8081' };
 const RD_HANDLE = '2b7f6c1e-4d3a-4f8b-9c2d-1e0f3a4b5c6d';
 const RD = {
     deviceId: '7c1d2e3f-4a5b-4c6d-8e7f-0a1b2c3d4e5f', deviceClass: 'sensory-effect', supportedTypes: '["light","wind"]',
@@ -339,6 +340,7 @@ const SLOTS = {
     'session:current-user': [{ rotulo: 'valor', regra: f => f.value, chamada: v => ['tv30_session_user', [v]], trecho: 'value:' }],
     'session:current-service-id': [{ rotulo: 'valor', regra: f => f.value, chamada: v => ['tv30_session_service_id', [v]], trecho: 'value:' }],
     'session:current-service': campoSlots(campo => v => ['tv30_session_service', plano({ ...SVC, [campo]: v })]),
+    'session:current-app': campoSlots(campo => v => ['tv30_current_app', plano({ ...APP, [campo]: v })]),
     'users:index': [{ rotulo: 'member', regra: f => f.members, chamada: v => ['tv30_profile_write', perfilArgs(v, [], { ...PERFIL, id: v })], trecho: '{id} of the key:' }],
     'user:{id}': [
         { rotulo: '{id}', regra: f => f.parts.id, chamada: v => ['tv30_profile_write', perfilArgs(v, [], { ...PERFIL, id: v })], trecho: '{id} of the key:' },
@@ -466,6 +468,7 @@ for (const fam of ESQ.families) {
         if (fam.fields) {
             const [base, chamar] = {
                 'session:current-service': [SVC, h => ['tv30_session_service', plano(h)]],
+                'session:current-app': [APP, h => ['tv30_current_app', plano(h)]],
                 'user:{id}': [PERFIL, h => ['tv30_profile_write', perfilArgs(P1, [], h)]],
                 'client:{id}': [CLIENTE, h => ['tv30_client_write', ['c1', ...plano(h)]]],
                 'v100.0:remote-device:{handle}': [RD, h => ['tv30_v100_remote_device_write', [RD_HANDLE, ...plano(h)]]],
@@ -523,6 +526,20 @@ test('broadcaster-attrs: atributos basicos proibidos e limit of 20 MB no resulta
 });
 
 // ---------------------------------------------------- effects (acceptance) --
+test('aplicacao corrente: hash regravado inteiro; sem argumentos, so o DEL', async () => {
+    assert.equal(await fcall('tv30_current_app', ...plano({ ...APP, appId: 'urn:tv30:app:antes' })), 1);
+    assert.equal(await fcall('tv30_current_app', ...plano(APP)), 1);
+    const h = await r('HGETALL', 'session:current-app');
+    assert.equal(h.length, 6);
+    assert.equal(h[h.indexOf('appId') + 1], APP.appId);
+    assert.deepEqual(await auditoria(), []);
+    assert.equal(await fcall('tv30_current_app'), 0);
+    assert.equal(await r('EXISTS', 'session:current-app'), 0);
+    assert.equal(await fcall('tv30_current_app'), 0);
+    await recusa('origem invalida', 'tv30_current_app', plano({ ...APP, origin: 'http://Ctx.apps.localhost' }), ['field origin:']);
+    assert.equal(await r('EXISTS', 'session:current-app'), 0, 'a recusa nao grava');
+});
+
 test('sessao: SET dos dois espelhos (vazio vale) e o hash regravado inteiro', async () => {
     assert.equal(await fcall('tv30_session_user', P1), 1);
     assert.equal(await r('GET', 'session:current-user'), P1);
@@ -883,6 +900,7 @@ test('auditoria: cada tipo de problema gravado a mao aparece com chave, familia 
     await fcall('tv30_session_user', P1);
     await fcall('tv30_session_service_id', 'urn:s');
     await fcall('tv30_session_service', ...plano(SVC));
+    await fcall('tv30_current_app', ...plano(APP));
     await fcall('tv30_profile_write', ...perfilArgs(P1, ['urn:s'], PERFIL));
     await fcall('tv30_broadcaster_attributes', P1, 'urn:s', 'cor', 'azul');
     await fcall('tv30_client_authorize', 'c1', ...plano(CLIENTE));

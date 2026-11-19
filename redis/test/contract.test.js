@@ -45,7 +45,6 @@ const auth = require(path.join(TV3WS, 'src', 'modules', 'auth-manager', 'manager
 const aop = require(path.join(AOP, 'src', 'redis-functions.js'));
 const aopRedis = require(path.join(AOP, 'src', 'redis-client.js'));
 const profiles = require(path.join(AOP, 'src', 'modules', 'profile-manager', 'service.js'));
-const appHosts = require(path.join(AOP, 'src', 'app-hosts.js'));
 
 let r;
 const auditoria = () => r('FCALL_RO', 'tv30_audit', 0);
@@ -273,23 +272,3 @@ test('AoP: aop-application-catalog de verdade — marco de varredura -> services
     assert.deepEqual(await auditoria(), []);
 });
 
-test('AoP: origens montadas por app-hosts cumprem o esquema; registro, remocao e limpeza', async () => {
-    const cfg = appHosts.appsConfig({ APPS_DOMAIN: 'apps.localhost', AOP_PUBLIC_PORT: '8080' });
-    const cfg80 = appHosts.appsConfig({ APPS_DOMAIN: 'tv30.example', AOP_PUBLIC_PORT: '80' });
-    const origens = [];
-    for (const [id, c] of [['urn:tv30:app:k1a2b3', cfg], ['Ação Ü!', cfg], ['x'.repeat(100), cfg], ['urn:tv30:service:users-test', cfg80]]) {
-        const d = appHosts.describeApp(id, 'http://bcast:8081', c);
-        assert.ok(d && d.origin, `describeApp(${id})`);
-        await aop.originRegister(d.origin, 'urn:tv30:service:users-test');
-        origens.push(d.origin);
-    }
-    await aop.originRegister('http://uff.apps.localhost:8080', 'current-service');
-    assert.deepEqual(await auditoria(), [], `origens: ${origens.join(' ')}`);
-    await assert.rejects(aop.originRegister('http://bcast:8081/', 'urn:s'), esquema);
-    await assert.rejects(aop.originRegister('http://Uff.apps.localhost:8080', 'urn:s'), esquema);
-    await aop.originRemove(origens[0]);
-    assert.equal(await r('HEXISTS', 'origins:associated', origens[0]), 0);
-    await aop.originsClear();
-    assert.equal(await r('EXISTS', 'origins:associated'), 0);
-    assert.deepEqual(await auditoria(), []);
-});

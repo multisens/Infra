@@ -308,7 +308,7 @@ function checkGo(dir) {
     const files = fs.readdirSync(dir).filter(f => f.endsWith('.go') && !f.endsWith('_test.go')).sort();
     for (const f of files) {
         for (const t of goTexts(fs.readFileSync(path.join(dir, f), 'utf8'))) {
-            if (cmds.has(t.v.toUpperCase())) violations.push(`${f}:${t.line}: write command "${t.v}" in the code of the edge; writes go only through FCALL (schema.json)`);
+            if (cmds.has(t.v.toUpperCase())) violations.push(`${f}:${t.line}: write command "${t.v}" in the Go code; writes go only through FCALL (schema.json)`);
         }
     }
     return { violations, files: files.length };

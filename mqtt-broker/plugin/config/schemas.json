@@ -1118,7 +1118,7 @@
   },
   "aop/application-lifecycle-manager/application-state": {
     "type": "object",
-    "description": "Mudanca de estado de uma aplicacao, NAO retido: started quando ela entra em execucao, ended quando termina; numa troca, ended da que sai antes de started da que entra. Publicador: o Application Lifecycle Manager ou, enquanto ele nao existir, o AoP (setDisplayGraphics). O estado corrente nao vem daqui, e sim do armazenamento.",
+    "description": "Mudanca de estado de uma aplicacao, NAO retido: started quando ela entra em execucao, ended quando termina; numa troca, ended da que sai antes de started da que entra. Publicador: aop-cc (aop-application-lifecycle-manager). O estado corrente nao vem daqui, e sim do armazenamento.",
     "properties": {
       "serviceContextId": {
         "type": "string",
@@ -1150,6 +1150,116 @@
       "appId",
       "origin",
       "state"
+    ],
+    "additionalProperties": false
+  },
+  "aop/application-lifecycle-manager/graphics-application": {
+    "description": "A aplicacao de emissora que deve estar na camada de graficos, RETIDO. A mensagem vazia retida e a Bootstrap Application do servico sintonizado. Publicador: aop-cc (aop-application-lifecycle-manager); o aop-shell carrega a url no quadro da camada de graficos.",
+    "type": "object",
+    "properties": {
+      "serviceContextId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "globalServiceId do servico da aplicacao"
+      },
+      "appId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "appId da BALD"
+      },
+      "origin": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024,
+        "description": "origem propria da aplicacao (a mesma de origins:associated)"
+      },
+      "url": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2048,
+        "description": "URL do ponto de entrada"
+      }
+    },
+    "required": [
+      "serviceContextId",
+      "appId",
+      "origin",
+      "url"
+    ],
+    "additionalProperties": false
+  },
+  "aop/application-lifecycle-manager/present-applications": {
+    "description": "As aplicacoes PRESENT e STORED_PRESENT do servico sintonizado, disponiveis para o espectador iniciar pelo Access Panel (ABNT NBR 25608, 10.1 e 8.9), RETIDO. A mensagem vazia retida e nenhum servico sintonizado. Publicador: aop-cc (aop-application-lifecycle-manager).",
+    "type": "object",
+    "properties": {
+      "serviceContextId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "globalServiceId do servico da aplicacao"
+      },
+      "applications": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "appId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "description": "appId da BALD"
+            },
+            "appName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 20,
+              "description": "appName da BALD"
+            },
+            "controlCode": {
+              "type": "string",
+              "enum": [
+                "PRESENT",
+                "STORED_PRESENT"
+              ]
+            }
+          },
+          "required": [
+            "appId",
+            "appName",
+            "controlCode"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": [
+      "serviceContextId",
+      "applications"
+    ],
+    "additionalProperties": false
+  },
+  "aop/application-lifecycle-manager/end-request": {
+    "description": "Pedido do espectador para encerrar a aplicacao de emissora em execucao, NAO retido. Publicador: aop-shell (teclas Esc e Menu); o aop-cc (aop-application-lifecycle-manager) encerra a aplicacao se ela ainda for a corrente.",
+    "type": "object",
+    "properties": {
+      "serviceContextId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "globalServiceId do servico da aplicacao"
+      },
+      "appId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "description": "appId da BALD"
+      }
+    },
+    "required": [
+      "serviceContextId",
+      "appId"
     ],
     "additionalProperties": false
   },

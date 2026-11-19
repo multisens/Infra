@@ -6,8 +6,8 @@
 #   functions  functions.test.js against the library on a redis:7-alpine
 #   static     writes.test.js: no service writes directly to a family in
 #              scope (needs the whole TV30: tv3ws/ and aop-shell/ next to infra/)
-#   contract   the real adapters of tv3ws, aop-shell and the Go plugin against the
-#              functions
+#   contract   the real adapters of tv3ws, aop-shell, the Go plugin and aop-cc
+#              against the functions
 #   image      image build and start: load, schema version, healthcheck, a
 #              new start, and the commander exiting bringing the container
 #              down
@@ -28,6 +28,8 @@ case "$(docker info --format '{{.Architecture}}' 2>/dev/null)" in
   aarch64|arm64) GO_IMG=${GO_IMG:-golang:1.22.7-alpine3.19} ;;
   *)             GO_IMG=${GO_IMG:-krakend/builder:2.7.2} ;;
 esac
+# Go of the aop-cc image (aop-cc/Dockerfile).
+GO_CC_IMG=${GO_CC_IMG:-golang:1.25-alpine}
 FAILED=()
 
 cleanup() {
@@ -88,6 +90,14 @@ mode_contract() {
   findings=$(docker exec "$RDS" redis-cli FCALL_RO tv30_audit 0)
   [ -z "$findings" ] || { echo "FAIL: audit after the contract of the plugin: $findings"; return 1; }
   echo "empty audit after the contract of the plugin"
+  echo; echo "-- aop-cc (Go): storage x functions --"
+  [ -d "$ROOT/aop-cc" ] || { echo "ERROR: needs aop-cc next to infra"; return 1; }
+  docker run --rm --network "$NET" -e TV30_REDIS_TEST="$RDS:6379" -e GOCACHE=/tmp/gocache -e GOMODCACHE=/tmp/gomod \
+    -v "$ROOT/aop-cc:/src:ro" -w /src "$GO_CC_IMG" \
+    sh -c 'go test -count=1 -run TestContractFunctions -v ./internal/storage >/tmp/go.out 2>&1; rc=$?; grep -E "^(=== RUN|--- |PASS|FAIL|ok|panic)|contract_test" /tmp/go.out; exit $rc' || return 1
+  findings=$(docker exec "$RDS" redis-cli FCALL_RO tv30_audit 0)
+  [ -z "$findings" ] || { echo "FAIL: audit after the contract of aop-cc: $findings"; return 1; }
+  echo "empty audit after the contract of aop-cc"
 }
 
 mode_image() {
