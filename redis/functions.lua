@@ -430,6 +430,10 @@ reason = function(rule, v, inJson)
     if not languageOk(v) then
       return 'must be an IETF RFC 5646 language tag, like pt-BR (got ' .. sample(v) .. ')'
     end
+  elseif t == 'bytes' then
+    if rule.max and #v > rule.max then
+      return 'has ' .. #v .. ' bytes, maximum ' .. rule.max
+    end
   elseif t == 'origin' then
     local m = originReason(v)
     if m then
@@ -665,6 +669,174 @@ OP.tv30_session_service = function(args)
   redis.call('DEL', fam.key)
   inBatches('HSET', fam.key, flatten(h))
   return 1
+end
+
+-- Application Context Cache.
+
+local CACHE_FAMILIES = {
+  services = 'cache:services',
+  access = 'cache:last-access',
+  meta = 'cache:meta:{appContextId}',
+  body = 'cache:body:{appContextId}',
+}
+
+-- A non-negative decimal integer argument.
+local function cacheAmount(v, name)
+  if not (v == '0' or string.match(v, '^[1-9]%d*$')) then
+    fail(name .. ' must be a non-negative decimal integer (got ' .. sample(v) .. ')')
+  end
+  return tonumber(v)
+end
+
+-- Checks the written field of a hash family and its type in Redis.
+local function cacheField(familyName, parts, name, value)
+  local fam = family(familyName)
+  local key = validKey(fam, parts)
+  ensure(key, hashReasons(fam, parts, { [name] = value }, { [name] = true }))
+  ensureType(fam, key)
+  return key
+end
+
+-- appContextId -> size in bytes of its files, by cache:meta.
+local function cacheSizes(ids)
+  local sizes = {}
+  for _, ctx in ipairs(ids) do
+    local n = 0
+    local metaKey = keyOf(family(CACHE_FAMILIES.meta), { appContextId = ctx })
+    for _, v in pairs(hashOf(metaKey)) do
+      n = n + cjson.decode(v).size
+    end
+    sizes[ctx] = n
+  end
+  return sizes
+end
+
+local function cacheDrop(ctx)
+  local parts = { appContextId = ctx }
+  redis.call('DEL', keyOf(family(CACHE_FAMILIES.meta), parts), keyOf(family(CACHE_FAMILIES.body), parts))
+  redis.call('HDEL', family(CACHE_FAMILIES.services).key, ctx)
+  redis.call('HDEL', family(CACHE_FAMILIES.access).key, ctx)
+end
+
+OP.tv30_cache_put = function(args)
+  ensureArgs(args, 8, 'tv30_cache_put <appContextId> <service id> <path> <metadata JSON> <instant in ms> <quota> <total> <body>')
+  local ctx, scid, path, meta, now, body = args[1], args[2], args[3], args[4], args[5], args[8]
+  local quota = cacheAmount(args[6], 'quota')
+  local total = cacheAmount(args[7], 'total')
+  local parts = { appContextId = ctx }
+  local servicesKey = cacheField(CACHE_FAMILIES.services, {}, ctx, scid)
+  local accessKey = cacheField(CACHE_FAMILIES.access, {}, ctx, now)
+  local metaKey = cacheField(CACHE_FAMILIES.meta, parts, path, meta)
+  local bodyKey = cacheField(CACHE_FAMILIES.body, parts, path, body)
+  local size = cjson.decode(meta).size
+  if size ~= #body then
+    fail(metaKey .. ' field ' .. sample(path) .. ': size ' .. size .. ' differs from the body, of ' .. #body .. ' bytes')
+  end
+  local services = hashOf(servicesKey)
+  local access = hashOf(accessKey)
+  services[ctx] = scid
+  access[ctx] = now
+  local ids = sortedKeys(services)
+  local sizes = cacheSizes(ids)
+  local old = redis.call('HGET', metaKey, path)
+  if old then
+    sizes[ctx] = sizes[ctx] - cjson.decode(old).size
+  end
+  sizes[ctx] = sizes[ctx] + size
+  -- Usage by DTV service context, and its last access.
+  local usage, last, used = {}, {}, 0
+  for _, id in ipairs(ids) do
+    local s = services[id]
+    usage[s] = (usage[s] or 0) + sizes[id]
+    last[s] = math.max(last[s] or 0, tonumber(access[id]) or 0)
+    used = used + sizes[id]
+  end
+  if usage[scid] > quota then
+    return { 0 }
+  end
+  local evicted = {}
+  while used > total do
+    local oldest = nil
+    for _, s in ipairs(sortedKeys(usage)) do
+      if s ~= scid and (oldest == nil or last[s] < last[oldest]) then
+        oldest = s
+      end
+    end
+    if oldest == nil then
+      return { 0 }
+    end
+    for _, id in ipairs(ids) do
+      if services[id] == oldest then
+        evicted[#evicted + 1] = id
+      end
+    end
+    used = used - usage[oldest]
+    usage[oldest] = nil
+  end
+  for _, id in ipairs(evicted) do
+    cacheDrop(id)
+  end
+  redis.call('HSET', metaKey, path, meta)
+  redis.call('HSET', bodyKey, path, body)
+  redis.call('HSET', servicesKey, ctx, scid)
+  redis.call('HSET', accessKey, ctx, now)
+  local out = { 1 }
+  for _, id in ipairs(evicted) do
+    out[#out + 1] = id
+  end
+  return out
+end
+
+OP.tv30_cache_touch = function(args)
+  ensureArgs(args, 2, 'tv30_cache_touch <appContextId> <instant in ms>')
+  local fServices = family(CACHE_FAMILIES.services)
+  local accessKey = cacheField(CACHE_FAMILIES.access, {}, args[1], args[2])
+  if not ensureType(fServices, fServices.key) or redis.call('HEXISTS', fServices.key, args[1]) == 0 then
+    return 0
+  end
+  redis.call('HSET', accessKey, args[1], args[2])
+  return 1
+end
+
+OP.tv30_cache_remove = function(args)
+  ensureArgs(args, 1, 'tv30_cache_remove <appContextId>')
+  ensureNotEmpty(args[1], 'appContextId')
+  local fServices = family(CACHE_FAMILIES.services)
+  if not ensureType(fServices, fServices.key) or redis.call('HEXISTS', fServices.key, args[1]) == 0 then
+    return 0
+  end
+  cacheDrop(args[1])
+  return 1
+end
+
+OP.tv30_cache_clear_before = function(args)
+  ensureArgs(args, 2, 'tv30_cache_clear_before <appContextId> <instant in ms>')
+  local ctx = args[1]
+  ensureNotEmpty(ctx, 'appContextId')
+  local before = cacheAmount(args[2], 'instant')
+  local parts = { appContextId = ctx }
+  local fMeta, fBody = family(CACHE_FAMILIES.meta), family(CACHE_FAMILIES.body)
+  local metaKey, bodyKey = keyOf(fMeta, parts), keyOf(fBody, parts)
+  if not ensureType(fMeta, metaKey) then
+    return 0
+  end
+  ensureType(fBody, bodyKey)
+  local meta = hashOf(metaKey)
+  local old = {}
+  for _, path in ipairs(sortedKeys(meta)) do
+    if cjson.decode(meta[path]).lastModified < before then
+      old[#old + 1] = path
+    end
+  end
+  if #old == 0 then
+    return 0
+  end
+  inBatches('HDEL', metaKey, old)
+  inBatches('HDEL', bodyKey, old)
+  if redis.call('EXISTS', metaKey) == 0 then
+    cacheDrop(ctx)
+  end
+  return #old
 end
 
 -- The running broadcaster application.
@@ -1164,6 +1336,10 @@ local WRITE_FUNCTIONS = {
   'tv30_bind_register',
   'tv30_bind_remove',
   'tv30_broadcaster_attributes',
+  'tv30_cache_clear_before',
+  'tv30_cache_put',
+  'tv30_cache_remove',
+  'tv30_cache_touch',
   'tv30_client_add_authorized',
   'tv30_client_authorize',
   'tv30_client_block',

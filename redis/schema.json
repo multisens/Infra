@@ -5,13 +5,21 @@
     "Redis, the functions and this schema belong to the testbed, not to ABNT NBR 25608;",
     "the 'source' field of each rule says where it came from (section of the standard, schemas.json of the broker or code)."
   ],
-  "version": "12",
+  "version": "13",
   "library": "tv30",
   "errorPrefix": "TV30SCHEMA",
 
-  "auditedPrefixes": ["session:", "users:", "user:", "clients:", "client:", "origins:", "bind-context:", "services:", "v100.0:"],
+  "auditedPrefixes": ["cache:", "session:", "users:", "user:", "clients:", "client:", "origins:", "bind-context:", "services:", "v100.0:"],
 
   "definitions": {
+    "appContextId": {
+      "type": "text", "min": 1, "max": 256,
+      "source": "BALD @appContextId (ABNT NBR 25608, 10.1.2, Table 10), an URI"
+    },
+    "cachePath": {
+      "type": "text", "min": 1, "max": 1024,
+      "source": "Content-Location of the file in the S-TSID or of the part of the entry package: relative, under the origin of the Application Context ID"
+    },
     "profileId": {
       "type": "uuid",
       "source": "Table 7: id 'UUID string', required. UUID in the textual format of IETF RFC 9562 (8-4-4-4-12 hexadecimal digits), in lowercase, with version 1 to 8 (1st digit of the 3rd group) and the variant of RFC 9562 (1st digit of the 4th group in 8, 9, a or b); the nil and the max UUID are not profile ids. No ':' by construction: user:{id}:consent is not mistaken for a profile"
@@ -29,6 +37,65 @@
   },
 
   "families": [
+    {
+      "family": "cache:services",
+      "key": "cache:services",
+      "type": "hash",
+      "owner": "aop-application-context-cache (in the process of aop-cc)",
+      "description": "The DTV service context of each Application Context ID with files in the cache: the quota and the eviction count by it (ABNT NBR 25608, 10.3.3).",
+      "otherFields": {
+        "name": { "ref": "appContextId" },
+        "value": { "ref": "serviceId" }
+      },
+      "functions": ["tv30_cache_put", "tv30_cache_remove", "tv30_cache_clear_before"]
+    },
+    {
+      "family": "cache:last-access",
+      "key": "cache:last-access",
+      "type": "hash",
+      "owner": "aop-application-context-cache (in the process of aop-cc)",
+      "description": "Instant, in ms since the epoch, of the last write or read of each Application Context ID in the cache; the last access of a DTV service context is the latest of its Application Context IDs (ABNT NBR 25608, 10.3.3).",
+      "otherFields": {
+        "name": { "ref": "appContextId" },
+        "value": { "type": "integer", "min": 0, "source": "instant in ms since the epoch" }
+      },
+      "functions": ["tv30_cache_put", "tv30_cache_touch", "tv30_cache_remove", "tv30_cache_clear_before"]
+    },
+    {
+      "family": "cache:meta:{appContextId}",
+      "key": "cache:meta:{appContextId}",
+      "type": "hash",
+      "owner": "aop-application-context-cache (in the process of aop-cc)",
+      "description": "Metadata of each file of the Application Context ID in the cache, by its path: the Content-Type and the Last-Modified it was served with, and its size.",
+      "parts": { "appContextId": { "ref": "appContextId" } },
+      "otherFields": {
+        "name": { "ref": "cachePath" },
+        "value": {
+          "type": "json",
+          "source": "the headers of the object when it was fetched from the object proxy",
+          "fields": {
+            "contentType": { "type": "text", "min": 1, "max": 256, "required": true, "source": "Content-Type" },
+            "lastModified": { "type": "integer", "min": 0, "required": true, "source": "Last-Modified, in ms since the epoch; @clearAppContextCacheDate compares with it (ABNT NBR 25608, 10.1.2)" },
+            "size": { "type": "integer", "min": 0, "required": true, "source": "size of the body in bytes; tv30_cache_put checks it against the body" }
+          },
+          "otherFields": false
+        }
+      },
+      "functions": ["tv30_cache_put", "tv30_cache_remove", "tv30_cache_clear_before"]
+    },
+    {
+      "family": "cache:body:{appContextId}",
+      "key": "cache:body:{appContextId}",
+      "type": "hash",
+      "owner": "aop-application-context-cache (in the process of aop-cc)",
+      "description": "Body of each file of the Application Context ID in the cache, by its path; the same paths as cache:meta:{appContextId}.",
+      "parts": { "appContextId": { "ref": "appContextId" } },
+      "otherFields": {
+        "name": { "ref": "cachePath" },
+        "value": { "type": "bytes", "source": "the body as the object proxy served it" }
+      },
+      "functions": ["tv30_cache_put", "tv30_cache_remove", "tv30_cache_clear_before"]
+    },
     {
       "family": "session:current-user",
       "key": "session:current-user",
@@ -306,6 +373,10 @@
     { "name": "tv30_session_user", "arguments": "<id of the current profile, or empty>", "effect": "SET session:current-user", "returns": "1", "callers": ["tv3ws (mirror of aop/currentUser; C.6.14.4)"] },
     { "name": "tv30_session_service_id", "arguments": "<id of the current service, or empty>", "effect": "SET session:current-service-id", "returns": "1", "callers": ["tv3ws (mirror of aop/currentService)"] },
     { "name": "tv30_session_service", "arguments": "<field> <value> [<field> <value> ...]", "effect": "rewrites the whole hash session:current-service (DEL + HSET)", "returns": "1", "callers": ["tv3ws (core.ts, change of service)"] },
+    { "name": "tv30_cache_put", "arguments": "<appContextId> <service id> <path> <metadata JSON> <instant in ms> <quota> <total> <body>", "effect": "HSET of the file in cache:meta:{appContextId} and cache:body:{appContextId}, of the service in cache:services and of the instant in cache:last-access. The service over <quota> bytes refuses the file; the cache over <total> bytes first loses, whole, the DTV service context of oldest last access, other than this one (ABNT NBR 25608, 10.3.3)", "returns": "[1, evicted appContextId ...] if written; [0] if refused by the quota or the total", "callers": ["aop-cc (aop-application-context-cache: admission of an object)"] },
+    { "name": "tv30_cache_touch", "arguments": "<appContextId> <instant in ms>", "effect": "HSET cache:last-access, only for an Application Context ID in the cache", "returns": "1 if written, 0 if not in the cache", "callers": ["aop-cc (aop-application-context-cache: read of a file)"] },
+    { "name": "tv30_cache_remove", "arguments": "<appContextId>", "effect": "DEL cache:meta:{appContextId} and cache:body:{appContextId}; HDEL cache:services and cache:last-access", "returns": "1 if it was in the cache, 0 otherwise", "callers": ["aop-cc (aop-application-context-cache: STORED_REMOVE)"] },
+    { "name": "tv30_cache_clear_before", "arguments": "<appContextId> <instant in ms>", "effect": "HDEL of every file whose lastModified is before the instant; with no file left, the Application Context ID leaves the cache", "returns": "number of files removed", "callers": ["aop-cc (aop-application-context-cache: @clearAppContextCacheDate)"] },
     { "name": "tv30_current_app", "arguments": "[<field> <value> ...] (none = no application running)", "effect": "rewrites the whole hash session:current-app (DEL + HSET); without arguments, only the DEL", "returns": "1 if written, 0 if only deleted", "callers": ["aop-cc (aop-application-lifecycle-manager: launch and end of a broadcaster application)"] },
     { "name": "tv30_profile_write", "arguments": "<id> <n> <service 1> ... <service n> <field> <value> [...]", "effect": "SADD users:index; rewrites user:{id} (DEL + HSET); adds the n services to user:{id}:consent. An id outside users:index with the set at the limit (maxMembers) is refused", "returns": "1", "callers": ["AoP (profile creation and default profile)", "initial load (emit_seed.py)", "migrate_to_redis.py (manual debugging)"] },
     { "name": "tv30_profile_last_access", "arguments": "<id> <instant in ms>", "effect": "HSET user:{id} lastAccess, only if the id is in users:index", "returns": "1 if written, 0 if the profile does not exist", "callers": ["AoP (change of current user)"] },

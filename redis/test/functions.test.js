@@ -74,6 +74,16 @@ const BAM = {
 };
 const REGISTRO = { bsid: 10, serviceId: 1001, majorChannelNo: 10, minorChannelNo: 1, mainAvOverTheAir: true, receptionQuality: 80, bam: BAM };
 const ORIGEM = 'http://users-test.apps.localhost:8080';
+// A file of the Application Context Cache: tv30_cache_put arguments.
+const CTX = 'urn:tv30:ctx:a';
+const CORPO = '<html></html>';
+const META = { contentType: 'text/html', lastModified: 1763000000000, size: Buffer.byteLength(CORPO) };
+const GRANDE = String(1e9);
+const poe = (o = {}) => {
+    const v = { ctx: CTX, scid: 'urn:tv30:service:1', path: 'index.html', body: CORPO, now: '1763000000000', quota: GRANDE, total: GRANDE, ...o };
+    const meta = o.meta ?? JSON.stringify({ ...META, size: Buffer.byteLength(v.body) });
+    return ['tv30_cache_put', [v.ctx, v.scid, v.path, meta, v.now, v.quota, v.total, v.body]];
+};
 const APP = { serviceContextId: 'urn:tv30:service:users-test', appId: 'urn:tv30:app:1', origin: 'http://ctx-0123456789abcdef.apps.localhost:8081' };
 const RD_HANDLE = '2b7f6c1e-4d3a-4f8b-9c2d-1e0f3a4b5c6d';
 const RD = {
@@ -166,6 +176,9 @@ function violacoes(regra, emJson = false) {
             break;
         case 'boolean':
             for (const v of ['True', 'False', '1', '']) out.push([v, '"true" or "false"', `"${v}"`]);
+            break;
+        case 'bytes':
+            if (regra.max !== undefined) out.push(['x'.repeat(regra.max + 1), `maximum ${regra.max}`, 'acima do maximo']);
             break;
         case 'integer':
             for (const v of ['x', '1.5', '028', '-0', ' 1']) out.push([v, 'integer', `"${v}"`]);
@@ -283,6 +296,7 @@ function aceitacoes(regra) {
             return out;
         }
         case 'boolean': return ['true', 'false'];
+        case 'bytes': return ['', 'x', '\u0000\u00ff\n'];
         case 'integer': {
             const out = ['0' === String(regra.min) ? '0' : String(regra.min ?? 7)];
             if (regra.max !== undefined) out.push(String(regra.max));
@@ -311,6 +325,9 @@ function aceitacoes(regra) {
         ];
         case 'origin': return ['http://users-test.apps.localhost:8080', 'http://a.apps.localhost', 'https://x.example', 'https://x.example:8443', 'http://[::1]:8099', 'http://127.0.0.1:65535'];
         case 'json':
+            if (regra.fields.contentType) {
+                return [JSON.stringify(META), JSON.stringify({ ...META, lastModified: 0 })];
+            }
             if (regra.fields.bam) {
                 return [JSON.stringify(REGISTRO), JSON.stringify({ ...REGISTRO, mainAvOverTheAir: false, groupingType: 'mandatoryGrouping' })];
             }
@@ -321,6 +338,9 @@ function aceitacoes(regra) {
 }
 
 function jsonValido(regra) {
+    if (regra.fields.contentType) {
+        return { ...META };
+    }
     if (regra.fields.bam) {
         return { ...REGISTRO };
     }
@@ -340,6 +360,21 @@ const SLOTS = {
     'session:current-user': [{ rotulo: 'valor', regra: f => f.value, chamada: v => ['tv30_session_user', [v]], trecho: 'value:' }],
     'session:current-service-id': [{ rotulo: 'valor', regra: f => f.value, chamada: v => ['tv30_session_service_id', [v]], trecho: 'value:' }],
     'session:current-service': campoSlots(campo => v => ['tv30_session_service', plano({ ...SVC, [campo]: v })]),
+    'cache:services': [
+        { rotulo: 'nome de campo', regra: f => f.otherFields.name, chamada: v => poe({ ctx: v }), trecho: 'field name:' },
+        { rotulo: 'valor', regra: f => f.otherFields.value, chamada: v => poe({ scid: v }), trecho: 'field "' },
+    ],
+    'cache:last-access': [
+        { rotulo: 'valor', regra: f => f.otherFields.value, chamada: v => poe({ now: v }), trecho: 'field "' },
+    ],
+    'cache:meta:{appContextId}': [
+        { rotulo: 'caminho', regra: f => f.otherFields.name, chamada: v => poe({ path: v }), trecho: 'field name:' },
+        { rotulo: 'metadados', regra: f => f.otherFields.value, chamada: v => poe({ meta: v }), trecho: 'field "' },
+    ],
+    'cache:body:{appContextId}': [
+        { rotulo: 'caminho', regra: f => f.otherFields.name, chamada: v => poe({ path: v }), trecho: 'field name:' },
+        { rotulo: 'corpo', regra: f => f.otherFields.value, chamada: v => poe({ body: v }), trecho: 'field "' },
+    ],
     'session:current-app': campoSlots(campo => v => ['tv30_current_app', plano({ ...APP, [campo]: v })]),
     'users:index': [{ rotulo: 'member', regra: f => f.members, chamada: v => ['tv30_profile_write', perfilArgs(v, [], { ...PERFIL, id: v })], trecho: '{id} of the key:' }],
     'user:{id}': [
@@ -526,6 +561,45 @@ test('broadcaster-attrs: atributos basicos proibidos e limit of 20 MB no resulta
 });
 
 // ---------------------------------------------------- effects (acceptance) --
+test('cache: grava, conta a quota do servico, despeja o servico de acesso mais antigo, toca, remove e limpa pela data', async () => {
+    const put = (o) => { const [n, a] = poe(o); return fcall(n, ...a); };
+    const corpo = 'x'.repeat(100);
+    assert.deepEqual(await put({ ctx: 'urn:a', scid: 'urn:s1', body: corpo, now: '10' }), [1]);
+    assert.deepEqual(await put({ ctx: 'urn:a', scid: 'urn:s1', path: 'b.js', body: corpo, now: '11' }), [1]);
+    // Quota of 250 bytes by service: the third file of s1 is refused, nothing written.
+    assert.deepEqual(await put({ ctx: 'urn:a', scid: 'urn:s1', path: 'c.js', body: corpo, now: '12', quota: '250' }), [0]);
+    assert.equal(await r('HEXISTS', 'cache:meta:urn:a', 'c.js'), 0);
+    // Rewriting a file counts only its new size.
+    assert.deepEqual(await put({ ctx: 'urn:a', scid: 'urn:s1', body: corpo, now: '13', quota: '250' }), [1]);
+    assert.deepEqual(await put({ ctx: 'urn:b', scid: 'urn:s2', body: corpo, now: '20' }), [1]);
+    assert.deepEqual(await put({ ctx: 'urn:c', scid: 'urn:s3', body: corpo, now: '30' }), [1]);
+    // s1 read after s2: s2 is the oldest service. A total of 400 bytes takes it whole.
+    assert.equal(await fcall('tv30_cache_touch', 'urn:a', '40'), 1);
+    assert.equal(await fcall('tv30_cache_touch', 'urn:x', '40'), 0);
+    assert.deepEqual(await put({ ctx: 'urn:d', scid: 'urn:s4', body: corpo, now: '50', total: '400' }), [1, 'urn:b']);
+    assert.equal(await r('EXISTS', 'cache:meta:urn:b'), 0);
+    assert.equal(await r('HEXISTS', 'cache:services', 'urn:b'), 0);
+    // A file larger than the total, even with every other service evicted:
+    // refused, and nothing evicted.
+    assert.deepEqual(await put({ ctx: 'urn:e', scid: 'urn:s5', body: corpo, now: '60', total: '50' }), [0]);
+    assert.deepEqual((await r('HKEYS', 'cache:services')).sort(), ['urn:a', 'urn:c', 'urn:d']);
+    // The size in the metadata must be that of the body.
+    await recusa('tamanho errado', 'tv30_cache_put', ['urn:a', 'urn:s1', 'z', JSON.stringify({ ...META, size: 1 }), '1', GRANDE, GRANDE, 'abc'], ['differs from the body']);
+    assert.deepEqual(await auditoria(), []);
+    // @clearAppContextCacheDate: only the files before the date.
+    await put({ ctx: 'urn:f', scid: 'urn:s6', path: 'novo', meta: JSON.stringify({ ...META, lastModified: 2000, size: 3 }), body: 'abc' });
+    await put({ ctx: 'urn:f', scid: 'urn:s6', path: 'velho', meta: JSON.stringify({ ...META, lastModified: 1000, size: 3 }), body: 'abc' });
+    assert.equal(await fcall('tv30_cache_clear_before', 'urn:f', '1500'), 1);
+    assert.deepEqual(await r('HKEYS', 'cache:body:urn:f'), ['novo']);
+    assert.equal(await fcall('tv30_cache_clear_before', 'urn:f', '3000'), 1);
+    assert.equal(await r('HEXISTS', 'cache:services', 'urn:f'), 0, 'sem arquivos, o contexto sai do cache');
+    // STORED_REMOVE.
+    assert.equal(await fcall('tv30_cache_remove', 'urn:a'), 1);
+    assert.equal(await fcall('tv30_cache_remove', 'urn:a'), 0);
+    assert.equal(await r('EXISTS', 'cache:body:urn:a'), 0);
+    assert.deepEqual(await auditoria(), []);
+});
+
 test('aplicacao corrente: hash regravado inteiro; sem argumentos, so o DEL', async () => {
     assert.equal(await fcall('tv30_current_app', ...plano({ ...APP, appId: 'urn:tv30:app:antes' })), 1);
     assert.equal(await fcall('tv30_current_app', ...plano(APP)), 1);
@@ -901,6 +975,7 @@ test('auditoria: cada tipo de problema gravado a mao aparece com chave, familia 
     await fcall('tv30_session_service_id', 'urn:s');
     await fcall('tv30_session_service', ...plano(SVC));
     await fcall('tv30_current_app', ...plano(APP));
+    await fcall(...poe().flat());
     await fcall('tv30_profile_write', ...perfilArgs(P1, ['urn:s'], PERFIL));
     await fcall('tv30_broadcaster_attributes', P1, 'urn:s', 'cor', 'azul');
     await fcall('tv30_client_authorize', 'c1', ...plano(CLIENTE));
