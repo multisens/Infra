@@ -456,11 +456,16 @@ test('biblioteca carregada: exatamente as funcoes do schema.json, flags certas',
         assert.ok(flags.includes('no-cluster'), `${f.name}: no-cluster`);
         assert.equal(flags.includes('no-writes'), !!f.readOnly, `${f.name}: no-writes so nas somente leitura`);
     }
-    // Each function named in a family exists; each family has a writer.
+    // Each function named in a family exists; each family with a writer in
+    // the testbed is known to the refusal test. A family without functions
+    // is only declared: its owner is outside the testbed.
     const nomes = new Set(ESQ.functions.map(f => f.name));
     for (const fam of ESQ.families) {
-        assert.ok(fam.functions.length > 0, `${fam.family}: funcoes`);
         for (const n of fam.functions) assert.ok(nomes.has(n), `${fam.family} cita ${n}`);
+        if (fam.functions.length === 0) {
+            assert.ok(/no writer/.test(fam.owner), `${fam.family}: sem funcoes, o dono declara que nao ha escritor`);
+            continue;
+        }
         assert.ok(SLOTS[fam.family], `${fam.family}: o teste de recusa conhece a familia`);
     }
     assert.equal(await fcallRo('tv30_version'), ESQ.version);
@@ -477,7 +482,7 @@ test('FCALL_RO so roda as somente leitura; numkeys > 0 e argumentos errados sao 
 });
 
 // --------------------------------------- refusal of each rule (generated) --
-for (const fam of ESQ.families) {
+for (const fam of ESQ.families.filter(f => f.functions.length > 0)) {
     test(`recusa de cada regra: ${fam.family}`, async (t) => {
         let casos = 0;
         let aceitos = 0;

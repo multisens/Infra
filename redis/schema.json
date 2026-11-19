@@ -5,7 +5,7 @@
     "Redis, the functions and this schema belong to the testbed, not to ABNT NBR 25608;",
     "the 'source' field of each rule says where it came from (section of the standard, schemas.json of the broker or code)."
   ],
-  "version": "13",
+  "version": "14",
   "library": "tv30",
   "errorPrefix": "TV30SCHEMA",
 
@@ -143,6 +143,34 @@
       },
       "otherFields": false,
       "functions": ["tv30_current_app"]
+    },
+    {
+      "family": "app:doc-nodes:{serviceContextId}",
+      "key": "app:doc-nodes:{serviceContextId}",
+      "type": "hash",
+      "owner": "Ginga-NCL formatter (out of the scope of the testbed; no writer and no write function)",
+      "description": "The nodes of the document of each application of the service context, by appId: the media, context and switch nodes and the remote device each one is presented on. tv3ws reads them when the application starts and associates each node to its device.",
+      "parts": {
+        "serviceContextId": { "type": "text", "min": 1, "max": 256, "source": "the globalServiceId of the service of the application (SLT; ABNT NBR 25608, 8.4.4, Table 6)" }
+      },
+      "otherFields": {
+        "name": { "type": "text", "min": 1, "max": 256, "source": "BALD @appId (ABNT NBR 25608, 10.1.2, Table 10)" },
+        "value": {
+          "type": "jsonList",
+          "source": "the nodes of the document",
+          "items": {
+            "type": "json",
+            "fields": {
+              "id": { "type": "text", "min": 1, "required": true, "source": "id of the node; the dots separate the ids of the enclosing contexts" },
+              "type": { "type": "enum", "values": ["media", "context", "switch"], "required": true, "source": "kind of the node" },
+              "mimeType": { "type": "text", "min": 1, "required": true, "source": "media type of the node, compared with the supportedTypes of the device (C.6.15.2, Table C.76)" },
+              "device": { "type": "text", "min": 1, "required": true, "source": "handle of the remote device that presents the node" }
+            },
+            "otherFields": false
+          }
+        }
+      },
+      "functions": []
     },
     {
       "family": "users:index",
