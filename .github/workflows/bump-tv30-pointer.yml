@@ -58,8 +58,8 @@ jobs:
           INFRA_SHA: ${{ github.sha }}
         run: |
           set -e
-          git config user.name  "Luis Claudio Ribeiro Junior"
-          git config user.email "luis.claudio.r.jr@gmail.com"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
 
           CURRENT=$(git ls-tree HEAD infra | awk '{print $3}')
           if [ "$CURRENT" = "$INFRA_SHA" ]; then
