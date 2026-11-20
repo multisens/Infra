@@ -347,7 +347,7 @@ func (rc *redisClient) scanKeys(match string) ([]string, error) {
 //   - session:current-service-id (STRING): the current service;
 //   - session:current-service (HASH): serviceName and serviceId of the
 //     current service;
-//   - services:announced (SET): the services of the Application Catalog;
+//   - services:announced (HASH): the services of the Application Catalog;
 //   - bind-context:{serviceId} (LIST): {alg,key,registeredAt}.
 const (
 	keyBlocked        = "clients:blocked"
