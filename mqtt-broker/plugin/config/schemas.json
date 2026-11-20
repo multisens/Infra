@@ -1237,7 +1237,7 @@
     "additionalProperties": false
   },
   "aop/application-lifecycle-manager/end-request": {
-    "description": "Pedido do espectador para encerrar a aplicacao de emissora em execucao, NAO retido. Publicador: aop-shell (teclas Esc e Menu); o aop-cc (aop-application-lifecycle-manager) encerra a aplicacao se ela ainda for a corrente.",
+    "description": "Pedido do espectador para encerrar a aplicacao de emissora em execucao, NAO retido. Publicador: aop-shell (o Back que a aplicacao nao cancelou, ou a tecla Home); o aop-cc (aop-application-lifecycle-manager) encerra a aplicacao se ela ainda for a corrente.",
     "type": "object",
     "properties": {
       "serviceContextId": {
