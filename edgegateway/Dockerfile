@@ -37,7 +37,8 @@ FROM swaggerapi/swagger-ui AS swagger
 
 FROM devopsfaith/krakend:2.7.2
 USER root
-# busybox-extras: httpd for the docs; openssl: tls-init.
+# busybox-extras: httpd for the docs; openssl: generator of the receiver
+# certificate.
 RUN apk add --no-cache dumb-init busybox-extras openssl
 
 # The build fails if the .so does not match this binary (check-plugin: Go

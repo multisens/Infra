@@ -337,7 +337,7 @@ test('validacao de versions e de api.version (a mais recente da rota)', () => {
   assert.ok(g.checkTable(mini([{ method: 'GET', path: '/a', headers: ['Accept-Version', 'X-TV30-API-Version'] }])).some(e => /internal header of the edge/.test(e)));
 });
 
-test('TLS so na superficie segura, com o certificado do tls-init', () => {
+test('TLS so na superficie segura, com o certificado do receptor', () => {
   const files = g.generate(real());
   for (const [name, cfg] of Object.entries(files)) {
     if (!name.startsWith('krakend-')) continue;

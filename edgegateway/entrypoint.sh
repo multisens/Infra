@@ -4,6 +4,11 @@
 set -u
 
 VARIANT="${EDGE_VARIANT:-linux}"
+TLS_DIR=/etc/tv30/tls
+
+# Receiver certificate: generated only if missing; a failure stops the
+# container before the surfaces start.
+TLS_DIR="$TLS_DIR" tv30-tls-init || { echo "[edgegateway] ERROR: the receiver certificate was not generated in $TLS_DIR"; exit 1; }
 
 krakend run -c "/etc/krakend/krakend-external.${VARIANT}.json" &
 PID_EXT=$!

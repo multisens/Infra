@@ -1,6 +1,5 @@
-# TV30 infrastructure, included by the root docker-compose.yml, which defines
-# the preflight and tls-init services the edgegateway depends on; it does
-# not start on its own. In the TV30 root:
+# TV30 infrastructure, included by the root docker-compose.yml. In the TV30
+# root:
 #   whole stack (COMPOSE_PROFILES of .env):
 #     docker compose up -d
 #   only the infrastructure images:
@@ -42,18 +41,20 @@ services:
       # Documentation, on a host port chosen by Docker.
       - "8085"
     depends_on:
-      # The preflight stops the startup if 44642 is in use.
-      preflight:
-        condition: service_completed_successfully
       # The plugin reads Redis.
       redis:
         condition: service_healthy
-      # Receiver certificate.
-      tls-init:
-        condition: service_completed_successfully
+    # Healthy with the receiver certificate written and both surfaces
+    # listening; it does not call /health, which goes on to tv3ws.
+    healthcheck:
+      test: ["CMD-SHELL", "[ -s /etc/tv30/tls/cert.pem ] && [ -s /etc/tv30/tls/key.pem ] && nc -z 127.0.0.1 44642 && nc -z 127.0.0.1 44643"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
     volumes:
-      # TLS certificate of the external surface.
-      - ../.tv30/tls:/etc/tv30/tls:ro
+      # Receiver certificate, generated on the first start of the edge
+      # (tls-init.sh) and read by tv3ws.
+      - ../.tv30/tls:/etc/tv30/tls
     networks:
       - ginga_net
     restart: unless-stopped
