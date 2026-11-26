@@ -321,11 +321,11 @@ function checkPy(files) {
         const { texts, code } = pyTokens(fs.readFileSync(f, 'utf8'));
         const name = path.basename(f);
         for (const t of texts) {
-            if (cmds.has(t.v.toUpperCase())) violations.push(`${name}:${t.line}: write command "${t.v}"; the load writes only through FCALL tv30_profile_write`);
+            if (cmds.has(t.v.toUpperCase())) violations.push(`${name}:${t.line}: write command "${t.v}"; the loads write only through FCALL`);
         }
         for (const l of code) {
             for (const m of l.v.matchAll(PY_RECEIVERS)) {
-                if (PY_METHODS.has(m[2])) violations.push(`${name}:${l.line}: write method of redis-py ${m[1]}.${m[2]}(); the load writes only through FCALL tv30_profile_write`);
+                if (PY_METHODS.has(m[2])) violations.push(`${name}:${l.line}: write method of redis-py ${m[1]}.${m[2]}(); the loads write only through FCALL`);
             }
         }
     }

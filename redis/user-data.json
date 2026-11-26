@@ -1,0 +1,23 @@
+{
+    "users": [
+        {
+            "id": "c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10",
+            "nickname": "Viewer 1",
+            "avatar": "green.svg",
+            "parentalControl": false,
+            "audioLanguage": "pt-BR",
+            "userInterfaceLanguage": "pt-BR",
+            "closedCaptioning": false,
+            "closedSigning": false,
+            "audioDescription": false,
+            "dialogEnhancement": false,
+            "voiceGuidance": false,
+            "accessConsent": [
+                "urn:tv30:service:webmedia",
+                "urn:tv30:service:uff",
+                "urn:tv30:service:eduplay",
+                "urn:tv30:service:users-test"
+            ]
+        }
+    ]
+}

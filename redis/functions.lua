@@ -107,6 +107,7 @@ end
 local INVARIANTS = {
   ['profile-indexed'] = true,
   ['profile-dependents'] = true,
+  ['profile-avatar'] = true,
   ['disjoint-clients'] = true,
   ['authorized-has-record'] = true,
 }
@@ -262,20 +263,20 @@ local function uuidReason(v)
   return nil
 end
 
--- Avatar: name of a file of the thumbnail directory, as
--- ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(svg|png|jpg|jpeg|webp)$. A Lua pattern
--- has no alternation or counted repetition: the check is by parts, and the
+-- Avatar: name of an image of the avatar set, as
+-- ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.<extension>$. A Lua pattern has no
+-- alternation or counted repetition: the check is by parts, and the
 -- extension is what comes after the last dot. Only ASCII passes, so #base
 -- counts characters.
-local AVATAR_EXAMPLE = 'like c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10.svg'
+local AVATAR_EXAMPLE = 'like green.svg'
 
 local function fileNameReason(rule, v)
   if v == '' then
-    return 'empty: the avatar is the name of a file of the thumbnail directory (' .. AVATAR_EXAMPLE ..
+    return 'empty: the avatar is the name of an image of the avatar set (' .. AVATAR_EXAMPLE ..
       '); without an avatar, the field is absent'
   end
   if string.sub(v, 1, 1) == '<' then
-    return 'inline SVG is not accepted: the avatar is the name of a file of the thumbnail directory (Table 7: file path), ' ..
+    return 'inline SVG is not accepted: the avatar is the name of an image of the avatar set (Table 7: file path), ' ..
       AVATAR_EXAMPLE .. ' (got ' .. sample(v) .. ')'
   end
   if string.find(v, '[/\\]') then
@@ -566,7 +567,7 @@ local function ensure(key, reasons)
     if #reasons > 1 then
       extra = ' (and ' .. (#reasons - 1) .. ' more problem(s) in the same request)'
     end
-    fail(key .. ' ' .. reasons[1] .. extra)
+    fail(string.gsub(key, '%c', '?') .. ' ' .. reasons[1] .. extra)
   end
 end
 
@@ -856,6 +857,33 @@ OP.tv30_current_app = function(args)
   return 1
 end
 
+-- Avatars.
+
+OP.tv30_avatar_write = function(args)
+  ensureArgs(args, 4, 'tv30_avatar_write <name> <label> <media type> <body>')
+  local fam = family('avatar:{name}')
+  local parts = { name = args[1] }
+  local key = validKey(fam, parts)
+  local h = { label = args[2], type = args[3], body = args[4] }
+  ensure(key, hashReasons(fam, parts, h, nil))
+  ensureType(fam, key)
+  redis.call('DEL', key)
+  inBatches('HSET', key, flatten(h))
+  return 1
+end
+
+-- The key of the avatar the profile names, or nil if it names none.
+local function missingAvatar(avatar)
+  if avatar == nil then
+    return nil
+  end
+  local key = keyOf(family('avatar:{name}'), { name = avatar })
+  if redisType(key) ~= 'hash' then
+    return key
+  end
+  return nil
+end
+
 -- Profiles.
 
 OP.tv30_profile_write = function(args)
@@ -879,6 +907,11 @@ OP.tv30_profile_write = function(args)
   local key = validKey(fProfile, parts)
   local visKey = keyOf(fVis, parts)
   ensure(key, hashReasons(fProfile, parts, h, nil))
+  local avatarKey = missingAvatar(h.avatar)
+  if avatarKey then
+    fail(key .. ' field avatar: ' .. sample(h.avatar) .. ' names no image of the avatar set (' .. avatarKey ..
+      ' does not exist; invariant profile-avatar)')
+  end
   for _, s in ipairs(services) do
     local m = reason(fVis.members, s)
     if m then
@@ -1265,6 +1298,12 @@ local function audit()
       end
       if fam.family == 'user:{id}' then
         profiles[parts.id] = k
+        if t == 'hash' then
+          local avatar = redis.call('HGET', k, 'avatar')
+          if avatar and reason(fam.fields.avatar, avatar) == nil and missingAvatar(avatar) then
+            add(k, fam.family, 'field avatar: ' .. sample(avatar) .. ' names no image of the avatar set (invariant profile-avatar)')
+          end
+        end
       elseif fam.family == 'user:{id}:consent' or fam.family == 'user:{id}:broadcaster-attrs:{scid}' then
         dependents[#dependents + 1] = { k, fam.family, parts.id }
       end
@@ -1333,6 +1372,7 @@ end
 -- ipairs): a fixed list and a numeric loop.
 local WRITE_FUNCTIONS = {
   'tv30_announced_services',
+  'tv30_avatar_write',
   'tv30_bind_register',
   'tv30_bind_remove',
   'tv30_broadcaster_attributes',

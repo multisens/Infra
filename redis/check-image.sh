@@ -1,6 +1,7 @@
 #!/bin/sh
 # Check at image build time: on a temporary redis-server, loads the library,
-# applies seed.resp and requires a load without errors and an empty audit.
+# applies avatars.resp and seed.resp and requires loads without errors and an
+# empty audit.
 # Nothing stays in the image (no RDB or AOF).
 set -eu
 PORT=6390
@@ -17,9 +18,15 @@ stop() { redis-cli -p "$PORT" shutdown nosave >/dev/null 2>&1 || true; rm -f /tm
 out=$(sh "$LIB/library.sh" "$LIB/schema.json" "$LIB/functions.lua" | redis-cli -p "$PORT" -x FUNCTION LOAD REPLACE)
 [ "$out" = tv30 ] || { echo "check-image: the library did not load: $out"; stop; exit 1; }
 
+res=$(redis-cli -p "$PORT" --pipe < /avatars.resp 2>&1) || true
+if ! echo "$res" | grep -q '^errors: 0,'; then
+  echo "check-image: the avatar set was refused by the schema:"
+  echo "$res"
+  stop; exit 1
+fi
 res=$(redis-cli -p "$PORT" --pipe < /seed.resp 2>&1) || true
 if ! echo "$res" | grep -q '^errors: 0,'; then
-  echo "check-image: the initial load (userData.json) was refused by the schema:"
+  echo "check-image: the initial load (user-data.json) was refused by the schema:"
   echo "$res"
   stop; exit 1
 fi
@@ -31,4 +38,4 @@ if [ -n "$audit" ]; then
 fi
 n=$(redis-cli -p "$PORT" --raw SCARD users:index)
 stop
-echo "check-image: tv30 library loaded, initial load with $n profile(s) through the functions, empty audit"
+echo "check-image: tv30 library loaded, avatar set and initial load with $n profile(s) through the functions, empty audit"

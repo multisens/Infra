@@ -5,13 +5,17 @@
     "Redis, the functions and this schema belong to the testbed, not to ABNT NBR 25608;",
     "the 'source' field of each rule says where it came from (section of the standard, schemas.json of the broker or code)."
   ],
-  "version": "14",
+  "version": "15",
   "library": "tv30",
   "errorPrefix": "TV30SCHEMA",
 
-  "auditedPrefixes": ["cache:", "session:", "users:", "user:", "clients:", "client:", "origins:", "bind-context:", "services:", "v100.0:"],
+  "auditedPrefixes": ["avatar:", "cache:", "session:", "users:", "user:", "clients:", "client:", "origins:", "bind-context:", "services:", "v100.0:"],
 
   "definitions": {
+    "avatarName": {
+      "type": "fileName", "maxName": 128, "extensions": ["svg"],
+      "source": "Name of an image of the fixed avatar set (avatar:{name}), in the format ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.svg$. Table 7 says only 'file path'; the testbed restricts the path to the name of an image of the set"
+    },
     "appContextId": {
       "type": "text", "min": 1, "max": 256,
       "source": "BALD @appContextId (ABNT NBR 25608, 10.1.2, Table 10), an URI"
@@ -173,6 +177,20 @@
       "functions": []
     },
     {
+      "family": "avatar:{name}",
+      "key": "avatar:{name}",
+      "type": "hash",
+      "owner": "aop-profile-manager (in the process of the AoP)",
+      "description": "The fixed set of avatar images: one hash per image, written only by the load of every start of redis (emit_seed.py). The avatar field of user:{id} names one of them; the AoP shows it and tv3ws serves it in C.6.14.6.",
+      "parts": { "name": { "ref": "avatarName" } },
+      "fields": {
+        "label": { "type": "text", "min": 1, "max": 32, "required": true, "source": "name of the image in the profile form" },
+        "type": { "type": "enum", "values": ["image/svg+xml"], "required": true, "source": "media type of the image, the Content-Type of C.6.14.6 (Table C.75)" },
+        "body": { "type": "bytes", "max": 65536, "required": true, "source": "the SVG document of the image" }
+      },
+      "functions": ["tv30_avatar_write"]
+    },
+    {
       "family": "users:index",
       "key": "users:index",
       "type": "set",
@@ -194,7 +212,7 @@
       "fields": {
         "id": { "ref": "profileId", "required": true, "source": "Table 7: UUID string, required" },
         "nickname": { "type": "text", "min": 1, "max": 20, "required": true, "source": "Table 7: string (up to 20 characters), required" },
-        "avatar": { "type": "fileName", "maxName": 128, "extensions": ["svg", "png", "jpg", "jpeg", "webp"], "source": "Table 7: 'Path indicating the file with the graphical representation of the viewer profile', file path, optional. Name of a file of the thumbnail directory (<USER_DATA_PATH>/thumbs in the AoP = USER_THUMBS in tv3ws, which serves it in C.6.14.6), in the format ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.(svg|png|jpg|jpeg|webp)$; absent = the default avatar of each screen. The AoP writes <profile id>.svg. The standard only says 'file path'; the testbed restricts the path to a name inside a directory" },
+        "avatar": { "ref": "avatarName", "source": "Table 7: 'Path indicating the file with the graphical representation of the viewer profile', file path, optional. The name of an image of avatar:{name} (invariant profile-avatar), served by tv3ws in C.6.14.6; absent = the generic icon of each screen" },
         "parentalControl": { "ref": "boolean", "required": true, "source": "Table 7: (true | false), required" },
         "maxContentRating": { "type": "enum", "values": ["L", "10", "12", "14", "16", "18"], "requiredIf": { "field": "parentalControl", "value": "true" }, "source": "Table 7: predefined values of the country (age rating of Brazil, the same as the AoP); required only if parentalControl = true" },
         "audioLanguage": { "ref": "language", "source": "Table 7: IETF RFC 5646, optional" },
@@ -386,6 +404,11 @@
       "source": "Derived from the code: the creation writes profile and visibility together and the removal of the profile (tv30_profile_remove) deletes the four families together"
     },
     {
+      "id": "profile-avatar",
+      "description": "The avatar field of every user:{id}, when present, names an existing avatar:{name}.",
+      "source": "the avatar of the profile is an image of the fixed set; tv30_profile_write refuses a name outside it"
+    },
+    {
       "id": "disjoint-clients",
       "description": "No id is at the same time in clients:authorized and clients:blocked.",
       "source": "the client is authorized or blocked, never both"
@@ -406,7 +429,8 @@
     { "name": "tv30_cache_remove", "arguments": "<appContextId>", "effect": "DEL cache:meta:{appContextId} and cache:body:{appContextId}; HDEL cache:services and cache:last-access", "returns": "1 if it was in the cache, 0 otherwise", "callers": ["aop-cc (aop-application-context-cache: STORED_REMOVE)"] },
     { "name": "tv30_cache_clear_before", "arguments": "<appContextId> <instant in ms>", "effect": "HDEL of every file whose lastModified is before the instant; with no file left, the Application Context ID leaves the cache", "returns": "number of files removed", "callers": ["aop-cc (aop-application-context-cache: @clearAppContextCacheDate)"] },
     { "name": "tv30_current_app", "arguments": "[<field> <value> ...] (none = no application running)", "effect": "rewrites the whole hash session:current-app (DEL + HSET); without arguments, only the DEL", "returns": "1 if written, 0 if only deleted", "callers": ["aop-cc (aop-application-lifecycle-manager: launch and end of a broadcaster application)"] },
-    { "name": "tv30_profile_write", "arguments": "<id> <n> <service 1> ... <service n> <field> <value> [...]", "effect": "SADD users:index; rewrites user:{id} (DEL + HSET); adds the n services to user:{id}:consent. An id outside users:index with the set at the limit (maxMembers) is refused", "returns": "1", "callers": ["AoP (profile creation and default profile)", "initial load (emit_seed.py)", "migrate_to_redis.py (manual debugging)"] },
+    { "name": "tv30_avatar_write", "arguments": "<name> <label> <media type> <body>", "effect": "rewrites the whole hash avatar:{name} (DEL + HSET)", "returns": "1", "callers": ["load of every start of redis (emit_seed.py)"] },
+    { "name": "tv30_profile_write", "arguments": "<id> <n> <service 1> ... <service n> <field> <value> [...]", "effect": "SADD users:index; rewrites user:{id} (DEL + HSET); adds the n services to user:{id}:consent. An id outside users:index with the set at the limit (maxMembers) is refused, and so is an avatar that names no avatar:{name} (invariant profile-avatar)", "returns": "1", "callers": ["AoP (profile creation and default profile)", "initial load (emit_seed.py)", "migrate_to_redis.py (manual debugging)"] },
     { "name": "tv30_profile_last_access", "arguments": "<id> <instant in ms>", "effect": "HSET user:{id} lastAccess, only if the id is in users:index", "returns": "1 if written, 0 if the profile does not exist", "callers": ["AoP (change of current user)"] },
     { "name": "tv30_profile_remove", "arguments": "<id>", "effect": "SREM users:index; DEL user:{id}, user:{id}:consent and every user:{id}:broadcaster-attrs:*", "returns": "number of keys and members removed", "callers": ["AoP (profile removal by the viewer, in the profile manager)"] },
     { "name": "tv30_broadcaster_attributes", "arguments": "<id> <scid> <field> <value> [...] (an empty value removes the field)", "effect": "HDEL/HSET user:{id}:broadcaster-attrs:{scid}, with the 20 MB limit checked on the result", "returns": "number of fields changed", "callers": ["tv3ws (C.6.14.5)"] },

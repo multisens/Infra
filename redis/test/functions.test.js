@@ -48,8 +48,12 @@ const UUID_VERSAO = 14;
 const UUID_VARIANTE = 19;
 const comDigito = (u, i, d) => u.slice(0, i) + d + u.slice(i + 1);
 const SVG_EM_LINHA = '<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100" rx="30" fill="#4d7c5b"/></svg>';
+// The image of the avatar set that every test starts with (limpo).
+const AVATAR = 'green.svg';
+const AVATAR_IMG = { label: 'Verde', type: 'image/svg+xml', body: SVG_EM_LINHA };
+const avatarArgs = (nome, h) => [nome, h.label, h.type, h.body];
 const PERFIL = {
-    id: P1, nickname: 'Viewer 1', avatar: `${P1}.svg`,
+    id: P1, nickname: 'Viewer 1', avatar: AVATAR,
     parentalControl: 'true', maxContentRating: '12',
     audioLanguage: 'pt-BR', closedCaptioningLanguage: 'pt-BR', userInterfaceLanguage: 'en',
     closedCaptioning: 'true', closedSigning: 'true', closedSigningSide: 'right', closedSigningWidth: '28',
@@ -132,7 +136,11 @@ async function recusa(desc, nome, args, trechos = []) {
 
 async function limpo() {
     await r('FLUSHALL');
+    await fcall('tv30_avatar_write', ...avatarArgs(AVATAR, AVATAR_IMG));
 }
+// An image of the set with the name v, for a profile that names it; a name
+// out of the rule is not written (the refusal comes from the profile).
+const gravaAvatar = v => fcall('tv30_avatar_write', ...avatarArgs(v, AVATAR_IMG)).catch(() => undefined);
 beforeEach(limpo);
 
 // ----------------------------------------------- violations of each rule --
@@ -318,11 +326,14 @@ function aceitacoes(regra) {
         // The avatar of the load, what the AoP writes, each extension, the
         // boundary sizes and ".", "_" and "-" inside the name ("a..b.svg":
         // without "/", ".." does not go up a directory).
-        case 'fileName': return [
-            'c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10.svg', `${require('crypto').randomUUID()}.svg`,
-            ...regra.extensions.map(e => `a.${e}`), 'Z.png', '0.jpg',
-            'a'.repeat(regra.maxName) + '.' + regra.extensions[0], 'Avatar_1-x.webp', 'a.png.svg', 'a..b.svg', 'a-.jpeg', 'a_.svg', 'a.b.c.png',
-        ];
+        case 'fileName': {
+            const ext = regra.extensions[0];
+            return [
+                AVATAR, `${require('crypto').randomUUID()}.${ext}`,
+                ...regra.extensions.map(e => `a.${e}`), `Z.${ext}`, `0.${ext}`,
+                'a'.repeat(regra.maxName) + '.' + ext, `Avatar_1-x.${ext}`, `a.png.${ext}`, `a..b.${ext}`, `a-.${ext}`, `a_.${ext}`, `a.b.c.${ext}`,
+            ];
+        }
         case 'origin': return ['http://users-test.apps.localhost:8080', 'http://a.apps.localhost', 'https://x.example', 'https://x.example:8443', 'http://[::1]:8099', 'http://127.0.0.1:65535'];
         case 'json':
             if (regra.fields.contentType) {
@@ -357,6 +368,10 @@ function jsonValido(regra) {
 // first.
 const indexaP1 = () => fcall('tv30_profile_write', ...perfilArgs(P1, [], PERFIL));
 const SLOTS = {
+    'avatar:{name}': [
+        { rotulo: '{name}', regra: f => f.parts.name, chamada: v => ['tv30_avatar_write', avatarArgs(v, AVATAR_IMG)], trecho: '{name} of the key:' },
+        ...campoSlots(campo => v => ['tv30_avatar_write', avatarArgs('x.svg', { ...AVATAR_IMG, [campo]: v })]),
+    ],
     'session:current-user': [{ rotulo: 'valor', regra: f => f.value, chamada: v => ['tv30_session_user', [v]], trecho: 'value:' }],
     'session:current-service-id': [{ rotulo: 'valor', regra: f => f.value, chamada: v => ['tv30_session_service_id', [v]], trecho: 'value:' }],
     'session:current-service': campoSlots(campo => v => ['tv30_session_service', plano({ ...SVC, [campo]: v })]),
@@ -381,7 +396,7 @@ const SLOTS = {
         { rotulo: '{id}', regra: f => f.parts.id, chamada: v => ['tv30_profile_write', perfilArgs(v, [], { ...PERFIL, id: v })], trecho: '{id} of the key:' },
         // The id field has the same rule as the {id} part (slot above) and must
         // equal it (own test below): left out of the per-field slots.
-        ...campoSlots(campo => v => ['tv30_profile_write', perfilArgs(P1, [], { ...PERFIL, [campo]: v })], ['id']),
+        ...campoSlots(campo => v => ['tv30_profile_write', perfilArgs(P1, [], { ...PERFIL, [campo]: v })], ['id'], { avatar: gravaAvatar }),
     ],
     'user:{id}:consent': [
         { rotulo: 'member', regra: f => f.members, chamada: v => ['tv30_profile_write', perfilArgs(P1, ['urn:tv30:service:ok', v], PERFIL)], trecho: 'member' },
@@ -423,15 +438,15 @@ const SLOTS = {
 };
 // One slot per declared field; the family comes when the cases are
 // generated.
-function campoSlots(montar, exceto = []) {
-    return [{ porCampo: true, montar, exceto }];
+function campoSlots(montar, exceto = [], preps = {}) {
+    return [{ porCampo: true, montar, exceto, preps }];
 }
 function expandeSlots(f) {
     const out = [];
     for (const s of SLOTS[f.family] || []) {
         if (!s.porCampo) { out.push(s); continue; }
         for (const campo of Object.keys(f.fields).filter(c => !s.exceto.includes(c))) {
-            out.push({ rotulo: `field ${campo}`, regra: ff => ff.fields[campo], chamada: s.montar(campo), trecho: `field ${campo}:` });
+            out.push({ rotulo: `field ${campo}`, regra: ff => ff.fields[campo], prep: s.preps[campo], chamada: s.montar(campo), trecho: `field ${campo}:` });
         }
     }
     return out;
@@ -504,8 +519,9 @@ for (const fam of ESQ.families.filter(f => f.functions.length > 0)) {
                 aceitos++;
             }
         }
-        // Required, conditional and unexpected fields.
-        if (fam.fields) {
+        // Required, conditional and unexpected fields. tv30_avatar_write takes
+        // the fields as positional arguments: none can be absent or extra.
+        if (fam.fields && fam.family !== 'avatar:{name}') {
             const [base, chamar] = {
                 'session:current-service': [SVC, h => ['tv30_session_service', plano(h)]],
                 'session:current-app': [APP, h => ['tv30_current_app', plano(h)]],
@@ -541,6 +557,17 @@ for (const fam of ESQ.families.filter(f => f.functions.length > 0)) {
         t.diagnostic(`${fam.family}: ${casos} recusa(s) e ${aceitos} aceitacao(oes) de fronteira`);
     });
 }
+
+test('avatar do perfil: so imagem do conjunto; a imagem e reescrita inteira', async () => {
+    await recusa('avatar fora do conjunto', 'tv30_profile_write', perfilArgs(P1, [], { ...PERFIL, avatar: 'blue.svg' }),
+        [`user:${P1} field avatar: "blue.svg" names no image of the avatar set (avatar:blue.svg does not exist; invariant profile-avatar)`]);
+    await fcall('tv30_avatar_write', ...avatarArgs('blue.svg', { ...AVATAR_IMG, label: 'Azul' }));
+    await fcall('tv30_profile_write', ...perfilArgs(P1, [], { ...PERFIL, avatar: 'blue.svg' }));
+    await fcall('tv30_avatar_write', ...avatarArgs('blue.svg', { ...AVATAR_IMG, label: 'Azul escuro' }));
+    assert.equal(await r('HGET', 'avatar:blue.svg', 'label'), 'Azul escuro');
+    assert.deepEqual(await auditoria(), []);
+    await recusa('argumento a menos', 'tv30_avatar_write', ['blue.svg', 'Azul', 'image/svg+xml'], ['usage:']);
+});
 
 test('user:{id}: condicionais falsos dispensam os campos; id do hash igual ao da chave', async () => {
     await fcall('tv30_profile_write', ...perfilArgs(P1, [], PERFIL_MIN));
@@ -745,7 +772,7 @@ test('avatar em SVG em linha, gravado a mao: auditoria aponta, regravacao recusa
     await recusa('regravar com o SVG', 'tv30_profile_write', perfilArgs(P1, [], { ...PERFIL_MIN, avatar: SVG_EM_LINHA }), ['field avatar: inline SVG is not accepted']);
     assert.equal(await fcall('tv30_profile_last_access', P1, '7'), 1);
     assert.equal(await fcall('tv30_broadcaster_attributes', P1, 'urn:s', 'cor', 'azul'), 1);
-    await r('HSET', `user:${P1}`, 'avatar', `${P1}.svg`);
+    await r('HSET', `user:${P1}`, 'avatar', AVATAR);
     assert.deepEqual(await auditoria(), []);
     await fcall('tv30_profile_write', ...perfilArgs(P1, [], PERFIL_MIN));
     assert.equal(await r('HEXISTS', `user:${P1}`, 'avatar'), 0);
@@ -757,7 +784,7 @@ test('avatar em SVG em linha, gravado a mao: auditoria aponta, regravacao recusa
 // Catches a deviation between the schema and the expression of the contract
 // that the cases generated from the schema itself do not catch (an extension
 // removed from the list, maxNome changed).
-const AVATAR_CONTRATO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(svg|png|jpg|jpeg|webp)$/;
+const AVATAR_CONTRATO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.svg$/;
 test('avatar: a regra do esquema decide igual a expressao do contrato', async (t) => {
     const regra = resolve(familia('user:{id}').fields.avatar);
     const corpus = new Set([
@@ -770,7 +797,7 @@ test('avatar: a regra do esquema decide igual a expressao do contrato', async (t
     let s = 12345;
     const rnd = n => { s = (s * 16807) % 2147483647; return s % n; };
     const alfabeto = ['a', 'Z', '0', '.', '_', '-', '/', ' ', 'é', 's', 'v', 'g', 'p', 'n', 'j', 'e', 'w', 'b', 'G', '\\', '<'];
-    const exts = ['svg', 'png', 'jpg', 'jpeg', 'webp', 'Svg', 'sv', 'gif'];
+    const exts = ['svg', 'svg', 'svg', 'svg', 'png', 'Svg', 'sv', 'svgz'];
     for (let i = 0; i < 400; i++) {
         let v = '';
         const n = 1 + rnd(9);
@@ -782,6 +809,7 @@ test('avatar: a regra do esquema decide igual a expressao do contrato', async (t
     for (const v of corpus) {
         await limpo();
         let erro = null;
+        await gravaAvatar(v);
         try { await fcall('tv30_profile_write', ...perfilArgs(P1, [], { ...PERFIL_MIN, avatar: v })); } catch (e) { erro = e; }
         const esperado = AVATAR_CONTRATO.test(v);
         assert.equal(erro === null, esperado, `${JSON.stringify(v)}: o contrato ${esperado ? 'aceita' : 'recusa'}, a funcao ${erro ? 'recusou: ' + erro.message : 'aceitou'}`);
@@ -1003,6 +1031,12 @@ test('auditoria: cada tipo de problema gravado a mao aparece com chave, familia 
         // Avatar as an inline SVG, and a path with a directory.
         [['HSET', `user:${P1}`, 'avatar', SVG_EM_LINHA], [`user:${P1}`, 'user:{id}', 'field avatar: inline SVG is not accepted']],
         [['HSET', `user:${P1}`, 'avatar', '../segredo.svg'], [`user:${P1}`, 'user:{id}', 'field avatar: only the file name, without a directory']],
+        // Avatar of the set: a name outside it, the image removed, an image
+        // out of the schema.
+        [['HSET', `user:${P1}`, 'avatar', 'blue.svg'], [`user:${P1}`, 'user:{id}', 'field avatar: "blue.svg" names no image of the avatar set (invariant profile-avatar)']],
+        [['DEL', `avatar:${AVATAR}`], [`user:${P1}`, 'user:{id}', 'invariant profile-avatar']],
+        [['HSET', `avatar:${AVATAR}`, 'type', 'image/png'], [`avatar:${AVATAR}`, 'avatar:{name}', 'field type:']],
+        [['HSET', 'avatar:a.png', 'label', 'A', 'type', 'image/svg+xml', 'body', 'x'], ['avatar:a.png', 'avatar:{name}', '{name} of the key: extension must be one of .svg']],
         [['HSET', `user:${P1}:broadcaster-attrs:urn:s`, 'empty', ''], [`user:${P1}:broadcaster-attrs:urn:s`, 'user:{id}:broadcaster-attrs:{scid}', 'field "empty": empty']],
         [['HSET', `user:${P1}:broadcaster-attrs:urn:s`, 'nickname', 'x'], [`user:${P1}:broadcaster-attrs:urn:s`, 'user:{id}:broadcaster-attrs:{scid}', 'field nickname: basic attribute']],
         [['SADD', `user:${P1}:consent`, ''], [`user:${P1}:consent`, 'user:{id}:consent', 'member "": empty']],

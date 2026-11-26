@@ -37,12 +37,14 @@ test('aop-cc (Go): nenhum comando de escrita alem de FCALL no adaptador', (t) =>
     t.diagnostic(`${r.files} arquivo(s) .go (sem os _test.go)`);
 });
 
-test('carga inicial e migracao manual (Python): so FCALL tv30_profile_write', (t) => {
+test('carga inicial e migracao manual (Python): so FCALL tv30_profile_write e tv30_avatar_write', (t) => {
     const files = [path.join(INFRA, 'redis', 'emit_seed.py'), path.join(INFRA, 'mqtt-broker', 'infra', 'migrate_to_redis.py')];
     const r = checkPy(files);
     assert.deepEqual(r.violations, [], r.violations.join('\n'));
     const source = fs.readFileSync(files[1], 'utf8');
     assert.match(source, /'FCALL', 'tv30_profile_write'/, 'profile_fcall_args monta a chamada da funcao');
+    const seed = fs.readFileSync(files[0], 'utf8');
+    assert.match(seed, /'FCALL', 'tv30_avatar_write'/, 'avatar_commands monta a chamada da funcao');
     t.diagnostic(`${r.files} arquivo(s) .py`);
 });
 
@@ -57,6 +59,7 @@ test('funcoes chamadas pelos adaptadores existem e cobrem as familias de cada do
     for (const m of cc.matchAll(/"(tv30_[a-z0-9_]+)"/g)) used.add(m[1]);
     // Initial load (test above).
     used.add('tv30_profile_write');
+    used.add('tv30_avatar_write');
     for (const f of used) assert.ok(declared.has(f), `${f} declarada no schema.json`);
     // Every write function of the schema has a caller.
     for (const f of s.functions.filter(x => !x.readOnly)) {

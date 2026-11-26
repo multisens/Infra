@@ -122,17 +122,20 @@ mode_image() {
   grep -q 'load done' <<<"$logs" && echo "PASS  log: load done" || { echo "FAIL log without 'load done'"; ok=0; }
   local n; n=$(docker exec "$C" redis-cli --raw SCARD users:index)
   [ "${n:-0}" -ge 1 ] && echo "PASS  initial load wrote $n profile(s) through the functions" || { echo "FAIL users:index empty"; ok=0; }
-  # Id of the first profile of the load, read from the template.
-  local P; P=$(sed -n 's/^[[:space:]]*"id": "\([^"]*\)".*/\1/p' "$INFRA/user-files-template/userData.json" | head -1)
+  # Id of the first profile of the load, read from user-data.json.
+  local P; P=$(sed -n 's/^[[:space:]]*"id": "\([^"]*\)".*/\1/p' "$INFRA/redis/user-data.json" | head -1)
   [[ "$P" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] && [ "$(docker exec "$C" redis-cli --raw SISMEMBER users:index "$P")" = 1 ] \
     && echo "PASS  profile of the load with a strict lowercase UUID id ($P), in users:index" || { echo "FAIL id of the load '$P' (strict UUID in users:index?)"; ok=0; }
   local b; b=$(docker exec "$C" redis-cli --raw HGET "user:$P" closedCaptioning)
   [ "$b" = false ] && echo "PASS  boolean of the load written as 'false'" || { echo "FAIL closedCaptioning of the load = '$b'"; ok=0; }
-  # Avatar of the load: the name of a file the template has in thumbs/.
-  local av f; av=$(docker exec "$C" redis-cli --raw HGET "user:$P" avatar)
-  f="$INFRA/user-files-template/thumbs/$av"
-  [ "$av" = "$P.svg" ] && [ -f "$f" ] && [ "$(head -c 4 "$f")" = '<svg' ] \
-    && echo "PASS  avatar of the load = name of the file ($av), with the SVG in user-files-template/thumbs" || { echo "FAIL avatar of the load '$av' (expected $P.svg, with the SVG in user-files-template/thumbs)"; ok=0; }
+  # Avatar set: loaded on every start; the avatar of the load names one of
+  # its images.
+  grep -q 'avatar set loaded' <<<"$logs" && echo "PASS  log: avatar set loaded" || { echo "FAIL log without 'avatar set loaded'"; ok=0; }
+  local av t body; av=$(docker exec "$C" redis-cli --raw HGET "user:$P" avatar)
+  t=$(docker exec "$C" redis-cli --raw HGET "avatar:$av" type)
+  body=$(docker exec "$C" redis-cli --raw HGET "avatar:$av" body)
+  [ -n "$av" ] && [ "$t" = image/svg+xml ] && [ "${body:0:4}" = '<svg' ] \
+    && echo "PASS  avatar of the load ($av) names an SVG of the avatar set" || { echo "FAIL avatar of the load '$av' (type '$t', without the SVG in avatar:$av?)"; ok=0; }
   local v schema; v=$(docker exec "$C" redis-cli --raw FCALL_RO tv30_version 0)
   schema=$(sed -n 's/^ *"version": "\([^"]*\)".*/\1/p' "$INFRA/redis/schema.json")
   [ -n "$schema" ] && [ "$v" = "$schema" ] && echo "PASS  image with the schema version $v (the one of schema.json)" || { echo "FAIL schema version in the image '$v', in schema.json '$schema'"; ok=0; }
@@ -149,6 +152,7 @@ mode_image() {
   logs=$(docker logs --since 0 "$C" 2>&1)
   [ "$(grep -c 'tv30 function library loaded' <<<"$logs")" -ge 2 ] && echo "PASS  new start reloaded the library" || { echo "FAIL library not reloaded on the new start"; ok=0; }
   grep -q 'load already applied' <<<"$logs" && echo "PASS  new start kept the load (seed:done)" || { echo "FAIL new start without 'load already applied'"; ok=0; }
+  [ "$(grep -c 'avatar set loaded' <<<"$logs")" -ge 2 ] && echo "PASS  new start reloaded the avatar set" || { echo "FAIL avatar set not reloaded on the new start"; ok=0; }
   [ "$(docker exec "$C" redis-cli --raw HGET "user:$P" lastAccess)" = 4242 ] && echo "PASS  data written before the new start stays (AOF)" || { echo "FAIL lastAccess lost"; ok=0; }
   [ "$s" = healthy ] && echo "PASS  healthy again" || { echo "FAIL healthcheck after the new start: $s"; ok=0; }
   # The commander exiting brings the container down (exit 1), with the

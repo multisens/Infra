@@ -5,8 +5,6 @@
 'use strict';
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { connect } = require('./resp');
 
@@ -14,26 +12,13 @@ const TV30 = path.join(__dirname, '..', '..', '..');
 const TV3WS = path.join(TV30, 'tv3ws');
 const AOP = path.join(TV30, 'aop-shell');
 
-// The AoP writes the avatar to <USER_DATA_PATH>/thumbs/<id>.svg. TV30 is
-// mounted read-only, so here USER_DATA_PATH is a temporary directory, set
-// before the AoP is loaded.
-const USER_DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'tv30-contrato-'));
-const THUMBS = path.join(USER_DATA, 'thumbs');
-fs.mkdirSync(THUMBS);
-process.env.USER_DATA_PATH = USER_DATA;
 // Read when tv3ws issues an access token.
 process.env.JWT_SECRET = 'tv30-test-secret';
 process.env.JWT_ISSUER = 'GenericIssuer';
-// The same format as the fileName type of schema.json.
-const AVATAR_FORMATO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(svg|png|jpg|jpeg|webp)$/;
-// An SVG of the palette of the AoP form (aop-shell/src/modules/profile-manager/
-// avatar.js, color Azul), as the creation screen sends it.
-const SVG_AZUL = '<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">' +
-    '<rect width="100" height="100" rx="30" fill="#4d5b7c"/>' +
-    '<circle cx="50" cy="40" r="14" fill="none" stroke="#ffffff" stroke-width="5"/>' +
-    '<path d="M 14 90 a 36 36 0 0 1 72 0" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/>' +
-    '</svg>';
-const arquivoAvatar = id => path.join(THUMBS, `${id}.svg`);
+// An image of the avatar set, as the load of every start writes it
+// (infra/redis/emit_seed.py).
+const AVATAR = 'blue.svg';
+const SVG_AZUL = '<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100" rx="30" fill="#4d5b7c"/></svg>';
 
 // tv3ws is TypeScript: the ts-node of tv3ws itself, transpile only.
 require(path.join(TV3WS, 'node_modules', 'ts-node')).register({
@@ -55,12 +40,12 @@ const esquema = { message: /^TV30SCHEMA / };
 before(async () => {
     r = await connect();
     await r('FLUSHALL');
+    await r('FCALL', 'tv30_avatar_write', 0, AVATAR, 'Azul', 'image/svg+xml', SVG_AZUL);
 });
 after(async () => {
     await tvRedis.quit();
     await aopRedis.quit();
     await r.close();
-    fs.rmSync(USER_DATA, { recursive: true, force: true });
 });
 
 test('tv3ws: espelhos da sessao e o hash do servico corrente', async () => {
@@ -139,7 +124,7 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
     const bodies = [
         { nickname: 'Viewer 1' },
         // With the avatar chosen in the form.
-        { nickname: 'é'.repeat(20), parentalControl: true, maxContentRating: 'L', audioLanguage: 'en', userInterfaceLanguage: 'pt-BR', avatar: SVG_AZUL },
+        { nickname: 'é'.repeat(20), parentalControl: true, maxContentRating: 'L', audioLanguage: 'en', userInterfaceLanguage: 'pt-BR', avatar: AVATAR },
         { nickname: 'Libras', closedSigning: true, closedSigningSide: 'left', closedSigningWidth: '14' },
         { nickname: 'Legenda', closedCaptioning: true, closedCaptioningLanguage: 'es-419', audioDescription: true, dialogEnhancement: 'on', voiceGuidance: 1 },
         { nickname: 'Visivel', accessConsent: ['urn:tv30:service:webmedia', 'urn:tv30:service:uff'] },
@@ -156,17 +141,19 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
     assert.equal(new Set(ids).size, 5);
     assert.equal(await r('SCARD', 'users:index'), 5);
     assert.deepEqual(await auditoria(), [], 'perfis montados pelo AoP cumprem o esquema');
-    // avatar = <id>.svg, with the SVG of the form in the file; without an
-    // avatar in the form, the field may be absent.
+    // avatar = the name of the image chosen in the form; without an avatar
+    // in the form, the field is absent.
     for (const [i, id] of ids.entries()) {
         const av = await r('HGET', `user:${id}`, 'avatar');
-        if (av === null && !bodies[i].avatar) continue;
-        assert.equal(av, `${id}.svg`, `avatar do perfil ${i} (${bodies[i].nickname})`);
-        assert.match(av, AVATAR_FORMATO);
-        const svg = fs.readFileSync(arquivoAvatar(id), 'utf8');
-        assert.ok(svg.startsWith('<svg'), `arquivo do avatar do perfil ${i} e SVG: ${svg.slice(0, 40)}`);
+        assert.equal(av, bodies[i].avatar ?? null, `avatar do perfil ${i} (${bodies[i].nickname})`);
     }
-    assert.ok(fs.readFileSync(arquivoAvatar(ids[1]), 'utf8').includes('#4d5b7c'), 'o SVG escolhido no formulario vai para o arquivo');
+    // A name outside the set: refused by the AoP before the write, and by the
+    // function (invariant profile-avatar).
+    await assert.rejects(profiles.createProfile({ nickname: 'Fora', avatar: 'red.svg' }), err => err instanceof profiles.ValidationError);
+    await assert.rejects(aop.profileWrite('9d1e2f3a-4b5c-4d6e-8f70-81a2b3c4d5e6', [], {
+        id: '9d1e2f3a-4b5c-4d6e-8f70-81a2b3c4d5e6', nickname: 'Direto', avatar: 'red.svg', parentalControl: 'false', closedCaptioning: 'false',
+        closedSigning: 'false', audioDescription: 'false', dialogEnhancement: 'false', voiceGuidance: 'false',
+    }), { message: /profile-avatar/ });
     assert.equal(await profiles.touchLastAccess(ids[1], 5), true);
     assert.equal(await profiles.touchLastAccess('desconhecido', 5), false);
     // A broadcaster attribute on the profile removed below.
@@ -181,9 +168,7 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
     await assert.rejects(tv.broadcasterAttributes('00000000-0000-0000-0000-000000000000', 'urn:s', { cor: 'azul' }), { message: /^TV30SCHEMA .*nil UUID/ });
     await assert.rejects(tv.broadcasterAttributes('9d1e2f3a-4b5c-9d6e-8f70-81a2b3c4d5e6', 'urn:s', { cor: 'azul' }), { message: /^TV30SCHEMA .*UUID version must be 1 to 8/ });
     // Sixth profile: the write function refuses it by the limit of the schema,
-    // and the AoP answers the message of the screen; no eviction and no new
-    // file.
-    const thumbsAntes = fs.readdirSync(THUMBS).sort();
+    // and the AoP answers the message of the screen; no eviction.
     await assert.rejects(profiles.createProfile({ nickname: 'Sexto' }),
         err => err instanceof profiles.ValidationError && err.message === 'O limite de 5 perfis foi atingido. O perfil não foi criado.');
     const novo = 'c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10';
@@ -193,25 +178,18 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
     }), err => aop.profileLimitOf(err) === 5);
     assert.equal(await r('SCARD', 'users:index'), 5);
     assert.equal(await r('HGET', `user:${ids[0]}:broadcaster-attrs:urn:tv30:service:users-test`, 'cor'), 'azul');
-    assert.deepEqual(fs.readdirSync(THUMBS).sort(), thumbsAntes, 'a recusa nao deixa arquivo de avatar');
-    // In the thumbnail directory, only the avatars of existing profiles.
-    const vivos = [];
-    for (const id of await r('SMEMBERS', 'users:index')) {
-        const av = await r('HGET', `user:${id}`, 'avatar');
-        if (av !== null) vivos.push(av);
-    }
-    assert.deepEqual(fs.readdirSync(THUMBS).sort(), vivos.sort(), 'arquivos de thumbs/ = avatares dos perfis existentes');
     // Removal by the manager takes visibility and broadcaster attributes in
-    // the same function (tv30_profile_remove), then the avatar file.
-    assert.ok(fs.existsSync(arquivoAvatar(ids[0])));
+    // the same function (tv30_profile_remove); the image of the set stays.
     await profiles.removeProfile(ids[0]);
+    await profiles.removeProfile(ids[1]);
     assert.deepEqual(await r('KEYS', `user:${ids[0]}*`), [], 'a remocao leva visibilidade e atributos de emissora juntos');
     assert.equal(await r('SISMEMBER', 'users:index', ids[0]), 0);
-    assert.equal(fs.existsSync(arquivoAvatar(ids[0])), false, 'o arquivo do avatar nao existe mais');
+    assert.equal(await r('SISMEMBER', 'users:index', ids[1]), 0);
+    assert.equal(await r('EXISTS', `avatar:${AVATAR}`), 1, 'a imagem do conjunto fica');
     assert.deepEqual(await auditoria(), []);
-    // With four, the fifth fits again.
+    // With three, the fourth fits again.
     const { user } = await profiles.createProfile({ nickname: 'Depois' });
-    assert.equal(await r('SCARD', 'users:index'), 5);
+    assert.equal(await r('SCARD', 'users:index'), 4);
     assert.equal(await r('SISMEMBER', 'users:index', user.id), 1);
     assert.deepEqual(await auditoria(), []);
 });

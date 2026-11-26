@@ -42,6 +42,19 @@ if [ "$OUTPUT" != tv30 ]; then
 fi
 echo "[redis] tv30 function library loaded (schema version $(redis-cli --raw FCALL_RO tv30_version 0))"
 
+# The avatar set loads on every start, before the initial load, which names
+# its images: the set of this image prevails over the one of the volume. A
+# refusal stops the container, as with the library.
+RESULT=$(redis-cli --pipe < /avatars.resp 2>&1)
+if ! echo "$RESULT" | grep -q '^errors: 0,'; then
+  echo "[redis] ERROR: the avatar set was refused by the schema:"
+  echo "$RESULT" | grep -v '^All data transferred\|^Last reply received' | sed 's/^/[redis]   /'
+  kill "$REDIS_PID" 2>/dev/null
+  wait "$REDIS_PID"
+  exit 1
+fi
+echo "[redis] avatar set loaded ($(echo "$RESULT" | sed -n 's/^errors: 0, replies: \([0-9]*\).*/\1/p') image(s))"
+
 # Initial load only on an empty database. A refusal here happens only with a
 # library and a seed of different origins: without seed:done, the container
 # stays unhealthy.
@@ -54,7 +67,7 @@ if [ "$(redis-cli --raw EXISTS seed:done)" = "0" ]; then
   else
     echo "[redis] ERROR: the initial load was refused by the schema:"
     echo "$RESULT" | grep -v '^All data transferred\|^Last reply received' | sed 's/^/[redis]   /'
-    echo "[redis] seed:done NOT written: the container stays unhealthy (fix the userData.json of infra/user-files-template and rebuild the image)"
+    echo "[redis] seed:done NOT written: the container stays unhealthy (fix infra/redis/user-data.json and rebuild the image)"
   fi
 else
   echo "[redis] load already applied (seed:done present) — kept"
