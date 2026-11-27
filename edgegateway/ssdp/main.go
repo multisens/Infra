@@ -65,10 +65,13 @@ type network interface {
 	Lookup(name string) (exists, loopback bool)
 	DefaultRoute() string
 	Open(ch choice) (ssdpConn, error)
+	// The IPv6 group on the same interface.
+	Open6(ch choice) (ssdpConn, error)
 }
 
-// ssdpConn listens to the group on the chosen interface and sends with its
-// IPv4 as the source.
+// ssdpConn listens to the group on the chosen interface and sends through
+// it: in IPv4, with its IPv4 as the source; in IPv6, with the source the
+// system chooses for the link-local group.
 type ssdpConn interface {
 	// Multicast to the group.
 	Send(msg []byte) error
@@ -114,6 +117,26 @@ func (realNet) Open(ch choice) (ssdpConn, error) {
 		lc.Close()
 		snd.Close()
 		return nil, step("interface de saida do multicast ("+ch.Addr+")", err)
+	}
+	return &udpConn{lc, snd, group}, nil
+}
+
+func (realNet) Open6(ch choice) (ssdpConn, error) {
+	ifi, err := net.InterfaceByName(ch.Name)
+	if err != nil {
+		return nil, step("interface "+ch.Name, err)
+	}
+	// The zone of the link-local group is the interface: it chooses where
+	// the multicast goes out.
+	group := &net.UDPAddr{IP: net.ParseIP(ssdpGroup6), Port: ssdpPort, Zone: ifi.Name}
+	lc, err := net.ListenMulticastUDP("udp6", ifi, group)
+	if err != nil {
+		return nil, step("socket UDP 1900 (escuta do grupo IPv6)", err)
+	}
+	snd, err := net.ListenUDP("udp6", &net.UDPAddr{})
+	if err != nil {
+		lc.Close()
+		return nil, step("socket de envio IPv6", err)
 	}
 	return &udpConn{lc, snd, group}, nil
 }
@@ -180,6 +203,9 @@ type session struct {
 	udn     string
 	conn    ssdpConn
 	readErr chan error
+	// The IPv6 group; nil when it is not available on the interface.
+	conn6    ssdpConn
+	readErr6 chan error
 }
 
 // netChanged: the interface or the IPv4 of the default route changed while
@@ -191,24 +217,57 @@ func (e netChanged) Error() string {
 	return fmt.Sprintf("a rede mudou (%s %s -> %s %s)", e.from.Name, e.from.Addr, e.to.Name, e.to.Addr)
 }
 
-func (s *session) sendAll(alive bool) error {
+// sendAll sends the NOTIFY of every type to the IPv4 group, whose failure is
+// the error, and to the IPv6 group, whose failure leaves the session without
+// IPv6.
+func (a *announcer) sendAll(s *session, alive bool) error {
+	if err := sendNotify(s.conn, ssdpGroup, s, alive); err != nil {
+		return err
+	}
+	if s.conn6 == nil {
+		return nil
+	}
+	if err := sendNotify(s.conn6, ssdpGroup6, s, alive); err != nil {
+		a.dropIPv6(s, step("envio do NOTIFY IPv6", err))
+	}
+	return nil
+}
+
+func sendNotify(conn ssdpConn, group string, s *session, alive bool) error {
 	for _, u := range usns(s.udn) {
-		if err := s.conn.Send([]byte(notify(u, s.ep.location(), alive))); err != nil {
+		if err := conn.Send([]byte(notify(u, group, s.ep.location(), alive))); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// read answers searches until the socket closes (end of session) or fails.
-func (a *announcer) read(s *session) {
+// dropIPv6 closes the IPv6 group of the session, with a warning; the IPv4
+// announcement goes on, and the next session tries IPv6 again.
+func (a *announcer) dropIPv6(s *session, err error) {
+	a.logf("AVISO %v: anuncio so em IPv4 ate a proxima sessao", err)
+	s.conn6.Close()
+	s.conn6 = nil
+}
+
+func (s *session) close() {
+	s.conn.Close()
+	if s.conn6 != nil {
+		s.conn6.Close()
+	}
+}
+
+// read answers the searches of conn until the socket closes (end of
+// session) or fails, which goes to errs. The LOCATION is the same in both
+// groups.
+func (a *announcer) read(s *session, conn ssdpConn, errs chan<- error) {
 	buf := make([]byte, 4096)
 	for {
-		n, src, err := s.conn.Read(buf)
+		n, src, err := conn.Read(buf)
 		if err != nil {
 			// A socket closed by the session is a normal end.
 			if !errors.Is(err, net.ErrClosed) {
-				s.readErr <- err
+				errs <- err
 			}
 			return
 		}
@@ -218,7 +277,7 @@ func (a *announcer) read(s *session) {
 		}
 		for _, r := range answers(st, s.udn, s.ep.location(), a.now()) {
 			// A bad address of a client only gives a warning.
-			if err := s.conn.Reply([]byte(r), src); err != nil && !errors.Is(err, net.ErrClosed) {
+			if err := conn.Reply([]byte(r), src); err != nil && !errors.Is(err, net.ErrClosed) {
 				a.logf("AVISO resposta a %s nao enviada: %v", src, err)
 			}
 		}
@@ -241,14 +300,24 @@ func (a *announcer) start(ep endpoint, forced, udn string) (*session, []string, 
 		// Detected host: the IPv4 of the interface.
 		ep.Host = ch.Addr
 	}
-	s := &session{ch: ch, ep: ep, auto: auto, forced: forced, udn: udn, conn: conn, readErr: make(chan error, 1)}
-	go a.read(s)
-	if err := s.sendAll(true); err != nil {
+	s := &session{ch: ch, ep: ep, auto: auto, forced: forced, udn: udn, conn: conn, readErr: make(chan error, 1),
+		readErr6: make(chan error, 1)}
+	warns := append(warnings(ep), ch.Warnings...)
+	conn6, err := a.net.Open6(ch)
+	if err != nil {
+		warns = append(warns, fmt.Sprintf("grupo IPv6 indisponivel na interface %s (%v): anuncio so em IPv4",
+			ch.Name, err))
+	} else {
+		s.conn6 = conn6
+		go a.read(s, conn6, s.readErr6)
+	}
+	go a.read(s, conn, s.readErr)
+	if err := a.sendAll(s, true); err != nil {
 		err = a.classify(ch, step("envio do NOTIFY", err))
-		conn.Close()
+		s.close()
 		return nil, nil, err
 	}
-	return s, append(warnings(ep), ch.Warnings...), nil
+	return s, warns, nil
 }
 
 // classify: a socket error is a lack of network when the errno says so or
@@ -288,20 +357,23 @@ func (a *announcer) serve(s *session) (stop bool, err error) {
 				if err := a.checkNetwork(s); err != nil {
 					return false, err
 				}
-				if err := s.sendAll(true); err != nil {
+				if err := a.sendAll(s, true); err != nil {
 					return false, a.classify(s.ch, step("envio do NOTIFY", err))
 				}
 				continue
 			case err := <-s.readErr:
 				return false, a.classify(s.ch, step("leitura do grupo SSDP", err))
+			case err := <-s.readErr6:
+				a.dropIPv6(s, step("leitura do grupo SSDP IPv6", err))
+				continue
 			case sig = <-a.stop:
 			}
 		}
 		a.logf("%s: enviando ssdp:byebye", sig)
-		if err := s.sendAll(false); err != nil {
+		if err := a.sendAll(s, false); err != nil {
 			a.logf("byebye nao enviado: %v", err)
 		}
-		s.conn.Close()
+		s.close()
 		return true, nil
 	}
 }
@@ -320,7 +392,7 @@ func (a *announcer) checkNetwork(s *session) error {
 	if ch.Name == s.ch.Name && ch.Addr == s.ch.Addr {
 		return nil
 	}
-	if err := s.sendAll(false); err != nil {
+	if err := a.sendAll(s, false); err != nil {
 		a.logf("byebye do endereco antigo nao enviado: %v", err)
 	}
 	return netChanged{s.ch, ch}
@@ -376,13 +448,17 @@ func (a *announcer) run() int {
 			if s.auto {
 				origem = "host detectado: IPv4 da interface"
 			}
-			a.logf("anunciando %s em UDP 1900 pela interface %s (%s, via %s); LOCATION %s (%s)",
-				ssdpST, s.ch.Name, s.ch.Addr, s.ch.Source, s.ep.location(), origem)
+			families := "IPv4 e IPv6"
+			if s.conn6 == nil {
+				families = "so IPv4"
+			}
+			a.logf("anunciando %s em UDP 1900 (%s) pela interface %s (%s, via %s); LOCATION %s (%s)",
+				ssdpST, families, s.ch.Name, s.ch.Addr, s.ch.Source, s.ep.location(), origem)
 			stop, serr := a.serve(s)
 			if stop {
 				return 0
 			}
-			s.conn.Close()
+			s.close()
 			err = serr
 			var nc netChanged
 			if errors.As(err, &nc) {

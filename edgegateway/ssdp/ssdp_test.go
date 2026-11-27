@@ -154,7 +154,7 @@ func TestCheckForced(t *testing.T) {
 
 func TestNotify(t *testing.T) {
 	u := usns(defaultUDN)[0]
-	alive := notify(u, "http://192.168.2.7:44642/manifest", true)
+	alive := notify(u, ssdpGroup, "http://192.168.2.7:44642/manifest", true)
 	for _, want := range []string{"NOTIFY * HTTP/1.1\r\n", "HOST: 239.255.255.250:1900\r\n", "NT: " + ssdpST + "\r\n",
 		"NTS: ssdp:alive\r\n", "USN: " + defaultUDN + "::" + ssdpST + "\r\n",
 		"LOCATION: http://192.168.2.7:44642/manifest\r\n", "CACHE-CONTROL: max-age=1800\r\n"} {
@@ -165,7 +165,10 @@ func TestNotify(t *testing.T) {
 	if !strings.HasSuffix(alive, "\r\n\r\n") {
 		t.Error("NOTIFY sem linha em branco final")
 	}
-	bye := notify(u, "x", false)
+	bye := notify(u, ssdpGroup, "x", false)
+	if alive6 := notify(u, ssdpGroup6, "x", true); !strings.Contains(alive6, "HOST: [ff02::c]:1900\r\n") {
+		t.Errorf("IPv6 HOST:\n%s", alive6)
+	}
 	if !strings.Contains(bye, "NTS: ssdp:byebye\r\n") || strings.Contains(bye, "LOCATION") {
 		t.Errorf("byebye:\n%s", bye)
 	}

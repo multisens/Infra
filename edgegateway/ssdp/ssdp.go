@@ -3,15 +3,19 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 )
 
 // SSDP messages (HTTPU): two announced types (the URN of the service and the
-// UDN of the root device), USN "<UDN>::<URN>" and "<UDN>".
+// UDN of the root device), USN "<UDN>::<URN>" and "<UDN>". The group is
+// 239.255.255.250 in IPv4 and ff02::c in IPv6 (C.3.4).
 
 const (
 	ssdpGroup  = "239.255.255.250"
+	ssdpGroup6 = "ff02::c"
 	ssdpPort   = 1900
 	maxAge     = 1800
 	serverSig  = "Linux UPnP/1.1 tv30-ssdp/1.0"
@@ -26,10 +30,16 @@ func usns(udn string) []usn {
 	return []usn{{ssdpST, udn + "::" + ssdpST}, {udn, udn}}
 }
 
-func notify(u usn, location string, alive bool) string {
+// groupHost is the HOST of a NOTIFY to the group ("239.255.255.250:1900",
+// "[ff02::c]:1900").
+func groupHost(group string) string {
+	return net.JoinHostPort(group, strconv.Itoa(ssdpPort))
+}
+
+func notify(u usn, group string, location string, alive bool) string {
 	var b strings.Builder
 	b.WriteString("NOTIFY * HTTP/1.1\r\n")
-	fmt.Fprintf(&b, "HOST: %s:%d\r\n", ssdpGroup, ssdpPort)
+	fmt.Fprintf(&b, "HOST: %s\r\n", groupHost(group))
 	fmt.Fprintf(&b, "NT: %s\r\n", u.NT)
 	if alive {
 		fmt.Fprintf(&b, "NTS: %s\r\n", ssdpAlive)

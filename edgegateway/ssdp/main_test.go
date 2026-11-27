@@ -109,6 +109,11 @@ type fakeNet struct {
 	// Errors of the next Open calls, one per call.
 	openErr []error
 	opened  []*fakeConn
+	// Error of every Open6 call, nil to open.
+	open6Err error
+	opened6  []*fakeConn
+	// The IPv6 connection opened.
+	onOpen6 func(c *fakeConn)
 }
 
 func (f *fakeNet) set(route string, ifaces ...ifaceInfo) {
@@ -154,6 +159,29 @@ func (f *fakeNet) Open(ch choice) (ssdpConn, error) {
 		f.h.onOpen(n, c)
 	}
 	return c, nil
+}
+
+func (f *fakeNet) Open6(ch choice) (ssdpConn, error) {
+	f.mu.Lock()
+	if f.open6Err != nil {
+		err := f.open6Err
+		f.mu.Unlock()
+		return nil, err
+	}
+	c := &fakeConn{ch: ch, in: make(chan readMsg, 4), closed: make(chan struct{})}
+	f.opened6 = append(f.opened6, c)
+	hook := f.onOpen6
+	f.mu.Unlock()
+	if hook != nil {
+		hook(c)
+	}
+	return c, nil
+}
+
+func (f *fakeNet) conns6() []*fakeConn {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]*fakeConn(nil), f.opened6...)
 }
 
 func (f *fakeNet) conns() []*fakeConn {
@@ -322,7 +350,7 @@ func TestSemRedeNaPartidaEsperaEVolta(t *testing.T) {
 	h.wantLog(semRede, 1)
 	h.wantLog("nenhuma interface de pe com IPv4 externo", 1)
 	h.wantLog(deVolta+": anunciando de novo depois de 15s sem anunciar (4 tentativas sem rede)", 1)
-	h.wantLog(anunciando+" em UDP 1900 pela interface wlp2s0 (192.168.2.7, via host-ip); "+
+	h.wantLog(anunciando+" em UDP 1900 (IPv4 e IPv6) pela interface wlp2s0 (192.168.2.7, via host-ip); "+
 		"LOCATION http://192.168.2.7:44642/manifest (host de SSDP_ADVERTISE_HOST)", 1)
 	h.wantLog(falha, 0)
 	cs := h.net.conns()
@@ -731,5 +759,76 @@ func TestArquivoDeParada(t *testing.T) {
 	h.wantLog("arquivo de parada /tmp/tv30-parar: "+enviaByebye, 1)
 	if c := h.net.conns()[0]; c.count(ssdpByebye) != 2 {
 		t.Fatalf("byebye %d", c.count(ssdpByebye))
+	}
+}
+
+func TestIPv6GroupWithTheSameLocation(t *testing.T) {
+	h := newHarness(t)
+	h.net.set("wlp2s0", wifi2)
+	from := &net.UDPAddr{IP: net.ParseIP("fe80::5"), Port: 50000, Zone: "wlp2s0"}
+	search := "M-SEARCH * HTTP/1.1\r\nHOST: [ff02::c]:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: " +
+		ssdpST + "\r\n\r\n"
+	h.net.onOpen6 = func(conn6 *fakeConn) {
+		conn6.onReply = h.sigterm
+		conn6.in <- readMsg{msg: search, from: from}
+	}
+	if code := h.run(); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, h.log())
+	}
+	conn6 := h.net.conns6()[0]
+	conn6.mu.Lock()
+	sent := append([]string(nil), conn6.sent...)
+	replies := append([]string(nil), conn6.replies...)
+	conn6.mu.Unlock()
+	location := "LOCATION: http://192.168.2.7:44642/manifest\r\n"
+	if len(sent) == 0 || !strings.Contains(sent[0], "HOST: [ff02::c]:1900\r\n") || !strings.Contains(sent[0], location) {
+		t.Fatalf("IPv6 NOTIFY: %q", sent)
+	}
+	if len(replies) != 1 || !strings.Contains(replies[0], location) {
+		t.Fatalf("IPv6 replies: %q", replies)
+	}
+	if conn6.count(ssdpByebye) != 2 || !conn6.isClosed() {
+		t.Fatalf("IPv6 byebye %d, closed %v", conn6.count(ssdpByebye), conn6.isClosed())
+	}
+	h.wantLog("(IPv4 e IPv6)", 1)
+}
+
+func TestWithoutIPv6TheAnnouncementGoesOnInIPv4(t *testing.T) {
+	h := newHarness(t)
+	h.net.set("wlp2s0", wifi2)
+	h.net.open6Err = sockErr("listen", "setsockopt", syscall.EADDRNOTAVAIL)
+	h.stopAfterFirstNotify(1)
+	if code := h.run(); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, h.log())
+	}
+	h.wantLog("AVISO grupo IPv6 indisponivel na interface wlp2s0", 1)
+	h.wantLog("(so IPv4)", 1)
+	h.wantLog(semRede, 0)
+	if c := h.net.conns()[0]; c.count(ssdpAlive) != 2 {
+		t.Fatalf("IPv4 alive %d", c.count(ssdpAlive))
+	}
+}
+
+func TestIPv6SendFailureLeavesTheSessionInIPv4(t *testing.T) {
+	h := newHarness(t)
+	h.net.set("wlp2s0", wifi2)
+	h.ticks = 1
+	h.net.onOpen6 = func(conn6 *fakeConn) {
+		conn6.setSendErr(sockErr("write", "sendto", syscall.ENETUNREACH))
+	}
+	h.onOpen = func(n int, conn *fakeConn) {
+		conn.onSend = func(k int) {
+			if k == 4 {
+				h.sigterm()
+			}
+		}
+	}
+	if code := h.run(); code != 0 {
+		t.Fatalf("exit %d:\n%s", code, h.log())
+	}
+	h.wantLog("AVISO envio do NOTIFY IPv6", 1)
+	h.wantLog(semRede, 0)
+	if !h.net.conns6()[0].isClosed() || h.net.conns()[0].count(ssdpAlive) != 4 {
+		t.Fatalf("IPv6 closed %v, IPv4 alive %d", h.net.conns6()[0].isClosed(), h.net.conns()[0].count(ssdpAlive))
 	}
 }
