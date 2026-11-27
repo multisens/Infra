@@ -1,148 +1,4 @@
 {
-  "sensor/room1/temperature": {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-      "value": {
-        "type": "number",
-        "minimum": 0,
-        "maximum": 30,
-        "description": "Temperature value in Celsius"
-      },
-      "timestamp": {
-        "type": "string",
-        "minLength": 1,
-        "description": "Timestamp of the reading"
-      },
-      "unit": {
-        "type": "string",
-        "enum": [
-          "celsius",
-          "fahrenheit"
-        ],
-        "description": "Temperature unit"
-      }
-    },
-    "required": [
-      "value"
-    ],
-    "additionalProperties": false
-  },
-  "sensor/room2/humidity": {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-      "value": {
-        "type": "number",
-        "minimum": 0,
-        "maximum": 200,
-        "description": "Humidity percentage"
-      },
-      "unit": {
-        "type": "string",
-        "enum": [
-          "C",
-          "F"
-        ],
-        "description": "Temperature unit: Celsius or Fahrenheit"
-      },
-      "sensor_id": {
-        "type": "string",
-        "pattern": "^[A-Z]{3}-[0-9]{4}$",
-        "description": "Sensor ID in format XXX-0000"
-      }
-    },
-    "required": [
-      "value",
-      "unit"
-    ],
-    "additionalProperties": false
-  },
-  "sensor/comprehensive/test": {
-    "$schema": "http://json-schema.org/draft-07/schema#",
-    "type": "object",
-    "properties": {
-      "string_field": {
-        "type": "string",
-        "minLength": 3,
-        "maxLength": 20,
-        "pattern": "^[a-z]+$",
-        "description": "String with length and pattern constraints"
-      },
-      "number_field": {
-        "type": "number",
-        "minimum": 10,
-        "maximum": 100,
-        "multipleOf": 5,
-        "description": "Number that must be multiple of 5 between 10 and 100"
-      },
-      "integer_field": {
-        "type": "integer",
-        "exclusiveMinimum": 0,
-        "exclusiveMaximum": 50,
-        "description": "Integer between 1 and 49"
-      },
-      "boolean_field": {
-        "type": "boolean",
-        "description": "Boolean value"
-      },
-      "enum_field": {
-        "type": "string",
-        "enum": [
-          "option1",
-          "option2",
-          "option3"
-        ],
-        "description": "Must be one of the allowed values"
-      },
-      "const_field": {
-        "type": "string",
-        "const": "fixed_value",
-        "description": "Must be exactly this value"
-      },
-      "array_field": {
-        "type": "array",
-        "minItems": 2,
-        "maxItems": 5,
-        "uniqueItems": true,
-        "items": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 10
-        },
-        "description": "Array of 2-5 unique numbers between 0 and 10"
-      },
-      "nested_object": {
-        "type": "object",
-        "properties": {
-          "nested_string": {
-            "type": "string",
-            "minLength": 1
-          },
-          "nested_number": {
-            "type": "number",
-            "minimum": 0
-          }
-        },
-        "required": [
-          "nested_string"
-        ],
-        "additionalProperties": false,
-        "minProperties": 1,
-        "maxProperties": 2,
-        "description": "Nested object with constraints"
-      }
-    },
-    "required": [
-      "string_field",
-      "number_field",
-      "integer_field",
-      "boolean_field",
-      "enum_field",
-      "const_field"
-    ],
-    "additionalProperties": false
-  },
   "aop/currentUser": {
     "type": "string",
     "maxLength": 64
@@ -1415,6 +1271,138 @@
       "contentType",
       "lastModified",
       "at"
+    ],
+    "additionalProperties": false
+  },
+  "aop/display/layers/popup/yesno/message": {
+    "type": "object",
+    "properties": {
+      "value": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024
+      },
+      "timeout": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "required": [
+      "value"
+    ],
+    "additionalProperties": false,
+    "description": "Pop-up de sim ou nao da autorizacao de aplicacao (C.4.2.3), NAO retido: o texto em value e o prazo em ms em timeout. Publicador: tv3ws; assinante: aop-shell, que responde em aop/display/layers/popup/yesno/response."
+  },
+  "aop/display/layers/popup/yesno/response": {
+    "description": "Resposta do espectador ao pop-up de sim ou nao, NAO retida: true ou false, lidos como JSON booleano. Publicador: aop-shell; assinante: tv3ws.",
+    "type": "boolean"
+  },
+  "aop/display/layers/popup/qrcode": {
+    "type": "object",
+    "properties": {
+      "value": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024
+      },
+      "timeout": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "close": {
+        "const": true
+      }
+    },
+    "minProperties": 1,
+    "additionalProperties": false,
+    "description": "Pop-up do QR code do pareamento (C.4.3.2), NAO retido: {value, timeout} abre, com a chave em base64url em value; {close:true} fecha no fim do pareamento. Publicador: tv3ws; assinante: aop-shell."
+  },
+  "aop/display/layers/popup/pin": {
+    "type": "object",
+    "properties": {
+      "value": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024
+      },
+      "timeout": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "close": {
+        "const": true
+      }
+    },
+    "minProperties": 1,
+    "additionalProperties": false,
+    "description": "Pop-up do PIN do pareamento (C.4.3.3), NAO retido: {value, timeout} abre, com o PIN de quatro digitos em value; {close:true} fecha no fim do pareamento. Publicador: tv3ws; assinante: aop-shell."
+  },
+  "aop/display/layers/popup/info": {
+    "type": "object",
+    "properties": {
+      "value": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024
+      },
+      "timeout": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "required": [
+      "value"
+    ],
+    "additionalProperties": false,
+    "description": "Aviso da escrita de atributos de emissora no perfil (C.6.14.5, Tabela C.74), NAO retido: o texto em value e o prazo em ms em timeout. Publicador: tv3ws; assinante: aop-shell."
+  },
+  "aop/devices/+": {
+    "description": "Handles dos dispositivos remotos registrados na classe do ultimo nivel do topico (C.6.15.2), RETIDO; a publicacao vazia apaga o retido quando a classe fica sem dispositivo. Publicador: tv3ws.",
+    "type": "array",
+    "minItems": 1,
+    "uniqueItems": true,
+    "items": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    }
+  },
+  "aop/+/+/doc/#": {
+    "description": "Eventos de no do documento da aplicacao (servico e appId nos dois primeiros niveis), apresentados por um dispositivo remoto: transicao em .../eventNotification, usuario em .../user e valor em .../value, como texto, NAO retidos. Publicador: tv3ws.",
+    "type": "string",
+    "maxLength": 1024
+  },
+  "tv30/+/exemplo/ping": {
+    "description": "Ping do exemplo do componente-modelo (templates/componente), com o nome do componente no segundo nivel, NAO retido: um texto qualquer. Publicadores: scripts de teste e quem experimenta o modelo; assinante: o exemplo.",
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 256
+  },
+  "tv30/+/exemplo/pong": {
+    "description": "Resposta do exemplo do componente-modelo ao ping, NAO retida: o nome do componente, o texto do ping, a chave lida no Redis e o valor dela (null sem a chave). Publicador: o exemplo.",
+    "type": "object",
+    "properties": {
+      "componente": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "ping": {
+        "type": "string",
+        "maxLength": 256
+      },
+      "chave": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "valor": {}
+    },
+    "required": [
+      "componente",
+      "ping",
+      "chave",
+      "valor"
     ],
     "additionalProperties": false
   }

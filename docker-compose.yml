@@ -67,6 +67,10 @@ services:
     container_name: mqtt-broker
     profiles:
       - mqtt
+    environment:
+      # enforce refuses a publication on a topic without a schema; warn lets
+      # it pass, with the message on errors/<client>.
+      SCHEMA_ENFORCE: ${SCHEMA_ENFORCE:-enforce}
     ports:
       - "1883:1883"
       # MQTT over WebSocket: a host port chosen by Docker by default

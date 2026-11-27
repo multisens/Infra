@@ -19,6 +19,8 @@ LIMIT = 2047
 # Maximums of error_json.h, in escaped bytes.
 TOPIC_MAX, CLIENT_MAX = 512, 256
 
+NO_SCHEMA_DETAILS = 'Topic without a declared schema (infra/mqtt-broker/plugin/config/schemas.json)'
+
 passes, fails = 0, 0
 
 # Latency test (response_time_tester.c): (name, id, iteration, reply topic).
@@ -48,7 +50,8 @@ def check(cond, name, detail=''):
 sub = subprocess.Popen(
     ['mosquitto_sub', '-h', HOST, '-q', '0',
      '-t', 'errors/#', '-t', 'sensor/room1/temperature', '-t', 'aop/display/layers/popup/#',
-     '-t', 'aop/currentUser', '-t', 'zz/teste-errors-json/#', '-t', 'tlm/lls/svc1/bamt']
+     '-t', 'aop/currentUser', '-t', 'zz/teste-errors-json/#', '-t', 'tlm/lls/svc1/bamt',
+     '-t', 'zz/sem-esquema/#']
     + [a for c in RT_CASES for a in ('-t', c[3])]
     + ['-F', '%t\t%x'],
     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -71,6 +74,10 @@ threading.Thread(target=reader, daemon=True).start()
 
 
 def publish(topic, payload, client='tv30-teste-pub'):
+    if payload == b'':
+        r = subprocess.run(['mosquitto_pub', '-h', HOST, '-q', '0', '-i', client, '-t', topic, '-n'],
+                           capture_output=True, timeout=15)
+        return r.returncode, r.stderr.decode('utf-8', 'replace').strip()
     with tempfile.NamedTemporaryFile(delete=False) as f:
         f.write(payload)
         name = f.name
@@ -99,7 +106,7 @@ def collect(until_topic, timeout=6.0):
 # Waits for the subscriber to be active.
 ready = False
 for i in range(60):
-    publish('zz/teste-errors-json/pronto', b'%d' % i)
+    publish('zz/teste-errors-json/pronto', b'pronto-%d' % i)
     for t, _ in collect('zz/teste-errors-json/pronto', 0.5):
         if t == 'zz/teste-errors-json/pronto':
             ready = True
@@ -193,6 +200,9 @@ CASES = [
     ('publicacao valida e entregue', 'sensor/room1/temperature', 'tv30-t-valida', b'{"value":20}', None),
     ('fechamento do pop-up do QR code passa', 'aop/display/layers/popup/qrcode', 'tv30-t-fecha-qr', b'{"close":true}', None),
     ('fechamento do pop-up do PIN passa', 'aop/display/layers/popup/pin', 'tv30-t-fecha-pin', b'{"close":true}', None),
+    ('topico sem esquema recusado', 'zz/sem-esquema/x', 'tv30-t-sem-esquema', b'{"a":1}',
+     dict(error_type='NO_SCHEMA', details=NO_SCHEMA_DETAILS, payload='{"a":1}')),
+    ('payload vazio em topico sem esquema passa (remocao do retido)', 'zz/sem-esquema/x', 'tv30-t-sem-esquema-vazio', b'', None),
 ]
 
 
@@ -336,7 +346,7 @@ for i, (name, client, want_topic) in enumerate(TOPIC_CASES):
     threading.Thread(target=reader2, daemon=True).start()
     ok = False
     for k in range(40):
-        publish(ready_topic, b'%d' % k)
+        publish(ready_topic, b'pronto-%d' % k)
         end = time.time() + 0.25
         while time.time() < end and not ok:
             try:

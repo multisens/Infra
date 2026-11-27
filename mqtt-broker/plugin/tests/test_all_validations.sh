@@ -24,7 +24,7 @@ cleanup() {
   docker rm -f "$BRK" >/dev/null 2>&1
   docker network rm "$NET" >/dev/null 2>&1
   if [ -z "${NOBUILD:-}" ] && [ -z "${KEEP_IMG:-}" ]; then docker image rm "$IMG" >/dev/null 2>&1; fi
-  rm -f "$LOG"
+  rm -f "$LOG" "${SCHEMAS:-}"
 }
 trap cleanup EXIT
 docker rm -f "$BRK" >/dev/null 2>&1
@@ -39,8 +39,18 @@ if [ -z "${NOBUILD:-}" ]; then
   fi
 fi
 
+# Schemas of the disposable broker: those of the image plus the test topics
+# (test-schemas.json), mounted over /mosquitto/config/schemas.json.
+SCHEMAS=$(mktemp)
+python3 - "$BROKER_DIR/plugin/config/schemas.json" "$AQUI/test-schemas.json" >"$SCHEMAS" <<'PY'
+import json, sys
+merged = json.load(open(sys.argv[1]))
+merged.update(json.load(open(sys.argv[2])))
+print(json.dumps(merged))
+PY
+chmod 644 "$SCHEMAS"
 docker network create "$NET" >/dev/null
-docker run -d --name "$BRK" --network "$NET" "$IMG" >/dev/null
+docker run -d --name "$BRK" --network "$NET" -v "$SCHEMAS":/mosquitto/config/schemas.json:ro "$IMG" >/dev/null
 for _ in $(seq 1 50); do
   docker logs "$BRK" 2>&1 | grep -q "mosquitto version .* running" && break
   sleep 0.2
@@ -159,7 +169,7 @@ def collect(until, timeout=6.0):
 
 ready = False
 for i in range(60):
-    pub('zz/teste-validacoes/pronto', str(i), 'tv30-validacoes-pronto')
+    pub('zz/teste-validacoes/pronto', 'pronto-%d' % i, 'tv30-validacoes-pronto')
     if any(t == 'zz/teste-validacoes/pronto' for t, _ in collect('zz/teste-validacoes/pronto', 0.5)):
         ready = True
         break

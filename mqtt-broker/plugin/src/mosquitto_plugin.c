@@ -12,14 +12,24 @@
 #include "error_json.h"
 #include "json_payload.h"
 
+// Environment variable of the refusal of a topic without a schema: enforce
+// (the default) refuses it; warn lets it pass, with the error message.
+#define SCHEMA_ENFORCE_ENV "SCHEMA_ENFORCE"
+#define SCHEMA_ENFORCE_ON "enforce"
+#define SCHEMA_ENFORCE_WARN "warn"
+#define NO_SCHEMA_DETAILS "Topic without a declared schema (infra/mqtt-broker/plugin/config/schemas.json)"
+
 mosquitto_plugin_id_t *mosq_pid = NULL;
 static json_object *schemas = NULL;
+static int schema_enforce = 1;
 
-static void load_schemas_from_file(const char* filename) {
+// Loads the schemas; returns 0 on success, -1 if the file cannot be read or
+// is not a JSON object.
+static int load_schemas_from_file(const char* filename) {
     FILE *file = fopen(filename, "r");
     if (!file) {
-        mosquitto_log_printf(MOSQ_LOG_WARNING, "Could not open schemas file: %s", filename);
-        return;
+        mosquitto_log_printf(MOSQ_LOG_ERR, "Could not open schemas file: %s", filename);
+        return -1;
     }
     
     fseek(file, 0, SEEK_END);
@@ -34,21 +44,23 @@ static void load_schemas_from_file(const char* filename) {
     json_object *new_schemas = json_tokener_parse(content);
     free(content);
     
-    if (new_schemas) {
-        if (schemas) {
-            json_object_put(schemas);
+    if (new_schemas == NULL || !json_object_is_type(new_schemas, json_type_object)) {
+        if (new_schemas != NULL) {
+            json_object_put(new_schemas);
         }
-        schemas = new_schemas;
-        json_object_get(schemas);
-        
-        mosquitto_log_printf(MOSQ_LOG_INFO, "Schemas loaded from file: %d topics configured", json_object_object_length(schemas));
-        
-        json_object_object_foreach(schemas, key, val) {
-            mosquitto_log_printf(MOSQ_LOG_INFO, "Schema loaded for topic: %s", key);
-        }
-    } else {
         mosquitto_log_printf(MOSQ_LOG_ERR, "Invalid JSON in schemas file: %s", filename);
+        return -1;
     }
+    if (schemas) {
+        json_object_put(schemas);
+    }
+    schemas = new_schemas;
+
+    mosquitto_log_printf(MOSQ_LOG_INFO, "Schemas loaded from file: %d topics configured", json_object_object_length(schemas));
+    json_object_object_foreach(schemas, key, val) {
+        mosquitto_log_printf(MOSQ_LOG_INFO, "Schema loaded for topic: %s", key);
+    }
+    return 0;
 }
 
 // Publishes on errors/<client_id>; message and topic as in error_json.h.
@@ -123,7 +135,8 @@ static int schema_expects_plain_string(json_object* schema) {
     return t && strcmp(t, "string") == 0;
 }
 
-// Validates the payload against the schema of the topic, if any. payload_len
+// Validates the payload against the schema of the topic. A topic without a
+// schema is refused, or only reported with SCHEMA_ENFORCE=warn. payload_len
 // is the real length: the payload is read whole, even with a NUL inside
 // (json_payload.h). The literal null becomes NULL in json-c: INVALID_JSON, or
 // a plain string on topics with a type=string schema. A refusal publishes
@@ -131,7 +144,13 @@ static int schema_expects_plain_string(json_object* schema) {
 static int validate_message(const char* topic, const char* payload, size_t payload_len, const char* client_id) {
     json_object *schema = get_schema_for_topic(topic);
     if (!schema) {
-        return MOSQ_ERR_SUCCESS;
+        publish_error(topic, "NO_SCHEMA", NO_SCHEMA_DETAILS, payload, payload_len, client_id);
+        if (!schema_enforce) {
+            mosquitto_log_printf(MOSQ_LOG_WARNING, "Topic without a schema passes (%s=%s): %s", SCHEMA_ENFORCE_ENV, SCHEMA_ENFORCE_WARN, topic);
+            return MOSQ_ERR_SUCCESS;
+        }
+        mosquitto_log_printf(MOSQ_LOG_INFO, "Topic without a schema: %s", topic);
+        return MOSQ_ERR_ACL_DENIED;
     }
     
     json_object *message = NULL;
@@ -189,8 +208,8 @@ static int callback_acl_check(int event, void *event_data, void *userdata) {
         return MOSQ_ERR_SUCCESS;
     }
     
-    // Only PUBLISH is validated, outside $SYS/; a topic without a schema
-    // passes.
+    // Only PUBLISH is validated, outside $SYS/; an empty payload (removal of
+    // a retained message) passes.
     if (ed->access != MOSQ_ACL_WRITE || strncmp(ed->topic, "$SYS/", 5) == 0) {
         return MOSQ_ERR_SUCCESS;
     }
@@ -221,11 +240,22 @@ int mosquitto_plugin_version(int supported_version_count, const int *supported_v
 int mosquitto_plugin_init(mosquitto_plugin_id_t *identifier, void **user_data, struct mosquitto_opt *opts, int opt_count)
 {
     mosq_pid = identifier;
-    
-    schemas = json_object_new_object();
-    load_schemas_from_file("/mosquitto/config/schemas.json");
 
-    mosquitto_log_printf(MOSQ_LOG_INFO, "Mosquitto plugin loaded (schema validation + response time tester)");
+    const char *enforce = getenv(SCHEMA_ENFORCE_ENV);
+    if (enforce == NULL || enforce[0] == '\0' || strcmp(enforce, SCHEMA_ENFORCE_ON) == 0) {
+        schema_enforce = 1;
+    } else if (strcmp(enforce, SCHEMA_ENFORCE_WARN) == 0) {
+        schema_enforce = 0;
+    } else {
+        mosquitto_log_printf(MOSQ_LOG_ERR, "%s=%s invalid (%s or %s)", SCHEMA_ENFORCE_ENV, enforce, SCHEMA_ENFORCE_ON, SCHEMA_ENFORCE_WARN);
+        return MOSQ_ERR_INVAL;
+    }
+
+    if (load_schemas_from_file("/mosquitto/config/schemas.json") != 0) {
+        return MOSQ_ERR_INVAL;
+    }
+
+    mosquitto_log_printf(MOSQ_LOG_INFO, "Mosquitto plugin loaded (schema validation + response time tester; %s=%s)", SCHEMA_ENFORCE_ENV, schema_enforce ? SCHEMA_ENFORCE_ON : SCHEMA_ENFORCE_WARN);
     
     return mosquitto_callback_register(mosq_pid, MOSQ_EVT_ACL_CHECK, callback_acl_check, NULL, NULL);
 }
