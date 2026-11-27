@@ -1,14 +1,17 @@
 {
   "backends": {
-    "external": {
-      "linux": "https://tv3ws:44653",
-      "windows": "https://host.docker.internal:44655"
-    },
-    "internal": {
-      "linux": "http://tv3ws:44652",
-      "windows": "http://host.docker.internal:44654"
+    "tv3ws": {
+      "external": {
+        "linux": "https://tv3ws:44653",
+        "windows": "https://host.docker.internal:44655"
+      },
+      "internal": {
+        "linux": "http://tv3ws:44652",
+        "windows": "http://host.docker.internal:44654"
+      }
     }
   },
+  "default_backend": "tv3ws",
   "surfaces": {
     "external": {
       "port": 44643,

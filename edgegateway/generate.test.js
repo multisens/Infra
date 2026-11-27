@@ -14,7 +14,8 @@ const keys = rs => rs.map(key).sort();
 // Minimal valid table, for the synthetic cases.
 function mini(routes) {
   return {
-    backends: { external: { linux: 'https://x:1' }, internal: { linux: 'http://x:2' } },
+    backends: { tv3ws: { external: { linux: 'https://x:1' }, internal: { linux: 'http://x:2' } } },
+    default_backend: 'tv3ws',
     surfaces: { external: { port: 44643, title: 'ext' }, internal: { port: 44642, title: 'int' } },
     cors: { allow_headers: ['Content-Type'] },
     routes: routes.map(r => ({ headers: ['Accept-Version'], ...r })),
@@ -59,7 +60,7 @@ test('na externa, 106 nas exclusivas do cliente local e na C.6.1.2 (C.4.1.8); na
   assert.ok(plugin(files, 'internal').routes.every(r => !r.surface_error));
   // The endpoints stay registered in the router of the external surface (the
   // plugin answers first).
-  for (const v of Object.keys(t.backends.external)) {
+  for (const v of g.variantsOf(t, 'external')) {
     const eps = files[`krakend-external.${v}.json`].endpoints.map(e => `${e.method} ${e.endpoint}`);
     for (const r of t.routes.filter(r => g.surfaceErrorOf(r, 'external') === 106)) {
       for (const p of g.internalPathsOf(r)) assert.ok(eps.includes(`${r.method} ${p}`), `${r.method} ${p} (${v})`);
@@ -139,8 +140,51 @@ test('superficies e backends tem de casar com SURFACE_RULES', () => {
   assert.ok(g.checkTable(extra).some(e => e.startsWith('surfaces.dmz: surface with no rule')));
 
   const semBackend = mini([{ method: 'GET', path: '/health', auth: 'none' }]);
-  delete semBackend.backends.internal;
-  assert.ok(g.checkTable(semBackend).some(e => e.startsWith('backends.internal:')));
+  delete semBackend.backends.tv3ws.internal;
+  assert.ok(g.checkTable(semBackend).some(e => e.startsWith('backends.tv3ws.internal: the default backend has every surface')));
+
+  const semPadrao = mini([{ method: 'GET', path: '/health', auth: 'none' }]);
+  semPadrao.default_backend = 'outro';
+  assert.ok(g.checkTable(semPadrao).some(e => e.startsWith('default_backend:')));
+});
+
+// Table with a component backend only on the internal surface.
+function comComponente(routes) {
+  const t = mini(routes);
+  t.backends.comp = { internal: { linux: 'http://comp:9' } };
+  return t;
+}
+
+test('rota com backend proprio vai ao componente; sem backend, ao padrao', () => {
+  const t = comComponente([
+    { method: 'GET', path: '/tv3/x', auth: 'token', classes: ['standAlone'], backend: 'comp' },
+    { method: 'GET', path: '/health', auth: 'none' },
+  ]);
+  assert.deepEqual(g.checkTable(t), []);
+  const files = g.generate(t);
+  const host = (name, p) => files[name].endpoints.find(e => e.endpoint === p).backend[0].host[0];
+  assert.equal(host('krakend-internal.linux.json', '/tv3/x'), 'http://comp:9');
+  assert.equal(host('krakend-internal.linux.json', '/health'), 'http://x:2');
+  // On the external surface the route gets 106 from the edge (local only):
+  // the endpoint keeps the path, on the default backend.
+  assert.equal(host('krakend-external.linux.json', '/tv3/x'), 'https://x:1');
+});
+
+test('backend inexistente, sem a superficie que a rota alcanca, ou em rota da borda, eh erro', () => {
+  const inexistente = comComponente([{ method: 'GET', path: '/tv3/x', auth: 'none', backend: 'nada' }]);
+  assert.ok(g.checkTable(inexistente).some(e => /backend "nada" is not a backend/.test(e)));
+
+  const semExterna = comComponente([{ method: 'GET', path: '/tv3/x', auth: 'none', classes: ['nonLocal'], backend: 'comp' }]);
+  assert.ok(g.checkTable(semExterna).some(e => /no address on the external surface/.test(e)));
+
+  const daBorda = comComponente([{ method: 'GET', path: '/tv3/x', auth: 'none', edge: 'api-list', backend: 'comp' }]);
+  assert.ok(g.checkTable(daBorda).some(e => /backend does not apply to a route answered by the edge/.test(e)));
+});
+
+test('variantes do backend tem de ser as do padrao', () => {
+  const t = comComponente([{ method: 'GET', path: '/health', auth: 'none' }]);
+  t.backends.comp.internal = { windows: 'http://comp:9' };
+  assert.ok(g.checkTable(t).some(e => /backends\.comp\.internal: variants \(windows\) differ/.test(e)));
 });
 
 test('tabela sem nenhuma rota eh erro (o plugin recusaria lista vazia)', () => {
@@ -153,7 +197,7 @@ test('arquivos gerados: 2 variantes x 2 superficies + 2 OpenAPI', () => {
   const files = g.generate(t);
   const want = [];
   for (const s of Object.keys(t.surfaces)) {
-    for (const v of Object.keys(t.backends[s])) want.push(`krakend-${s}.${v}.json`);
+    for (const v of g.variantsOf(t, s)) want.push(`krakend-${s}.${v}.json`);
     want.push(`openapi-${s}.json`);
   }
   assert.deepEqual(Object.keys(files).sort(), want.sort());
@@ -175,7 +219,7 @@ test('em cada config KrakenD, rotas do plugin = rotas da superficie, e um endpoi
     assert.deepEqual(cfg.endpoints.map(e => `${e.method} ${e.endpoint}`).sort(), pares, `${name}: endpoints`);
     // Target: the backend of the variant, on the same internal path.
     for (const e of cfg.endpoints) {
-      assert.deepEqual(e.backend, [{ url_pattern: e.endpoint, host: [t.backends[surface][variant]], encoding: 'no-op' }], `${name}: ${e.method} ${e.endpoint}`);
+      assert.deepEqual(e.backend, [{ url_pattern: e.endpoint, host: [t.backends.tv3ws[surface][variant]], encoding: 'no-op' }], `${name}: ${e.method} ${e.endpoint}`);
     }
   }
 });
@@ -314,7 +358,7 @@ test('versoes por rota: registro, atualizacao, cancelamento e listagem servem 2.
   // The internal header goes in input_headers of every route, not in the
   // OpenAPI.
   const INTERNAL = ['X-TV30-API-Version', 'X-TV30-Host', 'X-TV30-Client-Class', 'X-TV30-Client-Id'];
-  for (const v of Object.keys(t.backends.internal)) {
+  for (const v of g.variantsOf(t, 'internal')) {
     for (const e of files[`krakend-internal.${v}.json`].endpoints) {
       for (const h of INTERNAL) {
         assert.ok(e.input_headers.includes(h), `${e.method} ${e.endpoint}: ${h}`);

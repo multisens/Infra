@@ -62,8 +62,8 @@ const HEADER_NAME = /^[A-Za-z0-9-]+$/;
 const MAX_AGE_FORMAT = /^[1-9][0-9]*(s|m|h)$/;
 const TIMEOUT_FORMAT = /^[1-9][0-9]*(ms|s)$/;
 const SURFACE_ERROR_CODE = 106;
-// Surfaces, with the keys of surfaces and backends of routes.json; secure is
-// the Server-SecureBaseURL surface.
+// Surfaces, with the keys of surfaces and of each backend of routes.json;
+// secure is the Server-SecureBaseURL surface.
 const SURFACE_RULES = {
   external: {
     secure: true,
@@ -99,6 +99,9 @@ function checkTable(t) {
     errs.push('auth: unused block: the serviceContextId and the globalServiceId come from the service, with no constant');
   }
   errs.push(...checkRoutes(t.routes));
+  if (errs.length === 0) {
+    errs.push(...checkRouteBackends(t));
+  }
   // A surface without a route is an error.
   if (errs.length === 0) {
     for (const s of Object.keys(SURFACE_RULES)) {
@@ -124,9 +127,8 @@ function generate(t) {
   const files = {};
   for (const surface of Object.keys(t.surfaces)) {
     const routes = routesOf(t);
-    for (const variant of Object.keys(t.backends[surface])) {
-      const host = t.backends[surface][variant];
-      files[`krakend-${surface}.${variant}.json`] = krakendConfig(t, surface, variant, host, routes);
+    for (const variant of variantsOf(t, surface)) {
+      files[`krakend-${surface}.${variant}.json`] = krakendConfig(t, surface, variant, routes);
     }
     files[`openapi-${surface}.json`] = openApi(t, surface, routes);
   }
@@ -194,6 +196,36 @@ function routesOf(t) {
   return t.routes;
 }
 
+// backendOf returns the name of the backend of a route: its own or the
+// default one.
+function backendOf(t, r) {
+  return r.backend !== undefined ? r.backend : t.default_backend;
+}
+
+// reachesBackend tells whether a request on this surface can reach the
+// backend of the route: not when the edge answers it (edge, or the 106 of
+// C.4.1.8).
+function reachesBackend(r, surface) {
+  return r.edge === undefined && surfaceErrorOf(r, surface) === 0;
+}
+
+// variantsOf returns the backend variants of a surface: those of the
+// default backend, which every backend repeats.
+function variantsOf(t, surface) {
+  return Object.keys(t.backends[t.default_backend][surface]);
+}
+
+// hostOf returns the address the route is passed on to. A route that never
+// reaches its backend on this surface goes to the default backend, which
+// has every surface: the endpoint keeps the path in the router.
+function hostOf(t, r, surface, variant) {
+  let backend = t.backends[backendOf(t, r)];
+  if (!reachesBackend(r, surface)) {
+    backend = t.backends[t.default_backend];
+  }
+  return backend[surface][variant];
+}
+
 // surfaceErrorOf returns the code the route answers to any request on this
 // surface, 0 for none: 106 of C.4.1.8, only on the external surface.
 function surfaceErrorOf(r, surface) {
@@ -231,7 +263,8 @@ function internalPathsOf(r) {
 }
 
 // Errors of the surfaces and backends blocks: the same surfaces as
-// SURFACE_RULES, with port and backends.
+// SURFACE_RULES, each with a port; named backends, each with addresses by
+// surface and variant; a default backend with every surface.
 function checkSurfaces(t) {
   const errs = [];
   const known = Object.keys(SURFACE_RULES);
@@ -247,9 +280,81 @@ function checkSurfaces(t) {
     } else if (!Number.isInteger(t.surfaces[s].port)) {
       errs.push(`surfaces.${s}.port: port missing or not an integer`);
     }
-    const b = (t.backends || {})[s];
-    if (!b || typeof b !== 'object' || Object.keys(b).length === 0) {
-      errs.push(`backends.${s}: no backend variant`);
+  }
+  errs.push(...checkBackends(t));
+  return errs;
+}
+
+// Errors of the backends block and of default_backend.
+function checkBackends(t) {
+  const errs = [];
+  const known = Object.keys(SURFACE_RULES);
+  const backends = t.backends;
+  if (!isObject(backends) || Object.keys(backends).length === 0) {
+    errs.push('backends: no backend');
+    return errs;
+  }
+  const fallback = backends[t.default_backend];
+  if (typeof t.default_backend !== 'string' || fallback === undefined) {
+    errs.push(`default_backend: "${t.default_backend}" is not a backend of the table`);
+    return errs;
+  }
+  for (const s of known) {
+    if (!isObject(fallback[s]) || Object.keys(fallback[s]).length === 0) {
+      errs.push(`backends.${t.default_backend}.${s}: the default backend has every surface`);
+    }
+  }
+  if (errs.length > 0) {
+    return errs;
+  }
+  for (const [name, b] of Object.entries(backends)) {
+    if (!isObject(b) || Object.keys(b).length === 0) {
+      errs.push(`backends.${name}: no surface`);
+      continue;
+    }
+    for (const [s, variants] of Object.entries(b)) {
+      if (!known.includes(s)) {
+        errs.push(`backends.${name}.${s}: surface with no rule in SURFACE_RULES (${known.join(', ')})`);
+        continue;
+      }
+      const want = Object.keys(fallback[s]).sort().join(', ');
+      const got = isObject(variants) ? Object.keys(variants).sort().join(', ') : '';
+      if (got !== want) {
+        errs.push(`backends.${name}.${s}: variants (${got}) differ from those of the default backend (${want})`);
+        continue;
+      }
+      for (const [v, url] of Object.entries(variants)) {
+        if (typeof url !== 'string' || url === '') {
+          errs.push(`backends.${name}.${s}.${v}: address missing`);
+        }
+      }
+    }
+  }
+  return errs;
+}
+
+// Errors of the backend field of the routes: a backend of the table, with
+// an address on every surface where a request reaches it.
+function checkRouteBackends(t) {
+  const errs = [];
+  for (const r of routesOf(t)) {
+    if (r.backend === undefined) {
+      continue;
+    }
+    const id = `${r.method} ${r.path}`;
+    const backend = t.backends[r.backend];
+    if (backend === undefined) {
+      errs.push(`${id}: backend "${r.backend}" is not a backend of the table`);
+      continue;
+    }
+    if (r.edge !== undefined) {
+      errs.push(`${id}: backend does not apply to a route answered by the edge (edge)`);
+      continue;
+    }
+    for (const s of surfacesOf()) {
+      if (reachesBackend(r, s) && backend[s] === undefined) {
+        errs.push(`${id}: backend "${r.backend}" has no address on the ${s} surface, which the route reaches`);
+      }
     }
   }
   return errs;
@@ -439,7 +544,7 @@ function checkApi(r, id, apiSeen) {
 }
 
 // The KrakenD configuration of one surface and backend variant.
-function krakendConfig(t, surface, variant, host, routes) {
+function krakendConfig(t, surface, variant, routes) {
   const config = {
     $schema: 'https://www.krakend.io/schema/v2.7/krakend.json',
     version: 3,
@@ -456,7 +561,7 @@ function krakendConfig(t, surface, variant, host, routes) {
   config.extra_config = {
     'plugin/http-server': { name: [PLUGIN_NAME], [PLUGIN_NAME]: pluginConfig(t, surface) },
   };
-  config.endpoints = routes.flatMap(r => endpointsFor(r, host));
+  config.endpoints = routes.flatMap(r => endpointsFor(r, hostOf(t, r, surface, variant)));
   return config;
 }
 
@@ -572,7 +677,7 @@ function pluginRoute(r, surface, secure) {
 }
 
 // endpointsFor returns one endpoint per internal path of the route, with the
-// same path on the backend of the surface.
+// same path on the given backend address.
 function endpointsFor(r, host) {
   return internalPathsOf(r).map(p => {
     const e = { endpoint: p, method: r.method };
@@ -642,6 +747,10 @@ function nonLocalHTTP(r) {
   return !!r.api && NONLOCAL_HTTP_SECTIONS.includes(r.api.section);
 }
 
+function isObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
 function isHeaderList(v) {
   return Array.isArray(v) && v.every(h => typeof h === 'string' && HEADER_NAME.test(h));
 }
@@ -660,7 +769,7 @@ function compareSections(a, b) {
   return 0;
 }
 
-module.exports = { SURFACE_RULES, CLASS_VALUES, surfacesOf, routesOf, surfaceErrorOf, checkTable, pluginConfig, apisOf, internalPathOf, internalPathsOf, generate };
+module.exports = { SURFACE_RULES, CLASS_VALUES, surfacesOf, routesOf, backendOf, hostOf, variantsOf, surfaceErrorOf, checkTable, pluginConfig, apisOf, internalPathOf, internalPathsOf, generate };
 
 if (require.main === module) {
   const mode = process.argv[2];
