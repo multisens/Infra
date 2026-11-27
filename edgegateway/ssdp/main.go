@@ -13,49 +13,14 @@ import (
 	"time"
 )
 
-const (
-	notifyInterval = 10 * time.Second
-	multicastTTL   = 4
-	retryMin       = 1 * time.Second
-	retryMax       = 30 * time.Second
-)
-
-func logf(format string, a ...any) {
-	fmt.Fprintf(os.Stderr, "[ssdp] "+format+"\n", a...)
-}
-
 // netDown marks a lack of network: wait and try again, without exiting.
 type netDown struct{ err error }
-
-func (e netDown) Error() string { return e.err.Error() }
-func (e netDown) Unwrap() error { return e.err }
-
-// netErrnos and errAddrInUse depend on the system: sockopt_other.go and
-// sockopt_windows.go.
-
-func isNetDown(err error) bool {
-	var nd netDown
-	if errors.As(err, &nd) {
-		return true
-	}
-	for _, e := range netErrnos {
-		if errors.Is(err, e) {
-			return true
-		}
-	}
-	return false
-}
 
 // stepError: the step that failed, for the log ("FALHA em <etapa>: ...").
 type stepError struct {
 	what string
 	err  error
 }
-
-func (e *stepError) Error() string { return e.what + ": " + e.err.Error() }
-func (e *stepError) Unwrap() error { return e.err }
-
-func step(what string, err error) error { return &stepError{what, err} }
 
 // network is injectable, so the tests can use a fake network.
 type network interface {
@@ -81,6 +46,85 @@ type ssdpConn interface {
 }
 
 type realNet struct{}
+
+type udpConn struct {
+	lc, snd *net.UDPConn
+	group   *net.UDPAddr
+}
+
+type announcer struct {
+	net    network
+	getenv func(string) string
+	logf   func(format string, a ...any)
+	now    func() time.Time
+	// Wait between attempts.
+	after func(time.Duration) <-chan time.Time
+	// Periodic NOTIFY.
+	ticker   func(time.Duration) (<-chan time.Time, func())
+	stop     <-chan os.Signal
+	interval time.Duration
+}
+
+// session is a pair of sockets open on an interface, until the network goes
+// down.
+type session struct {
+	ch choice
+	// With the host of this session (the detected one, without
+	// SSDP_ADVERTISE_HOST).
+	ep endpoint
+	// Detected host: a network change ends the session.
+	auto    bool
+	forced  string
+	udn     string
+	conn    ssdpConn
+	readErr chan error
+	// The IPv6 group; nil when it is not available on the interface.
+	conn6    ssdpConn
+	readErr6 chan error
+}
+
+// netChanged: the interface or the IPv4 of the default route changed while
+// announcing with the detected host. Not a lack of network: the loop
+// announces again at once.
+type netChanged struct{ from, to choice }
+
+// stopFile: the "signal" of the stop file (SSDP_STOP_FILE).
+type stopFile string
+
+const (
+	notifyInterval = 10 * time.Second
+	multicastTTL   = 4
+	retryMin       = 1 * time.Second
+	retryMax       = 30 * time.Second
+)
+
+func logf(format string, a ...any) {
+	fmt.Fprintf(os.Stderr, "[ssdp] "+format+"\n", a...)
+}
+
+func (e netDown) Error() string { return e.err.Error() }
+func (e netDown) Unwrap() error { return e.err }
+
+// netErrnos and errAddrInUse depend on the system: sockopt_other.go and
+// sockopt_windows.go.
+
+func isNetDown(err error) bool {
+	var nd netDown
+	if errors.As(err, &nd) {
+		return true
+	}
+	for _, e := range netErrnos {
+		if errors.Is(err, e) {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *stepError) Error() string { return e.what + ": " + e.err.Error() }
+func (e *stepError) Unwrap() error { return e.err }
+
+func step(what string, err error) error { return &stepError{what, err} }
 
 func (realNet) Interfaces() []ifaceInfo { return systemInterfaces() }
 func (realNet) DefaultRoute() string    { return readDefaultRoute() }
@@ -141,25 +185,28 @@ func (realNet) Open6(ch choice) (ssdpConn, error) {
 	return &udpConn{lc, snd, group}, nil
 }
 
-type udpConn struct {
-	lc, snd *net.UDPConn
-	group   *net.UDPAddr
+func (c *udpConn) Send(msg []byte) error {
+	_, err := c.snd.WriteToUDP(msg, c.group)
+	return err
 }
 
-func (c *udpConn) Send(msg []byte) error { _, err := c.snd.WriteToUDP(msg, c.group); return err }
 func (c *udpConn) Reply(msg []byte, to *net.UDPAddr) error {
 	_, err := c.snd.WriteToUDP(msg, to)
 	return err
 }
 func (c *udpConn) Read(buf []byte) (int, *net.UDPAddr, error) { return c.lc.ReadFromUDP(buf) }
-func (c *udpConn) Close()                                     { c.lc.Close(); c.snd.Close() }
+
+func (c *udpConn) Close() {
+	c.lc.Close()
+	c.snd.Close()
+}
 
 // setMulticastOut sends the NOTIFY through the chosen interface, not the
 // default route, with a fixed TTL.
 func setMulticastOut(conn *net.UDPConn, addr string, ttl int) error {
 	ip := net.ParseIP(addr).To4()
 	if ip == nil {
-		return fmt.Errorf("endereco de origem '%s' nao e IPv4", addr)
+		return fmt.Errorf("endereco de hostSource '%s' nao e IPv4", addr)
 	}
 	var a [4]byte
 	copy(a[:], ip)
@@ -176,42 +223,6 @@ func setMulticastOut(conn *net.UDPConn, addr string, ttl int) error {
 	}
 	return serr
 }
-
-type announcer struct {
-	net    network
-	getenv func(string) string
-	logf   func(format string, a ...any)
-	now    func() time.Time
-	// Wait between attempts.
-	after func(time.Duration) <-chan time.Time
-	// Periodic NOTIFY.
-	ticker   func(time.Duration) (<-chan time.Time, func())
-	stop     <-chan os.Signal
-	interval time.Duration
-}
-
-// session is a pair of sockets open on an interface, until the network goes
-// down.
-type session struct {
-	ch choice
-	// With the host of this session (the detected one, without
-	// SSDP_ADVERTISE_HOST).
-	ep endpoint
-	// Detected host: a network change ends the session.
-	auto    bool
-	forced  string
-	udn     string
-	conn    ssdpConn
-	readErr chan error
-	// The IPv6 group; nil when it is not available on the interface.
-	conn6    ssdpConn
-	readErr6 chan error
-}
-
-// netChanged: the interface or the IPv4 of the default route changed while
-// announcing with the detected host. Not a lack of network: the loop
-// announces again at once.
-type netChanged struct{ from, to choice }
 
 func (e netChanged) Error() string {
 	return fmt.Sprintf("a rede mudou (%s %s -> %s %s)", e.from.Name, e.from.Addr, e.to.Name, e.to.Addr)
@@ -444,16 +455,16 @@ func (a *announcer) run() int {
 				now[w] = true
 			}
 			shown = now
-			origem := "host de SSDP_ADVERTISE_HOST"
+			hostSource := "host de SSDP_ADVERTISE_HOST"
 			if s.auto {
-				origem = "host detectado: IPv4 da interface"
+				hostSource = "host detectado: IPv4 da interface"
 			}
 			families := "IPv4 e IPv6"
 			if s.conn6 == nil {
 				families = "so IPv4"
 			}
 			a.logf("anunciando %s em UDP 1900 (%s) pela interface %s (%s, via %s); LOCATION %s (%s)",
-				ssdpST, families, s.ch.Name, s.ch.Addr, s.ch.Source, s.ep.location(), origem)
+				ssdpST, families, s.ch.Name, s.ch.Addr, s.ch.Source, s.ep.location(), hostSource)
 			stop, serr := a.serve(s)
 			if stop {
 				return 0
@@ -491,14 +502,12 @@ func (a *announcer) run() int {
 			a.logf("%s: sem rede, nada anunciado — saindo sem ssdp:byebye", sig)
 			return 0
 		}
-		if wait *= 2; wait > retryMax {
+		wait *= 2
+		if wait > retryMax {
 			wait = retryMax
 		}
 	}
 }
-
-// stopFile: the "signal" of the stop file (SSDP_STOP_FILE).
-type stopFile string
 
 func (f stopFile) String() string { return "arquivo de parada " + string(f) }
 func (stopFile) Signal()          {}
@@ -513,7 +522,10 @@ func watchStopFile(path string, every time.Duration, sig chan<- os.Signal, exist
 	}
 }
 
-func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
 
 func main() {
 	sig := make(chan os.Signal, 2)

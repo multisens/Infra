@@ -9,9 +9,7 @@ import (
 	"time"
 )
 
-// SSDP messages (HTTPU): two announced types (the URN of the service and the
-// UDN of the root device), USN "<UDN>::<URN>" and "<UDN>". The group is
-// 239.255.255.250 in IPv4 and ff02::c in IPv6 (C.3.4).
+type usn struct{ NT, USN string }
 
 const (
 	ssdpGroup  = "239.255.255.250"
@@ -24,7 +22,9 @@ const (
 	ssdpByebye = "ssdp:byebye"
 )
 
-type usn struct{ NT, USN string }
+// SSDP messages (HTTPU): two announced types (the URN of the service and the
+// UDN of the root device), USN "<UDN>::<URN>" and "<UDN>". The group is
+// 239.255.255.250 in IPv4 and ff02::c in IPv6 (C.3.4).
 
 func usns(udn string) []usn {
 	return []usn{{ssdpST, udn + "::" + ssdpST}, {udn, udn}}
