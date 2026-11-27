@@ -658,17 +658,27 @@ OP.tv30_session_user = function(args)
   return sessionString('session:current-user', args, 'tv30_session_user <profile id or empty>')
 end
 
-OP.tv30_session_service_id = function(args)
-  return sessionString('session:current-service-id', args, 'tv30_session_service_id <service id or empty>')
-end
-
+-- With fields, the hash of the current service and its id together; without
+-- arguments, no current service: the hash is deleted and the id is empty.
 OP.tv30_session_service = function(args)
   local fam = family('session:current-service')
-  local h = fieldPairs(args, 1, 'tv30_session_service <field> <value> [...]')
-  ensure(fam.key, hashReasons(fam, {}, h, nil))
+  local idFam = family('session:current-service-id')
+  local h = fieldPairs(args, 1, 'tv30_session_service [<field> <value> ...]', true)
+  local id = h.serviceContextId or ''
+  if next(h) ~= nil then
+    ensure(fam.key, hashReasons(fam, {}, h, nil))
+  end
+  local m = reason(idFam.value, id)
+  if m then
+    fail(idFam.key .. ' value: ' .. m)
+  end
   ensureType(fam, fam.key)
+  ensureType(idFam, idFam.key)
   redis.call('DEL', fam.key)
-  inBatches('HSET', fam.key, flatten(h))
+  if next(h) ~= nil then
+    inBatches('HSET', fam.key, flatten(h))
+  end
+  redis.call('SET', idFam.key, id)
   return 1
 end
 
@@ -1392,7 +1402,6 @@ local WRITE_FUNCTIONS = {
   'tv30_profile_remove',
   'tv30_profile_write',
   'tv30_session_service',
-  'tv30_session_service_id',
   'tv30_session_user',
   'tv30_v100_remote_device_remove',
   'tv30_v100_remote_device_write',

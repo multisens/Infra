@@ -48,18 +48,19 @@ after(async () => {
     await r.close();
 });
 
-test('tv3ws: espelhos da sessao e o hash do servico corrente', async () => {
+test('sessao: o perfil corrente pelo tv3ws (C.6.14.4) e pela AoP; o servico corrente pela AoP', async () => {
     await tv.sessionUser('');
     await tv.sessionUser('c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10');
-    await tv.sessionServiceId('urn:tv30:service:users-test');
-    await tv.sessionService({
-        serviceContextId: 'c08b2c72-fd14-4095-adaf-2e5810850c57', serviceId: '', serviceName: '',
-        transportStreamId: 'c08b2c72-fd14-4095-adaf-2e5810850c57', originalNetworkId: '09e59a1d-e2e7-467e-85db-2fb5a572e2fc',
-    });
+    await aop.sessionUser('c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10');
+    await aop.sessionService({ serviceContextId: 'urn:tv30:service:users-test', serviceName: 'Users', serviceId: 1001 });
     assert.equal(await r('GET', 'session:current-service-id'), 'urn:tv30:service:users-test');
-    assert.equal((await r('HGETALL', 'session:current-service')).length, 10);
+    assert.equal((await r('HGETALL', 'session:current-service')).length, 6);
     await assert.rejects(tv.sessionUser('x'.repeat(65)), esquema);
-    await assert.rejects(tv.sessionService({ serviceContextId: 'c' }), esquema);
+    await assert.rejects(aop.sessionService({ serviceContextId: 'urn:a', serviceName: '', serviceId: 'x' }), esquema);
+    await aop.sessionServiceClear();
+    assert.equal(await r('GET', 'session:current-service-id'), '');
+    assert.equal(await r('EXISTS', 'session:current-service'), 0);
+    await aop.sessionService({ serviceContextId: 'urn:tv30:service:users-test', serviceName: '', serviceId: '' });
     assert.deepEqual(await auditoria(), []);
 });
 
@@ -120,7 +121,7 @@ test('tv3ws: projecao de verdade dos registros da 100.0 (regrava, remove, limpa 
 });
 
 test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ultimo acesso; sexto recusado; remocao', async () => {
-    await tv.sessionServiceId('urn:tv30:service:users-test');
+    await aop.sessionService({ serviceContextId: 'urn:tv30:service:users-test', serviceName: '', serviceId: '' });
     const bodies = [
         { nickname: 'Viewer 1' },
         // With the avatar chosen in the form.

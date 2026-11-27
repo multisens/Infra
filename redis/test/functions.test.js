@@ -66,8 +66,7 @@ const PERFIL_MIN = {
 };
 const perfilArgs = (id, servicos, h) => [id, String(servicos.length), ...servicos, ...plano(h)];
 const SVC = {
-    serviceContextId: 'c08b2c72-fd14-4095-adaf-2e5810850c57', serviceId: '', serviceName: '',
-    transportStreamId: 'c08b2c72-fd14-4095-adaf-2e5810850c57', originalNetworkId: '09e59a1d-e2e7-467e-85db-2fb5a572e2fc',
+    serviceContextId: 'urn:tv30:service:users-test', serviceId: '', serviceName: '',
 };
 const CLIENTE = { class: 'standAlone', refreshToken: 'rt-1', accessToken: 'at-1' };
 const ENTRADA = { alg: 'HS256', key: 'segredo', registeredAt: 1760000000000 };
@@ -373,7 +372,9 @@ const SLOTS = {
         ...campoSlots(campo => v => ['tv30_avatar_write', avatarArgs('x.svg', { ...AVATAR_IMG, [campo]: v })]),
     ],
     'session:current-user': [{ rotulo: 'valor', regra: f => f.value, chamada: v => ['tv30_session_user', [v]], trecho: 'value:' }],
-    'session:current-service-id': [{ rotulo: 'valor', regra: f => f.value, chamada: v => ['tv30_session_service_id', [v]], trecho: 'value:' }],
+    // The id is written only with the hash, as its serviceContextId; empty,
+    // by the call without arguments.
+    'session:current-service-id': [{ rotulo: 'valor', regra: f => f.value, chamada: v => ['tv30_session_service', v === '' ? [] : plano({ ...SVC, serviceContextId: v })], trecho: 'field serviceContextId:' }],
     'session:current-service': campoSlots(campo => v => ['tv30_session_service', plano({ ...SVC, [campo]: v })]),
     'cache:services': [
         { rotulo: 'nome de campo', regra: f => f.otherFields.name, chamada: v => poe({ ctx: v }), trecho: 'field name:' },
@@ -646,18 +647,21 @@ test('aplicacao corrente: hash regravado inteiro; sem argumentos, so o DEL', asy
     assert.equal(await r('EXISTS', 'session:current-app'), 0, 'a recusa nao grava');
 });
 
-test('sessao: SET dos dois espelhos (vazio vale) e o hash regravado inteiro', async () => {
+test('sessao: SET do perfil (vazio vale); o hash do servico regravado inteiro com o id; sem argumentos, sem servico', async () => {
     assert.equal(await fcall('tv30_session_user', P1), 1);
     assert.equal(await r('GET', 'session:current-user'), P1);
     await fcall('tv30_session_user', '');
     assert.equal(await r('GET', 'session:current-user'), '');
-    await fcall('tv30_session_service_id', 'urn:tv30:service:users-test');
-    assert.equal(await r('GET', 'session:current-service-id'), 'urn:tv30:service:users-test');
     await fcall('tv30_session_service', ...plano({ ...SVC, serviceId: '101', serviceName: 'Canal' }));
     await fcall('tv30_session_service', ...plano(SVC));
+    assert.equal(await r('GET', 'session:current-service-id'), SVC.serviceContextId);
     const h = await r('HGETALL', 'session:current-service');
-    assert.equal(h.length, 10);
+    assert.equal(h.length, 6);
     assert.equal(h[h.indexOf('serviceId') + 1], '');
+    assert.deepEqual(await auditoria(), []);
+    assert.equal(await fcall('tv30_session_service'), 1);
+    assert.equal(await r('EXISTS', 'session:current-service'), 0);
+    assert.equal(await r('GET', 'session:current-service-id'), '');
     assert.deepEqual(await auditoria(), []);
 });
 
@@ -1005,7 +1009,6 @@ test('auditoria: cada tipo de problema gravado a mao aparece com chave, familia 
     assert.deepEqual(await auditoria(), [], 'banco vazio');
     // Valid state of every family.
     await fcall('tv30_session_user', P1);
-    await fcall('tv30_session_service_id', 'urn:s');
     await fcall('tv30_session_service', ...plano(SVC));
     await fcall('tv30_current_app', ...plano(APP));
     await fcall(...poe().flat());

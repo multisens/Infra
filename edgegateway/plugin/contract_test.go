@@ -100,14 +100,14 @@ func TestContractFunctions(t *testing.T) {
 			t.Fatalf("%s: %v", nome, err)
 		}
 	}
-	must("tv30_session_service_id", sid)
+	must("tv30_session_service", "serviceContextId", sid, "serviceName", "", "serviceId", "")
 	must("tv30_origin_register", tAssoc, sid)
 	// The GET of C.6.8.3 requires an access token: its client (cli-1, bindGet)
 	// must be in clients:authorized.
 	must("tv30_client_authorize", "cli-1", "class", "standAlone", "refreshToken", "rt")
 	defer func() {
 		s.c.fcall(true, "tv30_origin_remove", tAssoc)
-		s.c.fcall(true, "tv30_session_service_id", "")
+		s.c.fcall(true, "tv30_session_service")
 		s.c.do("SREM", keyAuthorized, "cli-1")
 		s.c.do("DEL", "client:cli-1")
 	}()

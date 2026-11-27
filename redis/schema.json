@@ -5,7 +5,7 @@
     "Redis, the functions and this schema belong to the testbed, not to ABNT NBR 25608;",
     "the 'source' field of each rule says where it came from (section of the standard, schemas.json of the broker or code)."
   ],
-  "version": "15",
+  "version": "16",
   "library": "tv30",
   "errorPrefix": "TV30SCHEMA",
 
@@ -30,7 +30,7 @@
     },
     "serviceId": {
       "type": "text", "min": 1, "max": 256,
-      "source": "schemas.json of the broker, aop/currentService (maxLength 256): the value the AoP publishes and tv3ws mirrors in session:current-service-id"
+      "source": "schemas.json of the broker, aop/currentService (maxLength 256): the value the AoP writes in session:current-service-id and publishes"
     },
     "clientId": {
       "type": "text", "min": 1,
@@ -104,32 +104,34 @@
       "family": "session:current-user",
       "key": "session:current-user",
       "type": "string",
-      "owner": "tv3ws",
-      "description": "Id of the current profile: mirror of the retained topic aop/currentUser and write of C.6.14.4. Empty = no current user.",
-      "value": { "type": "text", "max": 64, "source": "schemas.json of the broker, aop/currentUser (string, maxLength 64), the same form as the mirrored topic" },
+      "owner": "AoP and tv3ws (two writers)",
+      "writers": [
+        { "component": "AoP", "operation": "sets the profile the viewer chooses (aop-profile-manager, 8.7) and empties it when the current profile is removed", "function": "tv30_session_user" },
+        { "component": "tv3ws", "operation": "changes the current profile (C.6.14.4)", "function": "tv30_session_user" }
+      ],
+      "description": "Id of the current profile, written before the retained topic aop/currentUser is published. Empty = no current user.",
+      "value": { "type": "text", "max": 64, "source": "schemas.json of the broker, aop/currentUser (string, maxLength 64), the same form as the topic" },
       "functions": ["tv30_session_user"]
     },
     {
       "family": "session:current-service-id",
       "key": "session:current-service-id",
       "type": "string",
-      "owner": "tv3ws",
-      "description": "Id of the current service: mirror of the retained topic aop/currentService. Empty = no current service (the edge answers 300 in C.6.8.2).",
-      "value": { "type": "text", "max": 256, "source": "schemas.json of the broker, aop/currentService (string, maxLength 256), the same form as the mirrored topic" },
-      "functions": ["tv30_session_service_id"]
+      "owner": "aop-application-catalog (in the process of the AoP)",
+      "description": "Id of the current service, written with session:current-service before the retained topic aop/currentService is published. Empty = no current service (the edge answers 300 in C.6.8.2).",
+      "value": { "type": "text", "max": 256, "source": "schemas.json of the broker, aop/currentService (string, maxLength 256), the same form as the topic" },
+      "functions": ["tv30_session_service"]
     },
     {
       "family": "session:current-service",
       "key": "session:current-service",
       "type": "hash",
-      "owner": "tv3ws",
-      "description": "Current service with the fields of GET /tv3/current-service (Table C.8), rewritten whole by tv3ws at each change of service; the edge reads it in C.6.8.3.",
+      "owner": "aop-application-catalog (in the process of the AoP)",
+      "description": "Current service with the fields of GET /tv3/current-service (Table C.8), rewritten whole with session:current-service-id at each change of service; absent without a current service. tv3ws reads it in C.6.3.1 and C.6.14.5, the edge in C.6.8.3.",
       "fields": {
         "serviceContextId": { "type": "text", "min": 1, "max": 256, "required": true, "source": "Table C.8; the globalServiceId of the current service" },
-        "serviceId": { "type": "integer", "min": 0, "allowEmpty": true, "required": true, "source": "Table C.8: integer serviceId; empty when the testbed does not know it (no SLT)" },
-        "serviceName": { "type": "text", "required": true, "source": "Table C.8; empty when unknown" },
-        "transportStreamId": { "type": "text", "min": 1, "required": true, "source": "Table C.8; constant of tv3ws" },
-        "originalNetworkId": { "type": "text", "min": 1, "required": true, "source": "Table C.8; constant of tv3ws" }
+        "serviceId": { "type": "integer", "min": 0, "allowEmpty": true, "required": true, "source": "Table C.8: @serviceId of the SLT Service, from the entry of the Application Catalog; empty for a service outside the catalog" },
+        "serviceName": { "type": "text", "required": true, "source": "Table C.8: @appName of the BAM, from the entry of the Application Catalog; empty for a service outside the catalog" }
       },
       "otherFields": false,
       "functions": ["tv30_session_service"]
@@ -421,9 +423,8 @@
   ],
 
   "functions": [
-    { "name": "tv30_session_user", "arguments": "<id of the current profile, or empty>", "effect": "SET session:current-user", "returns": "1", "callers": ["tv3ws (mirror of aop/currentUser; C.6.14.4)"] },
-    { "name": "tv30_session_service_id", "arguments": "<id of the current service, or empty>", "effect": "SET session:current-service-id", "returns": "1", "callers": ["tv3ws (mirror of aop/currentService)"] },
-    { "name": "tv30_session_service", "arguments": "<field> <value> [<field> <value> ...]", "effect": "rewrites the whole hash session:current-service (DEL + HSET)", "returns": "1", "callers": ["tv3ws (core.ts, change of service)"] },
+    { "name": "tv30_session_user", "arguments": "<id of the current profile, or empty>", "effect": "SET session:current-user", "returns": "1", "callers": ["AoP (choice and removal of the current profile)", "tv3ws (C.6.14.4)"] },
+    { "name": "tv30_session_service", "arguments": "[<field> <value> ...]", "effect": "with fields, rewrites the whole hash session:current-service (DEL + HSET) and SETs session:current-service-id to its serviceContextId; without arguments, DEL session:current-service and SET session:current-service-id empty", "returns": "1", "callers": ["AoP (aop-application-catalog: change of service)"] },
     { "name": "tv30_cache_put", "arguments": "<appContextId> <service id> <path> <metadata JSON> <instant in ms> <quota> <total> <body>", "effect": "HSET of the file in cache:meta:{appContextId} and cache:body:{appContextId}, of the service in cache:services and of the instant in cache:last-access. The service over <quota> bytes refuses the file; the cache over <total> bytes first loses, whole, the DTV service context of oldest last access, other than this one (ABNT NBR 25608, 10.3.3)", "returns": "[1, evicted appContextId ...] if written; [0] if refused by the quota or the total", "callers": ["aop-cc (aop-application-context-cache: admission of an object)"] },
     { "name": "tv30_cache_touch", "arguments": "<appContextId> <instant in ms>", "effect": "HSET cache:last-access, only for an Application Context ID in the cache", "returns": "1 if written, 0 if not in the cache", "callers": ["aop-cc (aop-application-context-cache: read of a file)"] },
     { "name": "tv30_cache_remove", "arguments": "<appContextId>", "effect": "DEL cache:meta:{appContextId} and cache:body:{appContextId}; HDEL cache:services and cache:last-access", "returns": "1 if it was in the cache, 0 otherwise", "callers": ["aop-cc (aop-application-context-cache: STORED_REMOVE)"] },
