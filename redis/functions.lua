@@ -3,9 +3,74 @@
 -- of the schema goes through a function here; data outside the schema gives
 -- a TV30SCHEMA error, and nothing is written.
 
+-- Checked by the audit; schema.json must declare exactly these.
+local INVARIANTS = {
+  ['profile-indexed'] = true,
+  ['profile-dependents'] = true,
+  ['profile-avatar'] = true,
+  ['disjoint-clients'] = true,
+  ['authorized-has-record'] = true,
+}
+
+-- A literal pattern, not string.rep: at load time Redis does not expose the
+-- libraries.
+local UUID_FORMAT = '^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$'
+local UUID_NIL = '00000000-0000-0000-0000-000000000000'
+local UUID_MAX = 'ffffffff-ffff-ffff-ffff-ffffffffffff'
+
+-- Example in the refusal of an avatar name.
+local AVATAR_EXAMPLE = 'like green.svg'
+
+-- Families of the Application Context Cache.
+local CACHE_FAMILIES = {
+  services = 'cache:services',
+  access = 'cache:last-access',
+  meta = 'cache:meta:{appContextId}',
+  body = 'cache:body:{appContextId}',
+}
+
+-- Family of the remote devices of API version 100.0.
+local V100_REMOTE_DEVICE = 'v100.0:remote-device:{handle}'
+
+-- Prefix of the error reply of a refusal by the schema.
+local ERROR_PREFIX = 'TV30SCHEMA'
+
+-- At load time Redis exposes only redis.register_function (neither pairs nor
+-- ipairs): a fixed list and a numeric loop.
+local WRITE_FUNCTIONS = {
+  'tv30_announced_services',
+  'tv30_avatar_write',
+  'tv30_bind_register',
+  'tv30_bind_remove',
+  'tv30_broadcaster_attributes',
+  'tv30_cache_clear_before',
+  'tv30_cache_put',
+  'tv30_cache_remove',
+  'tv30_cache_touch',
+  'tv30_client_add_authorized',
+  'tv30_client_authorize',
+  'tv30_client_block',
+  'tv30_client_write',
+  'tv30_current_app',
+  'tv30_origin_register',
+  'tv30_origin_remove',
+  'tv30_origins_clear',
+  'tv30_profile_last_access',
+  'tv30_profile_remove',
+  'tv30_profile_write',
+  'tv30_session_service',
+  'tv30_session_user',
+  'tv30_v100_remote_device_remove',
+  'tv30_v100_remote_device_write',
+  'tv30_v100_remote_devices_clear',
+}
+
 -- cjson exists only inside the calls (at load time Redis refuses the
 -- global), so the schema is decoded on the first call.
 local S
+
+-- Write operations, by function name.
+local OP = {}
 
 -- Schema error; register() turns it into a TV30SCHEMA reply.
 local function fail(msg)
@@ -102,15 +167,6 @@ local function compile(template, parts)
   end
   return pattern .. '$', names
 end
-
--- Checked by the audit; schema.json must declare exactly these.
-local INVARIANTS = {
-  ['profile-indexed'] = true,
-  ['profile-dependents'] = true,
-  ['profile-avatar'] = true,
-  ['disjoint-clients'] = true,
-  ['authorized-has-record'] = true,
-}
 
 local function prepare()
   if S then
@@ -229,12 +285,6 @@ local function languageOk(v)
   return i > 0
 end
 
--- A literal pattern, not string.rep: at load time Redis does not expose the
--- libraries.
-local UUID_FORMAT = '^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$'
-local UUID_NIL = '00000000-0000-0000-0000-000000000000'
-local UUID_MAX = 'ffffffff-ffff-ffff-ffff-ffffffffffff'
-
 local function uuidReason(v)
   if not string.find(v, UUID_FORMAT) then
     return 'must be a UUID in the format of RFC 9562 (8-4-4-4-12 hexadecimal digits, like ' ..
@@ -268,8 +318,6 @@ end
 -- alternation or counted repetition: the check is by parts, and the
 -- extension is what comes after the last dot. Only ASCII passes, so #base
 -- counts characters.
-local AVATAR_EXAMPLE = 'like green.svg'
-
 local function fileNameReason(rule, v)
   if v == '' then
     return 'empty: the avatar is the name of an image of the avatar set (' .. AVATAR_EXAMPLE ..
@@ -345,8 +393,7 @@ end
 -- nil if v satisfies the rule, otherwise the reason. inJson: v came from a
 -- JSON value (integer, boolean, nested object or list; the rest, JSON
 -- string). A nested object or list is checked as its JSON text.
-local reason
-reason = function(rule, v, inJson)
+local function reason(rule, v, inJson)
   local t = rule.type
   if inJson then
     if t == 'integer' then
@@ -638,8 +685,6 @@ end
 -- every operation checks everything, including the type of each key, before
 -- the first write.
 
-local OP = {}
-
 -- Session.
 
 local function sessionString(familyName, args, usage)
@@ -683,13 +728,6 @@ OP.tv30_session_service = function(args)
 end
 
 -- Application Context Cache.
-
-local CACHE_FAMILIES = {
-  services = 'cache:services',
-  access = 'cache:last-access',
-  meta = 'cache:meta:{appContextId}',
-  body = 'cache:body:{appContextId}',
-}
 
 -- A non-negative decimal integer argument.
 local function cacheAmount(v, name)
@@ -1193,8 +1231,6 @@ end
 
 -- Remote devices of API version 100.0: projection written by tv3ws.
 
-local V100_REMOTE_DEVICE = 'v100.0:remote-device:{handle}'
-
 -- Rewrites the whole record of the handle.
 OP.tv30_v100_remote_device_write = function(args)
   local usage = 'tv30_v100_remote_device_write <handle> <field> <value> [...]'
@@ -1351,8 +1387,6 @@ local function audit()
   return out
 end
 
-local ERROR_PREFIX = 'TV30SCHEMA'
-
 -- Redis applies the ACL of the caller inside the function (without @write:
 -- "ERR ACL failure in script"): the functions do not prevent direct writes,
 -- which the audit shows.
@@ -1378,35 +1412,6 @@ local function register(name, fn, flags)
   }
 end
 
--- At load time Redis exposes only redis.register_function (neither pairs nor
--- ipairs): a fixed list and a numeric loop.
-local WRITE_FUNCTIONS = {
-  'tv30_announced_services',
-  'tv30_avatar_write',
-  'tv30_bind_register',
-  'tv30_bind_remove',
-  'tv30_broadcaster_attributes',
-  'tv30_cache_clear_before',
-  'tv30_cache_put',
-  'tv30_cache_remove',
-  'tv30_cache_touch',
-  'tv30_client_add_authorized',
-  'tv30_client_authorize',
-  'tv30_client_block',
-  'tv30_client_write',
-  'tv30_current_app',
-  'tv30_origin_register',
-  'tv30_origin_remove',
-  'tv30_origins_clear',
-  'tv30_profile_last_access',
-  'tv30_profile_remove',
-  'tv30_profile_write',
-  'tv30_session_service',
-  'tv30_session_user',
-  'tv30_v100_remote_device_remove',
-  'tv30_v100_remote_device_write',
-  'tv30_v100_remote_devices_clear',
-}
 for i = 1, #WRITE_FUNCTIONS do
   register(WRITE_FUNCTIONS[i], OP[WRITE_FUNCTIONS[i]], { 'no-cluster' })
 end

@@ -18,7 +18,10 @@ process.env.JWT_ISSUER = 'GenericIssuer';
 // An image of the avatar set, as the load of every start writes it
 // (infra/redis/emit_seed.py).
 const AVATAR = 'blue.svg';
-const SVG_AZUL = '<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100" rx="30" fill="#4d5b7c"/></svg>';
+const SVG_BLUE = '<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100" rx="30" fill="#4d5b7c"/></svg>';
+// A refusal by the function: ioredis rejects with a ReplyError whose message
+// is the Redis error.
+const SCHEMA_REFUSAL = { message: /^TV30SCHEMA / };
 
 // tv3ws is TypeScript: the ts-node of tv3ws itself, transpile only.
 require(path.join(TV3WS, 'node_modules', 'ts-node')).register({
@@ -32,15 +35,11 @@ const aopRedis = require(path.join(AOP, 'src', 'redis-client.js'));
 const profiles = require(path.join(AOP, 'src', 'modules', 'profile-manager', 'service.js'));
 
 let r;
-const auditoria = () => r('FCALL_RO', 'tv30_audit', 0);
-// A refusal by the function: ioredis rejects with a ReplyError whose message
-// is the Redis error.
-const esquema = { message: /^TV30SCHEMA / };
 
 before(async () => {
     r = await connect();
     await r('FLUSHALL');
-    await r('FCALL', 'tv30_avatar_write', 0, AVATAR, 'Azul', 'image/svg+xml', SVG_AZUL);
+    await r('FCALL', 'tv30_avatar_write', 0, AVATAR, 'Azul', 'image/svg+xml', SVG_BLUE);
 });
 after(async () => {
     await tvRedis.quit();
@@ -55,13 +54,13 @@ test('sessao: o perfil corrente pelo tv3ws (C.6.14.4) e pela AoP; o servico corr
     await aop.sessionService({ serviceContextId: 'urn:tv30:service:users-test', serviceName: 'Users', serviceId: 1001 });
     assert.equal(await r('GET', 'session:current-service-id'), 'urn:tv30:service:users-test');
     assert.equal((await r('HGETALL', 'session:current-service')).length, 6);
-    await assert.rejects(tv.sessionUser('x'.repeat(65)), esquema);
-    await assert.rejects(aop.sessionService({ serviceContextId: 'urn:a', serviceName: '', serviceId: 'x' }), esquema);
+    await assert.rejects(tv.sessionUser('x'.repeat(65)), SCHEMA_REFUSAL);
+    await assert.rejects(aop.sessionService({ serviceContextId: 'urn:a', serviceName: '', serviceId: 'x' }), SCHEMA_REFUSAL);
     await aop.sessionServiceClear();
     assert.equal(await r('GET', 'session:current-service-id'), '');
     assert.equal(await r('EXISTS', 'session:current-service'), 0);
     await aop.sessionService({ serviceContextId: 'urn:tv30:service:users-test', serviceName: '', serviceId: '' });
-    assert.deepEqual(await auditoria(), []);
+    assert.deepEqual(await audit(), []);
 });
 
 test('tv3ws: auth-manager de verdade (autorizar, emitir e rotacionar, bloquear, incluir no boot)', async () => {
@@ -81,9 +80,9 @@ test('tv3ws: auth-manager de verdade (autorizar, emitir e rotacionar, bloquear, 
     // A record outside clients:authorized, written by hand.
     await r('HSET', 'client:legado', 'class', 'standAlone', 'refreshToken', 'rt');
     assert.equal(await auth.backfillAuthorizedClients(), 1);
-    assert.deepEqual(await auditoria(), []);
+    assert.deepEqual(await audit(), []);
     // A class outside the list: the function refuses it (C.4.1 has three).
-    await assert.rejects(auth.authorizeClient('c-x', 'admin'), esquema);
+    await assert.rejects(auth.authorizeClient('c-x', 'admin'), SCHEMA_REFUSAL);
     assert.equal(await r('SISMEMBER', 'clients:authorized', 'c-x'), 0);
 });
 
@@ -109,15 +108,15 @@ test('tv3ws: projecao de verdade dos registros da 100.0 (regrava, remove, limpa 
     await waitFor(async () => (await r('EXISTS', key)) === 1);
     assert.equal(await r('HGET', key, 'supportedTypes'), '["light","wind"]');
     assert.equal(await r('HGET', key, 'state'), 'registered');
-    assert.deepEqual(await auditoria(), []);
+    assert.deepEqual(await audit(), []);
 
     registry.update('outra', []);
     projection.projectRegistry(registry.handle, () => registry);
     await waitFor(async () => (await r('HGET', key, 'deviceClass')) === 'outra');
     projection.projectRegistry(registry.handle, () => undefined);
     await waitFor(async () => (await r('EXISTS', key)) === 0);
-    await assert.rejects(tv.writeRemoteDeviceV100(registry.handle, { deviceClass: '' }), esquema);
-    assert.deepEqual(await auditoria(), []);
+    await assert.rejects(tv.writeRemoteDeviceV100(registry.handle, { deviceClass: '' }), SCHEMA_REFUSAL);
+    assert.deepEqual(await audit(), []);
 });
 
 test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ultimo acesso; sexto recusado; remocao', async () => {
@@ -141,7 +140,7 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
     }
     assert.equal(new Set(ids).size, 5);
     assert.equal(await r('SCARD', 'users:index'), 5);
-    assert.deepEqual(await auditoria(), [], 'perfis montados pelo AoP cumprem o esquema');
+    assert.deepEqual(await audit(), [], 'perfis montados pelo AoP cumprem o esquema');
     // avatar = the name of the image chosen in the form; without an avatar
     // in the form, the field is absent.
     for (const [i, id] of ids.entries()) {
@@ -158,27 +157,27 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
     assert.equal(await profiles.touchLastAccess(ids[1], 5), true);
     assert.equal(await profiles.touchLastAccess('desconhecido', 5), false);
     // A broadcaster attribute on the profile removed below.
-    assert.equal(await tv.broadcasterAttributes(ids[0], 'urn:tv30:service:users-test', { cor: 'azul' }), 1);
-    await assert.rejects(tv.broadcasterAttributes(ids[0], 'urn:tv30:service:users-test', { nickname: 'x' }), esquema);
+    assert.equal(await tv.broadcasterAttributes(ids[0], 'urn:tv30:service:users-test', { color: 'blue' }), 1);
+    await assert.rejects(tv.broadcasterAttributes(ids[0], 'urn:tv30:service:users-test', { nickname: 'x' }), SCHEMA_REFUSAL);
     // A valid UUID outside users:index (perfil-dependentes invariant) and an id
     // that is not a UUID.
-    await assert.rejects(tv.broadcasterAttributes('9d1e2f3a-4b5c-4d6e-8f70-81a2b3c4d5e6', 'urn:s', { cor: 'azul' }), { message: /profile-dependents/ });
-    await assert.rejects(tv.broadcasterAttributes('user_1760000000000', 'urn:s', { cor: 'azul' }), { message: /^TV30SCHEMA .*RFC 9562/ });
+    await assert.rejects(tv.broadcasterAttributes('9d1e2f3a-4b5c-4d6e-8f70-81a2b3c4d5e6', 'urn:s', { color: 'blue' }), { message: /profile-dependents/ });
+    await assert.rejects(tv.broadcasterAttributes('user_1760000000000', 'urn:s', { color: 'blue' }), { message: /^TV30SCHEMA .*RFC 9562/ });
     // The nil UUID and a version outside 1 to 8 come back as TV30SCHEMA, with
     // the part that failed.
-    await assert.rejects(tv.broadcasterAttributes('00000000-0000-0000-0000-000000000000', 'urn:s', { cor: 'azul' }), { message: /^TV30SCHEMA .*nil UUID/ });
-    await assert.rejects(tv.broadcasterAttributes('9d1e2f3a-4b5c-9d6e-8f70-81a2b3c4d5e6', 'urn:s', { cor: 'azul' }), { message: /^TV30SCHEMA .*UUID version must be 1 to 8/ });
+    await assert.rejects(tv.broadcasterAttributes('00000000-0000-0000-0000-000000000000', 'urn:s', { color: 'blue' }), { message: /^TV30SCHEMA .*nil UUID/ });
+    await assert.rejects(tv.broadcasterAttributes('9d1e2f3a-4b5c-9d6e-8f70-81a2b3c4d5e6', 'urn:s', { color: 'blue' }), { message: /^TV30SCHEMA .*UUID version must be 1 to 8/ });
     // Sixth profile: the write function refuses it by the limit of the schema,
     // and the AoP answers the message of the screen; no eviction.
     await assert.rejects(profiles.createProfile({ nickname: 'Sexto' }),
         err => err instanceof profiles.ValidationError && err.message === 'O limite de 5 perfis foi atingido. O perfil não foi criado.');
-    const novo = 'c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10';
-    await assert.rejects(aop.profileWrite(novo, [], {
-        id: novo, nickname: 'Direto', parentalControl: 'false', closedCaptioning: 'false', closedSigning: 'false',
+    const newId = 'c3167a18-5dc5-4a6e-9b1d-3f2a7c5e8d10';
+    await assert.rejects(aop.profileWrite(newId, [], {
+        id: newId, nickname: 'Direto', parentalControl: 'false', closedCaptioning: 'false', closedSigning: 'false',
         audioDescription: 'false', dialogEnhancement: 'false', voiceGuidance: 'false',
     }), err => aop.profileLimitOf(err) === 5);
     assert.equal(await r('SCARD', 'users:index'), 5);
-    assert.equal(await r('HGET', `user:${ids[0]}:broadcaster-attrs:urn:tv30:service:users-test`, 'cor'), 'azul');
+    assert.equal(await r('HGET', `user:${ids[0]}:broadcaster-attrs:urn:tv30:service:users-test`, 'color'), 'blue');
     // Removal by the manager takes visibility and broadcaster attributes in
     // the same function (tv30_profile_remove); the image of the set stays.
     await profiles.removeProfile(ids[0]);
@@ -187,23 +186,25 @@ test('AoP: gestor de perfis de verdade — formulario -> Tabela 7 no esquema; ul
     assert.equal(await r('SISMEMBER', 'users:index', ids[0]), 0);
     assert.equal(await r('SISMEMBER', 'users:index', ids[1]), 0);
     assert.equal(await r('EXISTS', `avatar:${AVATAR}`), 1, 'a imagem do conjunto fica');
-    assert.deepEqual(await auditoria(), []);
+    assert.deepEqual(await audit(), []);
     // With three, the fourth fits again.
     const { user } = await profiles.createProfile({ nickname: 'Depois' });
     assert.equal(await r('SCARD', 'users:index'), 4);
     assert.equal(await r('SISMEMBER', 'users:index', user.id), 1);
-    assert.deepEqual(await auditoria(), []);
+    assert.deepEqual(await audit(), []);
 });
 
 test('AoP: perfil padrao na base sem perfil cumpre o esquema; o unico perfil nao e removido', async () => {
-    for (const id of await r('SMEMBERS', 'users:index')) await profiles.removeProfile(id).catch(() => aop.profileRemove(id));
+    for (const id of await r('SMEMBERS', 'users:index')) {
+        await profiles.removeProfile(id).catch(() => aop.profileRemove(id));
+    }
     assert.equal(await r('SCARD', 'users:index'), 0);
     const p = await profiles.ensureDefaultProfile();
     assert.ok(p, 'perfil padrao criado');
     assert.deepEqual(await r('SMEMBERS', 'users:index'), [p.id]);
     assert.equal(await r('HGET', `user:${p.id}`, 'nickname'), 'Viewer 1');
     assert.equal(await r('EXISTS', `user:${p.id}:consent`), 0, 'sem visibilidade');
-    assert.deepEqual(await auditoria(), [], 'o perfil padrao cumpre o esquema');
+    assert.deepEqual(await audit(), [], 'o perfil padrao cumpre o esquema');
     assert.equal(await profiles.ensureDefaultProfile(), null);
     await assert.rejects(profiles.removeProfile(p.id), err => err instanceof profiles.ValidationError);
     assert.equal(await r('SISMEMBER', 'users:index', p.id), 1);
@@ -214,26 +215,28 @@ test('AoP: aop-application-catalog de verdade — marco de varredura -> services
     const catalog = require(path.join(AOP, 'src', 'modules', 'application-catalog', 'catalog'));
     // The set of the previous schema version.
     await r('SADD', 'services:announced', 'urn:tv30:service:da-versao-anterior');
-    const publicados = [];
-    catalog.start((t, m) => publicados.push([t, m]));
+    const published = [];
+    catalog.start((t, m) => published.push([t, m]));
     const svg = '<svg xmlns="http://www.w3.org/2000/svg"/>';
-    const W = 'urn:tv30:service:webmedia', U = 'urn:tv30:service:uff', X = 'Ação Ü!';
+    const W = 'urn:tv30:service:webmedia';
+    const U = 'urn:tv30:service:uff';
+    const X = 'Ação Ü!';
     const svc = (serviceId, g, minor, main = true) => ({ serviceId, globalServiceId: g, serviceCategory: 30, majorChannelNo: 10,
         minorChannelNo: minor, mainAvOverTheAir: main, receptionQuality: 80 });
     const bam = (g, n) => ({ globalServiceId: g, appVersion: 1, appName: n, appIcon: svg, bannerIcon: svg, backgroundColor: '#000000', foregroundColor: '#ffffff' });
-    const marco = (...rf) => JSON.stringify({ completedAt: '2026-01-01T00:00:00Z', rfChannels: rf });
+    const scanMark = (...rf) => JSON.stringify({ completedAt: '2026-01-01T00:00:00Z', rfChannels: rf });
     lls.receive(JSON.stringify({ bsid: [10], bandwidth: 6, Service: [svc(1, W, 1), svc(2, U, 2), svc(3, X, 3, false)] }), 'tlm/lls/10/slt');
     lls.receive(JSON.stringify({ groupingType: 'noGrouping', BAM: [bam(W, 'WebMedia'), bam(U, 'UFF'), bam(X, 'X')] }), 'tlm/lls/10/bamt');
-    await catalog.receiveScan(marco(10));
+    await catalog.receiveScan(scanMark(10));
     assert.equal(await r('TYPE', 'services:announced'), 'hash');
     assert.deepEqual((await r('HKEYS', 'services:announced')).sort(), [W, U, X].sort());
-    assert.deepEqual(publicados.at(-1), ['aop/services', JSON.stringify([W, U, X].map(serviceContextId => ({ serviceContextId })))]);
+    assert.deepEqual(published.at(-1), ['aop/services', JSON.stringify([W, U, X].map(serviceContextId => ({ serviceContextId })))]);
     assert.equal((await catalog.service(U)).serviceId, 2);
     assert.deepEqual((await catalog.items()).map(i => i.gsid), [W, U, X]);
-    assert.deepEqual(await auditoria(), []);
+    assert.deepEqual(await audit(), []);
     // Withdrawn from the detected channel: leaves.
     lls.receive(JSON.stringify({ bsid: [10], bandwidth: 6, Service: [svc(2, U, 2), svc(3, X, 3, false)] }), 'tlm/lls/10/slt');
-    await catalog.receiveScan(marco(10));
+    await catalog.receiveScan(scanMark(10));
     assert.deepEqual((await r('HKEYS', 'services:announced')).sort(), [U, X].sort());
     // A BAM outside the schema of the record: the function refuses it and
     // the previous catalog stays.
@@ -241,13 +244,18 @@ test('AoP: aop-application-catalog de verdade — marco de varredura -> services
     console.error = () => undefined;
     try {
         lls.receive(JSON.stringify({ BAM: [bam(U, 'x'.repeat(21)), bam(X, 'X')] }), 'tlm/lls/10/bamt');
-        await catalog.receiveScan(marco(10));
-    } finally { console.error = errorOrig; }
+        await catalog.receiveScan(scanMark(10));
+    } finally {
+        console.error = errorOrig;
+    }
     assert.deepEqual((await r('HKEYS', 'services:announced')).sort(), [U, X].sort());
     assert.equal(JSON.parse(await r('HGET', 'services:announced', U)).bam.appName, 'UFF');
     lls.receive('', 'tlm/lls/10/slt');
     lls.receive('', 'tlm/lls/10/bamt');
     await r('DEL', 'services:announced');
-    assert.deepEqual(await auditoria(), []);
+    assert.deepEqual(await audit(), []);
 });
 
+function audit() {
+    return r('FCALL_RO', 'tv30_audit', 0);
+}
