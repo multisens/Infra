@@ -18,6 +18,17 @@
 #define SCHEMA_ENFORCE_ON "enforce"
 #define SCHEMA_ENFORCE_WARN "warn"
 #define NO_SCHEMA_DETAILS "Topic without a declared schema (infra/mqtt-broker/plugin/config/schemas.json)"
+#define SCHEMAS_FILE "/mosquitto/config/schemas.json"
+
+// Topics that pass without validation: the error messages and the replies
+// of the latency test, published by the plugin itself, the broker topics and
+// the requests of the latency test, which the plugin answers.
+#define ERRORS_PREFIX "errors/"
+#define PLUGIN_RESPONSE_PREFIX "PluginResponseTime"
+#define PUBLISHER_RESPONSE_PREFIX "PublisherResponseTime"
+#define SYS_PREFIX "$SYS/"
+
+#define PLUGIN_VERSION 5
 
 mosquitto_plugin_id_t *mosq_pid = NULL;
 static json_object *schemas = NULL;
@@ -31,19 +42,24 @@ static int load_schemas_from_file(const char* filename) {
         mosquitto_log_printf(MOSQ_LOG_ERR, "Could not open schemas file: %s", filename);
         return -1;
     }
-    
+
     fseek(file, 0, SEEK_END);
     long length = ftell(file);
     fseek(file, 0, SEEK_SET);
-    
+
     char *content = malloc(length + 1);
+    if (content == NULL) {
+        fclose(file);
+        mosquitto_log_printf(MOSQ_LOG_ERR, "No memory to read the schemas file: %s", filename);
+        return -1;
+    }
     fread(content, 1, length, file);
     content[length] = '\0';
     fclose(file);
-    
+
     json_object *new_schemas = json_tokener_parse(content);
     free(content);
-    
+
     if (new_schemas == NULL || !json_object_is_type(new_schemas, json_type_object)) {
         if (new_schemas != NULL) {
             json_object_put(new_schemas);
@@ -66,7 +82,9 @@ static int load_schemas_from_file(const char* filename) {
 // Publishes on errors/<client_id>; message and topic as in error_json.h.
 static void publish_error(const char* topic, const char* error_type, const char* details, const char* payload, size_t payload_len, const char* client_id) {
     char *error_buffer = malloc(ERROR_JSON_CAP);
-    if (!error_buffer) return;
+    if (!error_buffer) {
+        return;
+    }
 
     time_t now = time(NULL);
     char timestamp[64];
@@ -91,27 +109,47 @@ static void publish_error(const char* topic, const char* error_type, const char*
 // (tlm/sls/<sid>/esg and others).
 static int topic_matches(const char* pattern, const char* topic) {
     while (*pattern && *topic) {
-        if (*pattern == '#') return 1;
+        if (*pattern == '#') {
+            return 1;
+        }
         if (*pattern == '+') {
-            while (*topic && *topic != '/') topic++;
+            while (*topic && *topic != '/') {
+                topic++;
+            }
             pattern++;
-            if (*pattern == '\0' && *topic == '\0') return 1;
-            if (*pattern != '/' || *topic != '/') return 0;
-            pattern++; topic++;
+            if (*pattern == '\0' && *topic == '\0') {
+                return 1;
+            }
+            if (*pattern != '/' || *topic != '/') {
+                return 0;
+            }
+            pattern++;
+            topic++;
             continue;
         }
-        if (*pattern != *topic) return 0;
-        pattern++; topic++;
+        if (*pattern != *topic) {
+            return 0;
+        }
+        pattern++;
+        topic++;
     }
-    if (*pattern == '\0' && *topic == '\0') return 1;
+    if (*pattern == '\0' && *topic == '\0') {
+        return 1;
+    }
     // "a/#" matches "a".
-    if (pattern[0] == '/' && pattern[1] == '#' && *topic == '\0') return 1;
-    if (pattern[0] == '#' && *topic == '\0') return 1;
+    if (pattern[0] == '/' && pattern[1] == '#' && *topic == '\0') {
+        return 1;
+    }
+    if (pattern[0] == '#' && *topic == '\0') {
+        return 1;
+    }
     return 0;
 }
 
 static json_object* get_schema_for_topic(const char* topic) {
-    if (!schemas) return NULL;
+    if (!schemas) {
+        return NULL;
+    }
 
     json_object *schema;
     if (json_object_object_get_ex(schemas, topic, &schema)) {
@@ -130,7 +168,9 @@ static json_object* get_schema_for_topic(const char* topic) {
 // and not JSON.
 static int schema_expects_plain_string(json_object* schema) {
     json_object *type;
-    if (!json_object_object_get_ex(schema, "type", &type)) return 0;
+    if (!json_object_object_get_ex(schema, "type", &type)) {
+        return 0;
+    }
     const char* t = json_object_get_string(type);
     return t && strcmp(t, "string") == 0;
 }
@@ -152,7 +192,7 @@ static int validate_message(const char* topic, const char* payload, size_t paylo
         mosquitto_log_printf(MOSQ_LOG_INFO, "Topic without a schema: %s", topic);
         return MOSQ_ERR_ACL_DENIED;
     }
-    
+
     json_object *message = NULL;
     json_payload_parse(payload, payload_len, &message);
     if (!message && schema_expects_plain_string(schema) && !memchr(payload, '\0', payload_len)) {
@@ -166,79 +206,90 @@ static int validate_message(const char* topic, const char* payload, size_t paylo
         publish_error(topic, "INVALID_JSON", "Payload is not valid JSON", payload, payload_len, client_id);
         return MOSQ_ERR_ACL_DENIED;
     }
-    
+
     validation_result result = validate_json_schema(message, schema);
     json_object_put(message);
-    
+
     if (!result.is_valid) {
         mosquitto_log_printf(MOSQ_LOG_INFO, "Validation failed for topic %s: %s", topic, result.error_message);
         publish_error(topic, "SCHEMA_VALIDATION_FAILED", result.error_message, payload, payload_len, client_id);
         return MOSQ_ERR_ACL_DENIED;
     }
-    
+
     return MOSQ_ERR_SUCCESS;
+}
+
+// Whether the topic starts with the prefix.
+static int has_prefix(const char* topic, const char* prefix) {
+    return strncmp(topic, prefix, strlen(prefix)) == 0;
+}
+
+// Copy of the payload with a NUL at the end, for the functions that read a C
+// string; NULL without memory.
+static char* copy_payload(const void* payload, uint32_t payload_len) {
+    char *copy = malloc(payload_len + 1);
+    if (copy == NULL) {
+        return NULL;
+    }
+    memcpy(copy, payload, payload_len);
+    copy[payload_len] = '\0';
+    return copy;
 }
 
 // The MOSQ_EVT_ACL_CHECK callback of Mosquitto. It controls no access: it
 // grants every access, except a PUBLISH whose payload does not satisfy the
-// schema of the topic. It also answers the response time test.
+// schema of the topic, or on a topic without a schema. It also answers the
+// response time test.
 static int callback_acl_check(int event, void *event_data, void *userdata) {
     struct mosquitto_evt_acl_check *ed = event_data;
-    const char *client_id = mosquitto_client_id(ed->client);
-    
-    // Don't validate the errors topics (avoid loops)
-    if (ed->access == MOSQ_ACL_WRITE && strncmp(ed->topic, "errors/", 7) == 0) {
+
+    // Only PUBLISH is validated.
+    if (ed->access != MOSQ_ACL_WRITE) {
         return MOSQ_ERR_SUCCESS;
     }
-    
-    // Don't validate PluginResponseTime topics (avoid loops)
-    if (ed->access == MOSQ_ACL_WRITE && strncmp(ed->topic, "PluginResponseTime", 18) == 0) {
+
+    // The messages of the plugin itself pass, without a loop.
+    if (has_prefix(ed->topic, ERRORS_PREFIX) || has_prefix(ed->topic, PLUGIN_RESPONSE_PREFIX)) {
         return MOSQ_ERR_SUCCESS;
     }
-    
-    if (ed->access == MOSQ_ACL_WRITE && strncmp(ed->topic, "PublisherResponseTime", 21) == 0) {
+
+    if (has_prefix(ed->topic, PUBLISHER_RESPONSE_PREFIX)) {
         if (ed->payload && ed->payloadlen > 0) {
-            char *payload_str = malloc(ed->payloadlen + 1);
-            memcpy(payload_str, ed->payload, ed->payloadlen);
-            payload_str[ed->payloadlen] = '\0';
-            
+            char *payload_str = copy_payload(ed->payload, ed->payloadlen);
+            if (payload_str == NULL) {
+                return MOSQ_ERR_NOMEM;
+            }
             handle_response_time_test(ed->topic, payload_str);
             free(payload_str);
         }
         return MOSQ_ERR_SUCCESS;
     }
-    
-    // Only PUBLISH is validated, outside $SYS/; an empty payload (removal of
-    // a retained message) passes.
-    if (ed->access != MOSQ_ACL_WRITE || strncmp(ed->topic, "$SYS/", 5) == 0) {
+
+    // $SYS/ passes; an empty payload (removal of a retained message) too.
+    if (has_prefix(ed->topic, SYS_PREFIX) || !ed->payload || ed->payloadlen == 0) {
         return MOSQ_ERR_SUCCESS;
     }
-    
-    if (ed->payload && ed->payloadlen > 0) {
-        char *payload_str = malloc(ed->payloadlen + 1);
-        memcpy(payload_str, ed->payload, ed->payloadlen);
-        payload_str[ed->payloadlen] = '\0';
-        
-        const char *client_id = mosquitto_client_id(ed->client);
-        int result = validate_message(ed->topic, payload_str, ed->payloadlen, client_id);
-        free(payload_str);
-        
-        if (result != MOSQ_ERR_SUCCESS) {
-            mosquitto_log_printf(MOSQ_LOG_INFO, "Validation FAILED for topic: %s", ed->topic);
-            return MOSQ_ERR_ACL_DENIED;
-        }
+
+    char *payload_str = copy_payload(ed->payload, ed->payloadlen);
+    if (payload_str == NULL) {
+        return MOSQ_ERR_NOMEM;
     }
-    
+    const char *client_id = mosquitto_client_id(ed->client);
+    int result = validate_message(ed->topic, payload_str, ed->payloadlen, client_id);
+    free(payload_str);
+
+    if (result != MOSQ_ERR_SUCCESS) {
+        mosquitto_log_printf(MOSQ_LOG_INFO, "Validation FAILED for topic: %s", ed->topic);
+        return MOSQ_ERR_ACL_DENIED;
+    }
     return MOSQ_ERR_SUCCESS;
 }
 
-int mosquitto_plugin_version(int supported_version_count, const int *supported_versions)
-{
-    return 5;
+int mosquitto_plugin_version(int supported_version_count, const int *supported_versions) {
+    return PLUGIN_VERSION;
 }
 
-int mosquitto_plugin_init(mosquitto_plugin_id_t *identifier, void **user_data, struct mosquitto_opt *opts, int opt_count)
-{
+int mosquitto_plugin_init(mosquitto_plugin_id_t *identifier, void **user_data, struct mosquitto_opt *opts, int opt_count) {
     mosq_pid = identifier;
 
     const char *enforce = getenv(SCHEMA_ENFORCE_ENV);
@@ -251,22 +302,21 @@ int mosquitto_plugin_init(mosquitto_plugin_id_t *identifier, void **user_data, s
         return MOSQ_ERR_INVAL;
     }
 
-    if (load_schemas_from_file("/mosquitto/config/schemas.json") != 0) {
+    if (load_schemas_from_file(SCHEMAS_FILE) != 0) {
         return MOSQ_ERR_INVAL;
     }
 
     mosquitto_log_printf(MOSQ_LOG_INFO, "Mosquitto plugin loaded (schema validation + response time tester; %s=%s)", SCHEMA_ENFORCE_ENV, schema_enforce ? SCHEMA_ENFORCE_ON : SCHEMA_ENFORCE_WARN);
-    
+
     return mosquitto_callback_register(mosq_pid, MOSQ_EVT_ACL_CHECK, callback_acl_check, NULL, NULL);
 }
 
-int mosquitto_plugin_cleanup(void *user_data, struct mosquitto_opt *opts, int opt_count)
-{
+int mosquitto_plugin_cleanup(void *user_data, struct mosquitto_opt *opts, int opt_count) {
     if (schemas) {
         json_object_put(schemas);
         schemas = NULL;
     }
-    
+
     mosquitto_log_printf(MOSQ_LOG_INFO, "Mosquitto plugin unloaded");
     return mosquitto_callback_unregister(mosq_pid, MOSQ_EVT_ACL_CHECK, callback_acl_check, NULL);
 }
