@@ -11,6 +11,27 @@ import (
 	"strings"
 )
 
+// edgeReply is the result of an edge API: Code 0 is success, status 200 with
+// Header added and Body as JSON, or no body when Body is nil; any other Code
+// is an error in the format of C.3.2.
+type edgeReply struct {
+	Code   int
+	Detail string
+	Header http.Header
+	Body   interface{}
+}
+
+type edgeFunc func(h *authHandler, r *http.Request, params map[string]string) edgeReply
+
+// versionInfo holds the versions served by the requested route and the
+// latest version of the server, kept in the request context.
+type versionInfo struct {
+	served []string
+	latest string
+}
+
+type versionCtxKey struct{}
+
 // APIs answered by the edge itself (the "edge" field of the route), after
 // the same decision as the other routes and the version negotiation.
 
@@ -29,36 +50,6 @@ const (
 	edgeManifest = "manifest"
 )
 
-// edgeReply is the result of an edge API: Code 0 is success, status 200 with
-// Header added and Body as JSON, or no body when Body is nil; any other Code
-// is an error in the format of C.3.2.
-type edgeReply struct {
-	Code   int
-	Detail string
-	Header http.Header
-	Body   interface{}
-}
-
-type edgeFunc func(h *authHandler, r *http.Request, params map[string]string) edgeReply
-
-var edgeHandlers = map[string]edgeFunc{
-	edgeBindRegister: (*authHandler).bindRegister,
-	edgeBindList:     (*authHandler).bindList,
-	edgeBindRemove:   (*authHandler).bindRemove,
-	edgeAPIInfo:      (*authHandler).apiInfo,
-	edgeAPIList:      (*authHandler).apiList,
-	edgeManifest:     (*authHandler).manifest,
-}
-
-func edgeHandlerNames() string {
-	names := make([]string, 0, len(edgeHandlers))
-	for n := range edgeHandlers {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return strings.Join(names, ", ")
-}
-
 // Version negotiation (C.3.6.5), on every route, against the versions field
 // of routes.json, 2.0 when absent (C.3.6.3): without Accept-Version, 2.0;
 // outside the X.Y format, 101; a version the route does not serve, 100.
@@ -76,100 +67,20 @@ const (
 	internalClientIDHeader    = "X-TV30-Client-Id"
 )
 
+var edgeHandlers = map[string]edgeFunc{
+	edgeBindRegister: (*authHandler).bindRegister,
+	edgeBindList:     (*authHandler).bindList,
+	edgeBindRemove:   (*authHandler).bindRemove,
+	edgeAPIInfo:      (*authHandler).apiInfo,
+	edgeAPIList:      (*authHandler).apiList,
+	edgeManifest:     (*authHandler).manifest,
+}
+
 var versionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
 
 // Prefix of the internal path (internalPath); no declared route starts with
 // it.
 var internalPrefix = regexp.MustCompile(`^/v[0-9]+\.[0-9]+(/|$)`)
-
-// compareVersions compares two "X.Y" versions numerically (C.3.6.2): 2.10 is
-// newer than 2.9.
-func compareVersions(a, b string) int {
-	am, an := splitVersion(a)
-	bm, bn := splitVersion(b)
-	if am != bm {
-		return am - bm
-	}
-	return an - bn
-}
-
-func splitVersion(v string) (int, int) {
-	maj, min, _ := strings.Cut(v, ".")
-	x, _ := strconv.Atoi(maj)
-	y, _ := strconv.Atoi(min)
-	return x, y
-}
-
-func negotiateVersion(r *http.Request, served []string) (version string, code int, detail string) {
-	vals := r.Header.Values("Accept-Version")
-	v := defaultVersion
-	if len(vals) > 0 {
-		// Several headers are joined with ", ", which is malformed.
-		v = strings.Join(vals, ", ")
-		if !versionPattern.MatchString(v) {
-			return "", 101, "malformed Accept-Version '" + v + "'"
-		}
-	}
-	for _, s := range served {
-		if v == s {
-			return v, 0, ""
-		}
-	}
-	return "", 100, "unsupported version '" + v + "' for this API (served: " + strings.Join(served, ", ") + ")"
-}
-
-func isExtensionVersion(v string) bool {
-	major, _ := splitVersion(v)
-	return major >= extensionMajor
-}
-
-// internalPath returns the path from the edge to the service: for a testbed
-// extension, /v<X.Y> followed by the public path; otherwise, the public path.
-func internalPath(path, version string) string {
-	if !isExtensionVersion(version) {
-		return path
-	}
-	// No trailing slash, so that a redirect by the router does not show the
-	// internal path to the client.
-	if len(path) > 1 {
-		path = strings.TrimSuffix(path, "/")
-	}
-	return "/v" + version + path
-}
-
-// toInternalPath replaces the request path with the internal path. The URL
-// is copied, so the URL it replaces is not changed.
-func toInternalPath(r *http.Request, version string) {
-	if !isExtensionVersion(version) {
-		return
-	}
-	u := *r.URL
-	u.Path = internalPath(u.Path, version)
-	if u.RawPath != "" {
-		u.RawPath = internalPath(u.RawPath, version)
-	}
-	r.URL = &u
-}
-
-// versionInfo holds the versions served by the requested route and the
-// latest version of the server, kept in the request context.
-type versionInfo struct {
-	served []string
-	latest string
-}
-
-type versionCtxKey struct{}
-
-func withVersionInfo(r *http.Request, vi versionInfo) *http.Request {
-	return r.WithContext(context.WithValue(r.Context(), versionCtxKey{}, vi))
-}
-
-func versionInfoOf(r *http.Request) versionInfo {
-	if vi, ok := r.Context().Value(versionCtxKey{}).(versionInfo); ok {
-		return vi
-	}
-	return versionInfo{served: []string{defaultVersion}, latest: defaultVersion}
-}
 
 // serveEdge answers a route of the edge. A warn mode header already set is
 // kept.
@@ -218,6 +129,95 @@ func (h *authHandler) runEdge(fn edgeFunc, r *http.Request, params map[string]st
 		reply = edgeReply{Code: 200, Detail: "falha interna da borda"}
 	}()
 	return fn(h, r, params)
+}
+
+func negotiateVersion(r *http.Request, served []string) (version string, code int, detail string) {
+	vals := r.Header.Values("Accept-Version")
+	v := defaultVersion
+	if len(vals) > 0 {
+		// Several headers are joined with ", ", which is malformed.
+		v = strings.Join(vals, ", ")
+		if !versionPattern.MatchString(v) {
+			return "", 101, "malformed Accept-Version '" + v + "'"
+		}
+	}
+	for _, s := range served {
+		if v == s {
+			return v, 0, ""
+		}
+	}
+	return "", 100, "unsupported version '" + v + "' for this API (served: " + strings.Join(served, ", ") + ")"
+}
+
+// toInternalPath replaces the request path with the internal path. The URL
+// is copied, so the URL it replaces is not changed.
+func toInternalPath(r *http.Request, version string) {
+	if !isExtensionVersion(version) {
+		return
+	}
+	u := *r.URL
+	u.Path = internalPath(u.Path, version)
+	if u.RawPath != "" {
+		u.RawPath = internalPath(u.RawPath, version)
+	}
+	r.URL = &u
+}
+
+// internalPath returns the path from the edge to the service: for a testbed
+// extension, /v<X.Y> followed by the public path; otherwise, the public path.
+func internalPath(path, version string) string {
+	if !isExtensionVersion(version) {
+		return path
+	}
+	// No trailing slash, so that a redirect by the router does not show the
+	// internal path to the client.
+	if len(path) > 1 {
+		path = strings.TrimSuffix(path, "/")
+	}
+	return "/v" + version + path
+}
+
+func withVersionInfo(r *http.Request, vi versionInfo) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), versionCtxKey{}, vi))
+}
+
+func versionInfoOf(r *http.Request) versionInfo {
+	if vi, ok := r.Context().Value(versionCtxKey{}).(versionInfo); ok {
+		return vi
+	}
+	return versionInfo{served: []string{defaultVersion}, latest: defaultVersion}
+}
+
+func edgeHandlerNames() string {
+	names := make([]string, 0, len(edgeHandlers))
+	for n := range edgeHandlers {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
+// compareVersions compares two "X.Y" versions numerically (C.3.6.2): 2.10 is
+// newer than 2.9.
+func compareVersions(a, b string) int {
+	am, an := splitVersion(a)
+	bm, bn := splitVersion(b)
+	if am != bm {
+		return am - bm
+	}
+	return an - bn
+}
+
+func splitVersion(v string) (int, int) {
+	maj, min, _ := strings.Cut(v, ".")
+	x, _ := strconv.Atoi(maj)
+	y, _ := strconv.Atoi(min)
+	return x, y
+}
+
+func isExtensionVersion(v string) bool {
+	major, _ := splitVersion(v)
+	return major >= extensionMajor
 }
 
 // redisDown returns error 200, "Platform resource unavailable" (Table C.1),

@@ -320,18 +320,18 @@ var (
 )
 
 const (
-	semRede     = "AVISO sem rede para o anuncio"
-	deVolta     = "rede de volta"
-	falha       = "FALHA em"
-	anunciando  = "anunciando " + ssdpST
-	semByebye   = "saindo sem ssdp:byebye"
-	enviaByebye = "enviando ssdp:byebye"
+	logNoNetwork     = "AVISO sem rede para o anuncio"
+	logNetworkBack   = "rede de volta"
+	logFailure       = "FALHA em"
+	logAnnouncing    = "anunciando " + ssdpST
+	logNoByebye      = "saindo sem ssdp:byebye"
+	logSendingByebye = "enviando ssdp:byebye"
 )
 
 // Wi-Fi still without IPv4 at startup: the announcer waits (1, 2, 4, 8 s),
 // warns once and, with the network back, announces on the interface that has
 // the IPv4 of SSDP_ADVERTISE_HOST.
-func TestSemRedeNaPartidaEsperaEVolta(t *testing.T) {
+func TestNoNetworkAtStartWaitsAndComesBack(t *testing.T) {
 	h := newHarness(t)
 	// Exists, still without IPv4.
 	h.net.names["wlp2s0"] = true
@@ -347,12 +347,12 @@ func TestSemRedeNaPartidaEsperaEVolta(t *testing.T) {
 		t.Fatalf("saida %d, esperado 0:\n%s", code, h.log())
 	}
 	h.wantWaits(1*time.Second, 2*time.Second, 4*time.Second, 8*time.Second)
-	h.wantLog(semRede, 1)
+	h.wantLog(logNoNetwork, 1)
 	h.wantLog("nenhuma interface de pe com IPv4 externo", 1)
-	h.wantLog(deVolta+": anunciando de novo depois de 15s sem anunciar (4 tentativas sem rede)", 1)
-	h.wantLog(anunciando+" em UDP 1900 (IPv4 e IPv6) pela interface wlp2s0 (192.168.2.7, via host-ip); "+
+	h.wantLog(logNetworkBack+": anunciando de novo depois de 15s sem anunciar (4 tentativas sem rede)", 1)
+	h.wantLog(logAnnouncing+" em UDP 1900 (IPv4 e IPv6) pela interface wlp2s0 (192.168.2.7, via host-ip); "+
 		"LOCATION http://192.168.2.7:44642/manifest (host de SSDP_ADVERTISE_HOST)", 1)
-	h.wantLog(falha, 0)
+	h.wantLog(logFailure, 0)
 	cs := h.net.conns()
 	if len(cs) != 1 || cs[0].count(ssdpAlive) != 2 || cs[0].count(ssdpByebye) != 2 || !cs[0].isClosed() {
 		t.Fatalf("conexoes: %d", len(cs))
@@ -361,7 +361,7 @@ func TestSemRedeNaPartidaEsperaEVolta(t *testing.T) {
 
 // Increasing wait up to 30 s, without repeating the warning; SIGTERM without
 // network exits with 0 and without byebye (there is no socket).
-func TestEsperaCrescenteAte30s(t *testing.T) {
+func TestGrowingWaitUpTo30s(t *testing.T) {
 	h := newHarness(t)
 	h.onWait = func(n int) {
 		if n == 8 {
@@ -373,9 +373,9 @@ func TestEsperaCrescenteAte30s(t *testing.T) {
 	}
 	s := time.Second
 	h.wantWaits(1*s, 2*s, 4*s, 8*s, 16*s, 30*s, 30*s, 30*s)
-	h.wantLog(semRede, 1)
-	h.wantLog(semByebye, 1)
-	h.wantLog(falha, 0)
+	h.wantLog(logNoNetwork, 1)
+	h.wantLog(logNoByebye, 1)
+	h.wantLog(logFailure, 0)
 	if len(h.net.conns()) != 0 {
 		t.Fatal("abriu socket sem rede")
 	}
@@ -388,7 +388,7 @@ func TestEsperaCrescenteAte30s(t *testing.T) {
 // interface. A send error is a lack of network by the errno or because the
 // IPv4 of the session is gone; with the IPv4 still there and an errno
 // outside the list, it is a configuration error.
-func TestQuedaDeRedeDuranteOAnuncio(t *testing.T) {
+func TestNetworkDropDuringTheAnnouncement(t *testing.T) {
 	for _, c := range []struct {
 		name    string
 		err     error
@@ -434,7 +434,7 @@ func TestQuedaDeRedeDuranteOAnuncio(t *testing.T) {
 			code := h.run()
 			cs := h.net.conns()
 			if c.fatal {
-				if code != 1 || h.count(falha+" envio do NOTIFY") != 1 || h.count(semRede) != 0 || len(cs) != 1 || !cs[0].isClosed() {
+				if code != 1 || h.count(logFailure+" envio do NOTIFY") != 1 || h.count(logNoNetwork) != 0 || len(cs) != 1 || !cs[0].isClosed() {
 					t.Fatalf("esperado exit 1 sem espera: saida %d, %d conexoes:\n%s", code, len(cs), h.log())
 				}
 				return
@@ -445,14 +445,14 @@ func TestQuedaDeRedeDuranteOAnuncio(t *testing.T) {
 			if !cs[0].isClosed() || cs[1].ch.Addr != "192.168.0.23" || cs[1].ch.Name != "wlp2s0" {
 				t.Fatalf("1a fechada=%v; 2a %+v", cs[0].isClosed(), cs[1].ch)
 			}
-			h.wantLog(semRede+" (envio do NOTIFY: ", 1)
-			h.wantLog(deVolta, 1)
+			h.wantLog(logNoNetwork+" (envio do NOTIFY: ", 1)
+			h.wantLog(logNetworkBack, 1)
 			h.wantLog("pela interface wlp2s0 (192.168.2.7, via host-ip); LOCATION http://192.168.2.7:44642/manifest", 1)
 			h.wantLog("pela interface wlp2s0 (192.168.0.23, via default-route); LOCATION http://192.168.2.7:44642/manifest", 1)
 			h.wantLog("AVISO host anunciado: o IPv4 192.168.2.7 nao esta em nenhuma interface externa desta maquina; "+
 				"o anuncio sai pela interface da rota padrao wlp2s0 (192.168.0.23)", 1)
 			h.wantLog("192.168.0.23:44642/manifest", 0)
-			h.wantLog(falha, 0)
+			h.wantLog(logFailure, 0)
 			if c.netGone {
 				h.wantWaits(1*time.Second, 2*time.Second)
 			} else {
@@ -463,7 +463,7 @@ func TestQuedaDeRedeDuranteOAnuncio(t *testing.T) {
 }
 
 // A read error on the group: the same classification as sending.
-func TestErroDeLeitura(t *testing.T) {
+func TestReadError(t *testing.T) {
 	h := newHarness(t)
 	h.net.set("wlp2s0", wifi2)
 	h.onOpen = func(n int, conn *fakeConn) {
@@ -481,16 +481,16 @@ func TestErroDeLeitura(t *testing.T) {
 	if code := h.run(); code != 0 {
 		t.Fatalf("saida %d:\n%s", code, h.log())
 	}
-	h.wantLog(semRede+" (leitura do grupo SSDP: ", 1)
-	h.wantLog(deVolta, 1)
+	h.wantLog(logNoNetwork+" (leitura do grupo SSDP: ", 1)
+	h.wantLog(logNetworkBack, 1)
 	h.wantWaits(1 * time.Second)
 }
 
 // Configuration errors: exit 1 (the edge goes down), without waiting for the
 // network.
-func TestErrosDeConfiguracaoEncerram(t *testing.T) {
+func TestConfigurationErrorsExit(t *testing.T) {
 	inUse := sockErr("listen", "bind", syscall.EADDRINUSE)
-	const cfg = falha + " configuracao do anuncio (SSDP_ADVERTISE_HOST, EDGE_HTTP_PORT, EDGE_HTTPS_PORT): "
+	const cfg = logFailure + " configuracao do anuncio (SSDP_ADVERTISE_HOST, EDGE_HTTP_PORT, EDGE_HTTPS_PORT): "
 	for _, c := range []struct {
 		name string
 		// "-" removes the variable.
@@ -507,16 +507,16 @@ func TestErrosDeConfiguracaoEncerram(t *testing.T) {
 		{"porta invalida", map[string]string{"EDGE_HTTP_PORT": "abc"}, nil, false,
 			cfg + "EDGE_HTTP_PORT='abc'", 0},
 		{"SSDP_INTERFACE inexistente", map[string]string{"SSDP_INTERFACE": "eth9"}, nil, false,
-			falha + " configuracao da interface do anuncio (SSDP_INTERFACE): SSDP_INTERFACE='eth9' nao existe", 0},
+			logFailure + " configuracao da interface do anuncio (SSDP_INTERFACE): SSDP_INTERFACE='eth9' nao existe", 0},
 		{"SSDP_INTERFACE inexistente e sem rede", map[string]string{"SSDP_INTERFACE": "eth9"}, nil, true,
 			"SSDP_INTERFACE='eth9' nao existe", 0},
 		{"SSDP_INTERFACE de loopback", map[string]string{"SSDP_INTERFACE": "lo"}, nil, false, "loopback", 0},
 		{"UDP 1900 presa sem SO_REUSEADDR", nil, []error{step("socket UDP 1900 (escuta do grupo)", inUse)}, false,
-			falha + " socket UDP 1900 (escuta do grupo): listen udp4: bind: address already in use", 0},
+			logFailure + " socket UDP 1900 (escuta do grupo): listen udp4: bind: address already in use", 0},
 		{"UDP 1900 presa, depois de uma espera sem rede", nil, []error{step("socket UDP 1900 (escuta do grupo)", inUse)}, true,
 			"bind: address already in use", 0},
 		{"outro erro de socket", nil, []error{step("socket de envio em 192.168.2.7", sockErr("listen", "bind", syscall.EACCES))}, false,
-			falha + " socket de envio em 192.168.2.7", 0},
+			logFailure + " socket de envio em 192.168.2.7", 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			h := newHarness(t)
@@ -536,8 +536,8 @@ func TestErrosDeConfiguracaoEncerram(t *testing.T) {
 				t.Fatalf("saida %d, esperado 1:\n%s", code, h.log())
 			}
 			h.wantLog(c.want, 1)
-			h.wantLog(falha, 1)
-			h.wantLog(anunciando, 0)
+			h.wantLog(logFailure, 1)
+			h.wantLog(logAnnouncing, 0)
 			if n := len(h.net.conns()); n != c.opens {
 				t.Fatalf("%d conexoes abertas", n)
 			}
@@ -547,7 +547,7 @@ func TestErrosDeConfiguracaoEncerram(t *testing.T) {
 
 // SSDP_INTERFACE exists but without IPv4: waits (not a configuration error)
 // and announces on it when the IPv4 arrives.
-func TestInterfaceForcadaSemIPv4Espera(t *testing.T) {
+func TestForcedInterfaceWithoutIPv4Waits(t *testing.T) {
 	h := newHarness(t)
 	h.env["SSDP_INTERFACE"] = "wlp2s0"
 	h.env["SSDP_ADVERTISE_HOST"] = "192.168.2.7"
@@ -558,7 +558,7 @@ func TestInterfaceForcadaSemIPv4Espera(t *testing.T) {
 	if code := h.run(); code != 0 {
 		t.Fatalf("saida %d:\n%s", code, h.log())
 	}
-	h.wantLog(semRede+" (escolha da interface do anuncio: a interface SSDP_INTERFACE='wlp2s0' esta sem IPv4", 1)
+	h.wantLog(logNoNetwork+" (escolha da interface do anuncio: a interface SSDP_INTERFACE='wlp2s0' esta sem IPv4", 1)
 	h.wantLog("pela interface wlp2s0 (192.168.2.7, via SSDP_INTERFACE)", 1)
 	h.wantWaits(1 * time.Second)
 }
@@ -566,7 +566,7 @@ func TestInterfaceForcadaSemIPv4Espera(t *testing.T) {
 // A network error opening the sockets (the IPv4 gone between the choice and
 // the bind, or the group does not join the interface): waits and tries
 // again.
-func TestErroDeRedeNaAbertura(t *testing.T) {
+func TestNetworkErrorOnOpen(t *testing.T) {
 	h := newHarness(t)
 	h.net.set("wlp2s0", wifi2)
 	h.net.openErr = []error{
@@ -577,14 +577,14 @@ func TestErroDeRedeNaAbertura(t *testing.T) {
 	if code := h.run(); code != 0 {
 		t.Fatalf("saida %d:\n%s", code, h.log())
 	}
-	h.wantLog(semRede+" (socket de envio em 192.168.2.7", 1)
-	h.wantLog(deVolta+": anunciando de novo depois de 3s sem anunciar (2 tentativas sem rede)", 1)
+	h.wantLog(logNoNetwork+" (socket de envio em 192.168.2.7", 1)
+	h.wantLog(logNetworkBack+": anunciando de novo depois de 3s sem anunciar (2 tentativas sem rede)", 1)
 	h.wantWaits(1*time.Second, 2*time.Second)
 }
 
 // The warnings of the announcement are logged once; in a new session, only
 // those that changed.
-func TestAvisosNaoSeRepetem(t *testing.T) {
+func TestWarningsDoNotRepeat(t *testing.T) {
 	h := newHarness(t)
 	h.env["SSDP_ADVERTISE_HOST"] = "tv.local"
 	h.net.set("wlp2s0", wifi2)
@@ -611,19 +611,19 @@ func TestAvisosNaoSeRepetem(t *testing.T) {
 	if code := h.run(); code != 0 {
 		t.Fatalf("saida %d:\n%s", code, h.log())
 	}
-	h.wantLog(anunciando, 3)
+	h.wantLog(logAnnouncing, 3)
 	// 44643 has TLS: no warning of a port without TLS.
 	h.wantLog("SEM TLS", 0)
 	h.wantLog("AVISO host anunciado: 'tv.local' nao e um IPv4 (nome ou IPv6); o anuncio sai pela interface da rota padrao wlp2s0 (192.168.2.7)", 1)
 	h.wantLog("AVISO host anunciado: 'tv.local' nao e um IPv4 (nome ou IPv6); o anuncio sai pela interface da rota padrao wlp2s0 (192.168.0.23)", 1)
 	// One per loss.
-	h.wantLog(semRede, 2)
-	h.wantLog(deVolta, 2)
+	h.wantLog(logNoNetwork, 2)
+	h.wantLog(logNetworkBack, 2)
 }
 
 // A search answered on the interface of the session; SIGTERM sends the
 // byebye.
-func TestRespondeBuscaEByebye(t *testing.T) {
+func TestAnswersSearchAndByebye(t *testing.T) {
 	h := newHarness(t)
 	h.net.set("wlp2s0", wifi2)
 	from := &net.UDPAddr{IP: net.ParseIP("192.168.2.5"), Port: 50000}
@@ -642,7 +642,7 @@ func TestRespondeBuscaEByebye(t *testing.T) {
 		!strings.Contains(replies[0], "DATE: Sat, 10 Oct 2026 12:00:00 UTC\r\n") {
 		t.Fatalf("respostas: %q", replies)
 	}
-	h.wantLog("terminated: "+enviaByebye, 1)
+	h.wantLog("terminated: "+logSendingByebye, 1)
 	if c.count(ssdpByebye) != 2 || !c.isClosed() {
 		t.Fatalf("byebye %d, fechada %v", c.count(ssdpByebye), c.isClosed())
 	}
@@ -666,7 +666,7 @@ func TestIsNetDown(t *testing.T) {
 
 // Without SSDP_ADVERTISE_HOST, the host of LOCATION is the IPv4 of the
 // interface of the default route, without a warning.
-func TestHostDetectado(t *testing.T) {
+func TestDetectedHost(t *testing.T) {
 	h := newHarness(t)
 	delete(h.env, "SSDP_ADVERTISE_HOST")
 	h.net.set("wlp2s0", wifi2, dock)
@@ -683,14 +683,14 @@ func TestHostDetectado(t *testing.T) {
 	}
 	h.wantLog("LOCATION http://192.168.2.7:44642/manifest (host detectado: IPv4 da interface)", 1)
 	h.wantLog("AVISO host anunciado", 0)
-	h.wantLog(falha, 0)
+	h.wantLog(logFailure, 0)
 }
 
 // With the detected host, a network change while announcing is noticed on
 // the next NOTIFY: byebye of the old address, a warning in the log, without
 // going through the "no network" state, and a new announcement with the new
 // IP.
-func TestTrocaDeRedeComHostDetectado(t *testing.T) {
+func TestNetworkChangeWithDetectedHost(t *testing.T) {
 	h := newHarness(t)
 	delete(h.env, "SSDP_ADVERTISE_HOST")
 	h.ticks = 1
@@ -716,8 +716,8 @@ func TestTrocaDeRedeComHostDetectado(t *testing.T) {
 		t.Fatalf("saida %d:\n%s", code, h.log())
 	}
 	h.wantLog("AVISO a rede mudou (wlp2s0 192.168.2.7 -> wlp2s0 192.168.0.23): anunciando de novo com o endereco novo", 1)
-	h.wantLog(semRede, 0)
-	h.wantLog(anunciando, 2)
+	h.wantLog(logNoNetwork, 0)
+	h.wantLog(logAnnouncing, 2)
 	h.wantLog("LOCATION http://192.168.2.7:44642/manifest (host detectado", 1)
 	h.wantLog("LOCATION http://192.168.0.23:44642/manifest (host detectado", 1)
 	cs := h.net.conns()
@@ -731,7 +731,7 @@ func TestTrocaDeRedeComHostDetectado(t *testing.T) {
 
 // Stop file (SSDP_STOP_FILE): when it is created, the announcer sends the
 // byebye as on SIGTERM.
-func TestArquivoDeParada(t *testing.T) {
+func TestStopFile(t *testing.T) {
 	sig := make(chan os.Signal, 1)
 	n := 0
 	go watchStopFile("/tmp/tv30-parar", time.Millisecond, sig, func(string) bool { n++; return n >= 3 })
@@ -756,7 +756,7 @@ func TestArquivoDeParada(t *testing.T) {
 	if code := h.run(); code != 0 {
 		t.Fatalf("saida %d:\n%s", code, h.log())
 	}
-	h.wantLog("arquivo de parada /tmp/tv30-parar: "+enviaByebye, 1)
+	h.wantLog("arquivo de parada /tmp/tv30-parar: "+logSendingByebye, 1)
 	if c := h.net.conns()[0]; c.count(ssdpByebye) != 2 {
 		t.Fatalf("byebye %d", c.count(ssdpByebye))
 	}
@@ -803,7 +803,7 @@ func TestWithoutIPv6TheAnnouncementGoesOnInIPv4(t *testing.T) {
 	}
 	h.wantLog("AVISO grupo IPv6 indisponivel na interface wlp2s0", 1)
 	h.wantLog("(so IPv4)", 1)
-	h.wantLog(semRede, 0)
+	h.wantLog(logNoNetwork, 0)
 	if c := h.net.conns()[0]; c.count(ssdpAlive) != 2 {
 		t.Fatalf("IPv4 alive %d", c.count(ssdpAlive))
 	}
@@ -827,7 +827,7 @@ func TestIPv6SendFailureLeavesTheSessionInIPv4(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, h.log())
 	}
 	h.wantLog("AVISO envio do NOTIFY IPv6", 1)
-	h.wantLog(semRede, 0)
+	h.wantLog(logNoNetwork, 0)
 	if !h.net.conns6()[0].isClosed() || h.net.conns()[0].count(ssdpAlive) != 4 {
 		t.Fatalf("IPv6 closed %v, IPv4 alive %d", h.net.conns6()[0].isClosed(), h.net.conns()[0].count(ssdpAlive))
 	}

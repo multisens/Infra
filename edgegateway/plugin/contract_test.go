@@ -50,10 +50,10 @@ func TestContractFunctions(t *testing.T) {
 	// clients:authorized and clients:blocked as written by the functions
 	// (authorize, block, add back on boot).
 	const cid = "contrato-go-cliente"
-	must0 := func(nome string, args ...string) {
+	must0 := func(name string, args ...string) {
 		t.Helper()
-		if _, err := s.c.fcall(true, nome, args...); err != nil {
-			t.Fatalf("%s: %v", nome, err)
+		if _, err := s.c.fcall(true, name, args...); err != nil {
+			t.Fatalf("%s: %v", name, err)
 		}
 	}
 	authz := func() (bool, bool) {
@@ -94,10 +94,10 @@ func TestContractFunctions(t *testing.T) {
 
 	// C.6.8 API on the real Redis: current service and associated origin
 	// written by the functions.
-	must := func(nome string, args ...string) {
+	must := func(name string, args ...string) {
 		t.Helper()
-		if _, err := s.c.fcall(true, nome, args...); err != nil {
-			t.Fatalf("%s: %v", nome, err)
+		if _, err := s.c.fcall(true, name, args...); err != nil {
+			t.Fatalf("%s: %v", name, err)
 		}
 	}
 	must("tv30_session_service", "serviceContextId", sid, "serviceName", "", "serviceId", "")
@@ -131,18 +131,18 @@ func TestContractFunctions(t *testing.T) {
 	}
 
 	// 304 on services:announced written by its function.
-	const fora = "urn:tv30:test:contrato-go-fora"
+	const outsideCatalog = "urn:tv30:test:contrato-go-fora"
 	must("tv30_announced_services", sid, catalogRecord(sid), "urn:tv30:test:contrato-go-outro",
 		catalogRecord("urn:tv30:test:contrato-go-outro"))
 	defer s.c.fcall(true, "tv30_announced_services")
 	if in, err := s.ServiceInCatalog(sid); err != nil || !in {
 		t.Fatalf("servico anunciado: %v %v", in, err)
 	}
-	if in, err := s.ServiceInCatalog(fora); err != nil || in {
+	if in, err := s.ServiceInCatalog(outsideCatalog); err != nil || in {
 		t.Fatalf("servico fora: %v %v", in, err)
 	}
 	cred := map[string]string{"Authorization": accessFor(t, "cli-1", classStandAlone), "bind-token": "abc"}
-	checkC32(t, serve(h, "GET", "/tv3/"+fora+"/users/u1", cred), 304)
+	checkC32(t, serve(h, "GET", "/tv3/"+outsideCatalog+"/users/u1", cred), 304)
 	if v := h.evaluate(withHeaders(httptest.NewRequest("GET", "/tv3/"+sid+"/users/u1", nil), cred)); v.Code != 108 {
 		t.Fatalf("servico do catalogo segue para o bind-token: %d %q", v.Code, v.Detail)
 	}

@@ -12,13 +12,15 @@ import (
 	"os"
 )
 
+type registerer string
+
 const pluginName = "tv30-auth"
 
 // HandlerRegisterer is the symbol KrakenD looks up in the .so of an
 // http-server plugin.
 var HandlerRegisterer = registerer(pluginName)
 
-type registerer string
+var logger = log.New(os.Stdout, "", 0)
 
 func (r registerer) RegisterHandlers(f func(
 	name string,
@@ -53,8 +55,6 @@ func (r registerer) registerHandlers(_ context.Context, extra map[string]interfa
 	store := &redisStore{c: newRedisClient(cfg.RedisAddr, cfg.RedisTimeout)}
 	return newHandler(cfg, store, next), nil
 }
-
-var logger = log.New(os.Stdout, "", 0)
 
 func logf(format string, args ...interface{}) {
 	logger.Print("[tv30-auth] " + fmt.Sprintf(format, args...))
