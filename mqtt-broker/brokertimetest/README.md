@@ -51,3 +51,17 @@ O `headless-run.js` roda a mesma lógica da página em quatro cenários (10, 20,
   "iteration": 1
 }
 ```
+
+## Baterias de comparação: registro histórico
+
+`vanilla-battery.sh`, `validacao-battery.sh` e `interleaved.sh`, com os resultados em
+`interleaved.jsonl` e `validacao-only.jsonl`, são o registro da medição feita com o broker de então.
+Elas não rodam como estão:
+
+- os scripts trazem o caminho da máquina onde a medição foi feita (`/mnt/d/...`);
+- o caso "neutro" publica em `perftest/echo`, um tópico sem esquema, que o broker agora recusa;
+- o caso "validação" publica em `sensor/room1/temperature`, cujo esquema saiu do `schemas.json` de
+  produção e só existe nos testes do plugin (`plugin/tests/test-schemas.json`).
+
+O teste de latência do plugin (`PublisherResponseTime`), usado pela interface e pelo
+`headless-run.js`, não passa pela validação e continua valendo.
