@@ -55,24 +55,24 @@ static int valid_utf8(const unsigned char *s, size_t n) {
 }
 
 // Own scan and the json-c reader. Returns the object, or NULL.
-static json_object *parse_checked(const char *msg, int len, size_t cap, const char *caso) {
-    CHECK(len >= 0, "%s: error_json_build devolveu %d", caso, len);
+static json_object *parse_checked(const char *msg, int len, size_t cap, const char *label) {
+    CHECK(len >= 0, "%s: error_json_build devolveu %d", label, len);
     if (len < 0) return NULL;
-    CHECK((size_t)len < cap, "%s: comprimento %d nao cabe em %zu", caso, len, cap);
-    CHECK(strlen(msg) == (size_t)len, "%s: NUL no meio ou comprimento errado (%zu != %d)", caso, strlen(msg), len);
+    CHECK((size_t)len < cap, "%s: comprimento %d nao cabe em %zu", label, len, cap);
+    CHECK(strlen(msg) == (size_t)len, "%s: NUL no meio ou comprimento errado (%zu != %d)", label, strlen(msg), len);
     int ctl = 0;
     for (int i = 0; i < len; i++) if ((unsigned char)msg[i] < 0x20) ctl++;
-    CHECK(ctl == 0, "%s: %d byte(s) de controle cru(s) na mensagem", caso, ctl);
-    CHECK(valid_utf8((const unsigned char *)msg, (size_t)len), "%s: mensagem nao e UTF-8 valido", caso);
-    CHECK(len > 1 && msg[0] == '{' && msg[len - 1] == '}', "%s: nao comeca com { e termina com }", caso);
+    CHECK(ctl == 0, "%s: %d byte(s) de controle cru(s) na mensagem", label, ctl);
+    CHECK(valid_utf8((const unsigned char *)msg, (size_t)len), "%s: mensagem nao e UTF-8 valido", label);
+    CHECK(len > 1 && msg[0] == '{' && msg[len - 1] == '}', "%s: nao comeca com { e termina com }", label);
     json_tokener *tok = json_tokener_new();
     json_tokener_set_flags(tok, JSON_TOKENER_STRICT | JSON_TOKENER_VALIDATE_UTF8);
     json_object *o = json_tokener_parse_ex(tok, msg, len);
     enum json_tokener_error e = json_tokener_get_error(tok);
     CHECK(o && e == json_tokener_success && json_object_is_type(o, json_type_object),
-          "%s: json-c recusou (%s): %.300s", caso, json_tokener_error_desc(e), msg);
+          "%s: json-c recusou (%s): %.300s", label, json_tokener_error_desc(e), msg);
     if (o && e == json_tokener_success) {
-        CHECK(json_tokener_get_parse_end(tok) == (size_t)len, "%s: sobrou texto depois do objeto", caso);
+        CHECK(json_tokener_get_parse_end(tok) == (size_t)len, "%s: sobrou texto depois do objeto", label);
     }
     json_tokener_free(tok);
     if (dump && len > 0) fprintf(dump, "%s\n", msg);
@@ -97,12 +97,12 @@ static int is_truncated(json_object *o) {
            json_object_is_type(f, json_type_boolean) && json_object_get_boolean(f);
 }
 
-static void expect_field(json_object *o, const char *k, const char *want, size_t wn, const char *caso) {
+static void expect_field(json_object *o, const char *k, const char *want, size_t wn, const char *label) {
     const char *v;
     size_t n;
     int ok = field(o, k, &v, &n);
-    CHECK(ok, "%s: campo %s ausente ou nao texto", caso, k);
-    if (ok) CHECK(n == wn && memcmp(v, want, wn) == 0, "%s: campo %s decodificado diferente (%zu bytes, esperado %zu)", caso, k, n, wn);
+    CHECK(ok, "%s: campo %s ausente ou nao texto", label, k);
+    if (ok) CHECK(n == wn && memcmp(v, want, wn) == 0, "%s: campo %s decodificado diferente (%zu bytes, esperado %zu)", label, k, n, wn);
 }
 
 static char buf[ERROR_JSON_CAP];
@@ -114,7 +114,7 @@ static int build(size_t cap, const char *topic, const char *type, const char *de
 }
 
 // 1. Format with plain text.
-static void t_formato(void) {
+static void t_format(void) {
     int len = build(ERROR_JSON_CAP, "sensor/room1/temperature", "INVALID_JSON",
                     "Payload is not valid JSON", "cli", "abc", 3);
     const char *want = "{\"timestamp\":\"" TS "\",\"topic\":\"sensor/room1/temperature\","
@@ -161,7 +161,7 @@ static void t_escapes(void) {
 
 // 3. Quotes and backslash in topic, details and client_id, not only in the
 // payload.
-static void t_campos(void) {
+static void t_fields(void) {
     const char *topic = "tlm/sls/x\"y\\z/esg";
     const char *details = "Item at index 0: Property 'backgroundColor': String 'x\"y\\z\n' does not match pattern '^#[0-9A-Fa-f]{6}$'";
     const char *client = "cli\"q\\b\t";
@@ -218,16 +218,16 @@ static void t_utf8(void) {
         { "\xc3(", 2, 1 },
     };
     for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
-        char caso[64];
-        snprintf(caso, sizeof(caso), "utf8 invalido %zu", i);
+        char label[64];
+        snprintf(label, sizeof(label), "utf8 invalido %zu", i);
         len = build(ERROR_JSON_CAP, "t", "X", "d", "c", bad[i].in, bad[i].n);
-        o = parse_checked(buf, len, ERROR_JSON_CAP, caso);
+        o = parse_checked(buf, len, ERROR_JSON_CAP, label);
         // Expected: each invalid byte becomes EF BF BD; the rest as is.
         char want[64];
         size_t wn = 0;
         for (int k = 0; k < bad[i].fffd; k++) { memcpy(want + wn, "\xef\xbf\xbd", 3); wn += 3; }
         if (bad[i].n == 2 && bad[i].in[1] == '(') want[wn++] = '(';
-        expect_field(o, "payload", want, wn, caso);
+        expect_field(o, "payload", want, wn, label);
         json_object_put(o);
     }
     // Invalid also in details, where the schema validator copies payload
@@ -242,7 +242,7 @@ static void t_utf8(void) {
 // 5. Cut: for each kind of unit, every size until past the limit. The cut
 // is always between whole units, the message fits, uses the room (does not
 // cut early) and carries "truncated" only when it cut.
-static void t_corte(void) {
+static void t_cut(void) {
     struct { const char *u; size_t un; const char *dec; size_t dn; size_t esc; } units[] = {
         { "a", 1, "a", 1, 1 },
         { "\"", 1, "\"", 1, 2 },
@@ -259,8 +259,8 @@ static void t_corte(void) {
         int saw_cut = 0, saw_exact = 0;
         size_t max_count = 2200 / units[u].esc + 2;
         for (size_t count = 0; count <= max_count; count++) {
-            char caso[64];
-            snprintf(caso, sizeof(caso), "corte unidade %zu x %zu", u, count);
+            char label[64];
+            snprintf(label, sizeof(label), "corte unidade %zu x %zu", u, count);
             size_t n = 0, fn = 0;
             for (size_t k = 0; k < count; k++) {
                 memcpy(p + n, units[u].u, units[u].un); n += units[u].un;
@@ -268,18 +268,18 @@ static void t_corte(void) {
             }
             int len = build(ERROR_JSON_CAP, "sensor/room1/temperature", "INVALID_JSON",
                             "Payload is not valid JSON", "cli", p, n);
-            json_object *o = parse_checked(buf, len, ERROR_JSON_CAP, caso);
+            json_object *o = parse_checked(buf, len, ERROR_JSON_CAP, label);
             const char *v;
             size_t vn;
-            if (!field(o, "payload", &v, &vn)) { CHECK(0, "%s: sem payload", caso); json_object_put(o); continue; }
-            CHECK(vn <= fn && memcmp(v, full, vn) == 0, "%s: payload decodificado nao e prefixo do original", caso);
-            CHECK(vn % units[u].dn == 0, "%s: corte no meio de uma unidade (%zu bytes)", caso, vn);
+            if (!field(o, "payload", &v, &vn)) { CHECK(0, "%s: sem payload", label); json_object_put(o); continue; }
+            CHECK(vn <= fn && memcmp(v, full, vn) == 0, "%s: payload decodificado nao e prefixo do original", label);
+            CHECK(vn % units[u].dn == 0, "%s: corte no meio de uma unidade (%zu bytes)", label, vn);
             int cut = vn < fn;
-            CHECK(cut == is_truncated(o), "%s: truncated=%d mas cortou=%d", caso, is_truncated(o), cut);
+            CHECK(cut == is_truncated(o), "%s: truncated=%d mas cortou=%d", label, is_truncated(o), cut);
             if (cut) {
                 saw_cut = 1;
                 // Uses the room: less than one escaped unit is left.
-                CHECK(len > ERROR_JSON_CAP - 1 - (int)units[u].esc, "%s: cortou cedo demais (len %d)", caso, len);
+                CHECK(len > ERROR_JSON_CAP - 1 - (int)units[u].esc, "%s: cortou cedo demais (len %d)", label, len);
             }
             if (!cut && len == ERROR_JSON_CAP - 1) saw_exact = 1;
             json_object_put(o);
@@ -291,7 +291,7 @@ static void t_corte(void) {
 
 // 6. Fields other than the payload at extreme sizes: each stops at its
 // maximum, and the message stays valid and with the payload.
-static void t_tetos(void) {
+static void t_limits(void) {
     static char big[70000];
     memset(big, '"', 1000); big[1000] = '\0';
     int len = build(ERROR_JSON_CAP, big, "X", "d", "c", "x", 1);
@@ -322,7 +322,7 @@ static void t_tetos(void) {
 
 // 7. Every capacity between the minimum and 2048, with the worst case in
 // every field: always valid JSON and within the capacity.
-static void t_capacidades(void) {
+static void t_capacities(void) {
     static char mix[6000];
     size_t n = 0;
     const char *pat = "\"\\\x01\n\xe2\x82\xac\xff\xf0\x9f\x98\x80" "a";
@@ -330,14 +330,14 @@ static void t_capacidades(void) {
     while (n + pn < sizeof(mix) - 1) { memcpy(mix + n, pat, pn); n += pn; }
     mix[n] = '\0';
     for (size_t cap = ERROR_JSON_MIN_CAP; cap <= ERROR_JSON_CAP; cap++) {
-        char caso[64];
-        snprintf(caso, sizeof(caso), "capacidade %zu", cap);
+        char label[64];
+        snprintf(label, sizeof(label), "capacidade %zu", cap);
         int len = build(cap, mix, mix, mix, mix, mix, n);
-        json_object *o = parse_checked(buf, len, cap, caso);
-        CHECK(is_truncated(o), "%s: sem truncated", caso);
-        CHECK(has(o, "payload"), "%s: sem payload", caso);
-        CHECK(buf[len] == '\0', "%s: sem NUL no fim", caso);
-        CHECK(cap == ERROR_JSON_CAP || buf[cap] == 'Z', "%s: escreveu alem da capacidade", caso);
+        json_object *o = parse_checked(buf, len, cap, label);
+        CHECK(is_truncated(o), "%s: sem truncated", label);
+        CHECK(has(o, "payload"), "%s: sem payload", label);
+        CHECK(buf[len] == '\0', "%s: sem NUL no fim", label);
+        CHECK(cap == ERROR_JSON_CAP || buf[cap] == 'Z', "%s: escreveu alem da capacidade", label);
         json_object_put(o);
     }
 }
@@ -366,13 +366,13 @@ static int topic(size_t cap, const char *client) {
     return error_json_topic(tbuf, cap, client);
 }
 
-static void expect_topic(const char *client, const char *want, const char *caso) {
+static void expect_topic(const char *client, const char *want, const char *label) {
     int len = topic(ERROR_JSON_TOPIC_CAP, client);
-    CHECK(len == (int)strlen(want) && strcmp(tbuf, want) == 0, "%s: topico '%s', esperado '%s'", caso, tbuf, want);
-    CHECK(valid_topic(tbuf, strlen(tbuf)), "%s: topico invalido", caso);
+    CHECK(len == (int)strlen(want) && strcmp(tbuf, want) == 0, "%s: topico '%s', esperado '%s'", label, tbuf, want);
+    CHECK(valid_topic(tbuf, strlen(tbuf)), "%s: topico invalido", label);
 }
 
-static void t_topico(void) {
+static void t_topic(void) {
     expect_topic("cli", "errors/cli", "simples");
     expect_topic(NULL, "errors/unknown", "NULL");
     expect_topic("", "errors/_", "vazio");
@@ -409,8 +409,8 @@ static void t_topico(void) {
         for (size_t pad = 0; pad < 4; pad++) {
             int saw_cut = 0, saw_exact = 0;
             for (size_t count = 0; count * units[u].un <= 600; count++) {
-                char caso[80];
-                snprintf(caso, sizeof(caso), "topico unidade %zu, %zu + %zu", u, pad, count);
+                char label[80];
+                snprintf(label, sizeof(label), "topico unidade %zu, %zu + %zu", u, pad, count);
                 size_t n = 0, fn = 7;
                 memcpy(full, "errors/", 7);
                 for (size_t k = 0; k < pad; k++) { id[n++] = 'c'; full[fn++] = 'c'; }
@@ -421,16 +421,16 @@ static void t_topico(void) {
                 id[n] = '\0';
                 if (n == 0) full[fn++] = '_';
                 int len = topic(ERROR_JSON_TOPIC_CAP, id);
-                CHECK(len > 7 && (size_t)len == strlen(tbuf), "%s: comprimento %d", caso, len);
+                CHECK(len > 7 && (size_t)len == strlen(tbuf), "%s: comprimento %d", label, len);
                 if (len <= 7) continue;
-                CHECK(len <= ERROR_JSON_TOPIC_CAP - 1, "%s: %d bytes", caso, len);
-                CHECK(tbuf[ERROR_JSON_TOPIC_CAP] == 'Z', "%s: escreveu alem da capacidade", caso);
-                CHECK(valid_topic(tbuf, (size_t)len), "%s: topico invalido", caso);
-                CHECK((size_t)len <= fn && memcmp(tbuf, full, (size_t)len) == 0, "%s: nao e prefixo do topico inteiro", caso);
-                if (n > 0) CHECK(((size_t)len - 7 - pad) % units[u].on == 0, "%s: corte no meio de um caractere", caso);
+                CHECK(len <= ERROR_JSON_TOPIC_CAP - 1, "%s: %d bytes", label, len);
+                CHECK(tbuf[ERROR_JSON_TOPIC_CAP] == 'Z', "%s: escreveu alem da capacidade", label);
+                CHECK(valid_topic(tbuf, (size_t)len), "%s: topico invalido", label);
+                CHECK((size_t)len <= fn && memcmp(tbuf, full, (size_t)len) == 0, "%s: nao e prefixo do topico inteiro", label);
+                if (n > 0) CHECK(((size_t)len - 7 - pad) % units[u].on == 0, "%s: corte no meio de um caractere", label);
                 if ((size_t)len < fn) {
                     saw_cut = 1;
-                    CHECK(len > ERROR_JSON_TOPIC_CAP - 1 - (int)units[u].on, "%s: cortou cedo demais (%d)", caso, len);
+                    CHECK(len > ERROR_JSON_TOPIC_CAP - 1 - (int)units[u].on, "%s: cortou cedo demais (%d)", label, len);
                 } else if (len == ERROR_JSON_TOPIC_CAP - 1) {
                     saw_exact = 1;
                 }
@@ -442,11 +442,11 @@ static void t_topico(void) {
 }
 
 // 9. error_json_string: JSON string escaping, without cutting.
-static void expect_string(const char *s, size_t n, const char *want, const char *caso) {
+static void expect_string(const char *s, size_t n, const char *want, const char *label) {
     char out[256];
     memset(out, 'Z', sizeof(out));
     int len = error_json_string(out, sizeof(out), s, n);
-    CHECK(len == (int)strlen(want) && strcmp(out, want) == 0, "string %s: '%s', esperado '%s'", caso, out, want);
+    CHECK(len == (int)strlen(want) && strcmp(out, want) == 0, "string %s: '%s', esperado '%s'", label, out, want);
 }
 
 static void t_string(void) {
@@ -499,14 +499,14 @@ int main(int argc, char **argv) {
         dump = fopen(argv[1], "w");
         if (!dump) { perror(argv[1]); return 2; }
     }
-    t_formato();
+    t_format();
     t_escapes();
-    t_campos();
+    t_fields();
     t_utf8();
-    t_corte();
-    t_tetos();
-    t_capacidades();
-    t_topico();
+    t_cut();
+    t_limits();
+    t_capacities();
+    t_topic();
     t_string();
     if (dump) fclose(dump);
     printf("test_error_json: %d conferencias, %d falha(s)\n", checks, failures);

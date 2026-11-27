@@ -10,11 +10,11 @@
 #   KEEP_IMG=1 bash ...
 #       does not remove the built image
 set -u
-AQUI=$(cd "$(dirname "$0")" && pwd)
+HERE=$(cd "$(dirname "$0")" && pwd)
 # infra/mqtt-broker
-BROKER_DIR=$(cd "$AQUI/../.." && pwd)
+BROKER_DIR=$(cd "$HERE/../.." && pwd)
 IMG=${IMG:-tv30-mqtt-broker:teste-errors-json}
-P=${PREFIXO:-tv30-teste-errors-json}
+P=${PREFIX:-tv30-teste-errors-json}
 NET=$P-net
 BRK=$P-broker
 LOG=$(mktemp)
@@ -45,7 +45,7 @@ fi
 # Schemas of the disposable broker: those of the image plus the test topics
 # (test-schemas.json), mounted over /mosquitto/config/schemas.json.
 SCHEMAS=$(mktemp)
-python3 - "$BROKER_DIR/plugin/config/schemas.json" "$AQUI/test-schemas.json" >"$SCHEMAS" <<'PY'
+python3 - "$BROKER_DIR/plugin/config/schemas.json" "$HERE/test-schemas.json" >"$SCHEMAS" <<'PY'
 import json, sys
 merged = json.load(open(sys.argv[1]))
 merged.update(json.load(open(sys.argv[2])))
@@ -60,7 +60,7 @@ for _ in $(seq 1 50); do
 done
 docker logs "$BRK" 2>&1 | grep -E "Schemas loaded|plugin loaded|running" | head -3
 
-docker run --rm --network "$NET" -v "$AQUI":/t:ro --entrypoint python3 "$IMG" /t/errors_json_driver.py "$BRK"
+docker run --rm --network "$NET" -v "$HERE":/t:ro --entrypoint python3 "$IMG" /t/errors_json_driver.py "$BRK"
 rc=$?
 echo "recusas registradas no log do broker: $(docker logs "$BRK" 2>&1 | grep -c 'Validation FAILED for topic')"
 

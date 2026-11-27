@@ -34,33 +34,33 @@ static void dump_case(const char *p, size_t n, int verdict, int known) {
 }
 
 // Runs the parse and checks the verdict; returns the object, or NULL.
-static json_object *run(const char *p, size_t n, int want, int known, const char *caso) {
+static json_object *run(const char *p, size_t n, int want, int known, const char *label) {
     // Must become NULL on a refusal.
     json_object *o = (json_object *)0x1;
     int r = json_payload_parse(p, n, &o);
-    CHECK(r == want, "%s: devolveu %d, esperado %d", caso, r, want);
-    if (r == 0) CHECK(o == NULL, "%s: recusa sem *out = NULL", caso);
+    CHECK(r == want, "%s: devolveu %d, esperado %d", label, r, want);
+    if (r == 0) CHECK(o == NULL, "%s: recusa sem *out = NULL", label);
     dump_case(p, n, r, known);
     return r ? o : NULL;
 }
 
 // Accepted, with the expected value (json-c serialization, or "null").
-static void accept(const char *p, size_t n, const char *want, const char *caso) {
-    json_object *o = run(p, n, 1, 0, caso);
+static void accept(const char *p, size_t n, const char *want, const char *label) {
+    json_object *o = run(p, n, 1, 0, label);
     const char *got = o ? json_object_to_json_string_ext(o, JSON_C_TO_STRING_PLAIN) : "null";
-    CHECK(strcmp(got, want) == 0, "%s: valor %s, esperado %s", caso, got, want);
+    CHECK(strcmp(got, want) == 0, "%s: valor %s, esperado %s", label, got, want);
     json_object_put(o);
 }
 
-static void reject(const char *p, size_t n, int known, const char *caso) {
-    run(p, n, 0, known, caso);
+static void reject(const char *p, size_t n, int known, const char *label) {
+    run(p, n, 0, known, label);
 }
 
 #define ACC(lit, want) accept(lit, sizeof(lit) - 1, want, #lit)
 #define REJ(lit) reject(lit, sizeof(lit) - 1, 0, #lit)
 
 // 1. Valid JSON text: ws value ws (RFC 8259, section 2).
-static void t_validos(void) {
+static void t_valid(void) {
     ACC("{\"value\":1}", "{\"value\":1}");
     ACC("{\"value\":1} \t\r\n", "{\"value\":1}");
     ACC(" \t\r\n{\"value\":1}", "{\"value\":1}");
@@ -95,7 +95,7 @@ static void t_validos(void) {
 
 // 2. Not a JSON text: trailing data, NUL, ws outside the four, json-c
 // extensions.
-static void t_invalidos(void) {
+static void t_invalid(void) {
     REJ("{\"value\":1}lixo");
     REJ("{\"value\":1}\0lixo");
     REJ("{\"value\":1}\0");
@@ -147,7 +147,7 @@ static void t_invalidos(void) {
 
 // 3. Known divergences: json-c 0.15 strict accepts them, RFC 8259 does not
 // (listed in json_payload.h; the Python checker confirms they are invalid).
-static void t_conhecidas(void) {
+static void t_known(void) {
     const char *k[] = { "NaN", "Infinity", "-Infinity", "1.", "\"a\tb\"", "\"a\x01" "b\"", "\"\xff\"", "\"\xc3(\"" };
     for (size_t i = 0; i < sizeof(k) / sizeof(k[0]); i++) {
         json_object *o = run(k[i], strlen(k[i]), 1, 1, k[i]);
@@ -159,7 +159,7 @@ static void t_conhecidas(void) {
 // pass.
 static void t_bytes(void) {
     const char *vals[] = { "{\"value\":1}", "[1]", "\"x\"", "true", "null" };
-    char p[32], caso[64];
+    char p[32], label[64];
     for (size_t v = 0; v < sizeof(vals) / sizeof(vals[0]); v++) {
         size_t vn = strlen(vals[v]);
         for (int b = 0; b < 256; b++) {
@@ -167,20 +167,20 @@ static void t_bytes(void) {
             json_object *o;
             memcpy(p, vals[v], vn);
             p[vn] = (char)b;
-            snprintf(caso, sizeof(caso), "%s + 0x%02x", vals[v], b);
-            o = run(p, vn + 1, ws, 0, caso);
+            snprintf(label, sizeof(label), "%s + 0x%02x", vals[v], b);
+            o = run(p, vn + 1, ws, 0, label);
             json_object_put(o);
             p[0] = (char)b;
             memcpy(p + 1, vals[v], vn);
-            snprintf(caso, sizeof(caso), "0x%02x + %s", b, vals[v]);
-            o = run(p, vn + 1, ws, 0, caso);
+            snprintf(label, sizeof(label), "0x%02x + %s", b, vals[v]);
+            o = run(p, vn + 1, ws, 0, label);
             json_object_put(o);
         }
     }
 }
 
 // 5. By the length: nothing beyond len is read, and no final NUL is needed.
-static void t_comprimento(void) {
+static void t_length(void) {
     accept("123", 2, "12", "123 com len 2");
     accept("{\"a\":1}lixo", 7, "{\"a\":1}", "{\"a\":1}lixo com len 7");
     accept("true!", 4, "true", "true! com len 4");
@@ -214,11 +214,11 @@ int main(int argc, char **argv) {
         dump = fopen(argv[1], "w");
         if (!dump) { perror(argv[1]); return 2; }
     }
-    t_validos();
-    t_invalidos();
-    t_conhecidas();
+    t_valid();
+    t_invalid();
+    t_known();
     t_bytes();
-    t_comprimento();
+    t_length();
     if (dump) fclose(dump);
     printf("test_json_payload: %d conferencias, %d falha(s)\n", checks, failures);
     return failures ? 1 : 0;

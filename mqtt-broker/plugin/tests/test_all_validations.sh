@@ -11,11 +11,11 @@
 #   KEEP_IMG=1 bash ...
 #       does not remove the built image
 set -u
-AQUI=$(cd "$(dirname "$0")" && pwd)
+HERE=$(cd "$(dirname "$0")" && pwd)
 # infra/mqtt-broker
-BROKER_DIR=$(cd "$AQUI/../.." && pwd)
+BROKER_DIR=$(cd "$HERE/../.." && pwd)
 IMG=${IMG:-tv30-mqtt-broker:teste-validacoes}
-P=${PREFIXO:-tv30-teste-validacoes}
+P=${PREFIX:-tv30-teste-validacoes}
 NET=$P-net
 BRK=$P-broker
 LOG=$(mktemp)
@@ -42,7 +42,7 @@ fi
 # Schemas of the disposable broker: those of the image plus the test topics
 # (test-schemas.json), mounted over /mosquitto/config/schemas.json.
 SCHEMAS=$(mktemp)
-python3 - "$BROKER_DIR/plugin/config/schemas.json" "$AQUI/test-schemas.json" >"$SCHEMAS" <<'PY'
+python3 - "$BROKER_DIR/plugin/config/schemas.json" "$HERE/test-schemas.json" >"$SCHEMAS" <<'PY'
 import json, sys
 merged = json.load(open(sys.argv[1]))
 merged.update(json.load(open(sys.argv[2])))
