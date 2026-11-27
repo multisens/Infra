@@ -19,7 +19,8 @@ const AUTH_VALUES = ['none', 'token', 'token+bind'];
 const CLASS_NON_LOCAL = 'nonLocal';
 const CLASS_VALUES = ['associated', 'standAlone', CLASS_NON_LOCAL];
 // Names of the edge handlers of the plugin.
-const EDGE_HANDLERS = ['bind-context-register', 'bind-context-list', 'bind-context-remove', 'api-info', 'api-list'];
+const EDGE_HANDLERS = ['bind-context-register', 'bind-context-list', 'bind-context-remove', 'api-info', 'api-list',
+  'manifest'];
 // Formats of the API ids (Table C.2), sections and versions (C.3.6.2).
 const API_ID = /^[a-z0-9]+(-[a-z0-9]+)+$/;
 const API_SUBSYSTEMS = ['ncl', 'nclua', 'tv3ws'];

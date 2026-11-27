@@ -46,6 +46,8 @@ type config struct {
 	CORSExposeHeaders string
 	// Access-Control-Max-Age of the preflight response, in seconds.
 	CORSMaxAge string
+	// What the /manifest announces (C.3.4).
+	Manifest manifestConfig
 }
 
 // Default of C.4.1.9.3 plus the key header of DELETE /tv3/bind-context
@@ -288,5 +290,11 @@ func loadConfig(raw interface{}, getenv func(string) string) (*config, error) {
 		}
 		cfg.RedisTimeout = time.Duration(n) * time.Millisecond
 	}
+
+	manifest, err := loadManifestConfig(getenv)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Manifest = manifest
 	return cfg, nil
 }

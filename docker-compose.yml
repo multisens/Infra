@@ -30,6 +30,14 @@ services:
       # refusals (104, 107, 108) are only logged and marked with
       # X-TV30-Auth-Warn. An invalid value brings the container down.
       AUTH_ENFORCE: ${AUTH_ENFORCE:-enforce}
+      # /manifest (C.3.4): the host ports of the two surfaces, the override of
+      # the announced host and the device attributes; empty takes the default.
+      EDGE_HTTP_PORT: ${EDGE_HTTP_PORT:-}
+      EDGE_HTTPS_PORT: ${EDGE_HTTPS_PORT:-}
+      SSDP_ADVERTISE_HOST: ${SSDP_ADVERTISE_HOST:-}
+      BRAND_NAME: ${BRAND_NAME:-}
+      MODEL: ${MODEL:-}
+      FRIENDLY_NAME: ${FRIENDLY_NAME:-}
     extra_hosts:
       # host.docker.internal on Linux, for the dev-host.
       - "host.docker.internal:host-gateway"

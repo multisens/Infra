@@ -25,13 +25,17 @@ const (
 	edgeAPIInfo = "api-info"
 	// GET /tv3/api-info (C.6.7.9)
 	edgeAPIList = "api-list"
+	// GET /manifest (C.3.4)
+	edgeManifest = "manifest"
 )
 
 // edgeReply is the result of an edge API: Code 0 is success, status 200 with
-// Body as JSON; any other Code is an error in the format of C.3.2.
+// Header added and Body as JSON, or no body when Body is nil; any other Code
+// is an error in the format of C.3.2.
 type edgeReply struct {
 	Code   int
 	Detail string
+	Header http.Header
 	Body   interface{}
 }
 
@@ -43,6 +47,7 @@ var edgeHandlers = map[string]edgeFunc{
 	edgeBindRemove:   (*authHandler).bindRemove,
 	edgeAPIInfo:      (*authHandler).apiInfo,
 	edgeAPIList:      (*authHandler).apiList,
+	edgeManifest:     (*authHandler).manifest,
 }
 
 func edgeHandlerNames() string {
@@ -175,16 +180,25 @@ func (h *authHandler) serveEdge(w http.ResponseWriter, r *http.Request, v verdic
 		writeC32(w, r, reply.Code, reply.Detail)
 		return
 	}
+	hd := w.Header()
+	// Added under the names as the handler wrote them.
+	for name, values := range reply.Header {
+		hd[name] = append(hd[name], values...)
+	}
+	hd.Set("API-Version", version)
+	if reply.Body == nil {
+		hd.Set("Content-Length", "0")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	body, err := encodeJSON(reply.Body)
 	if err != nil {
 		logf("API surface=%s code=200 %s %q resposta nao serializa: %v", h.cfg.Surface, r.Method, r.URL.Path, err)
 		writeC32(w, r, 200, "falha interna da borda")
 		return
 	}
-	hd := w.Header()
 	hd.Set("Content-Type", "application/json")
 	hd.Set("Access-Control-Allow-Origin", "*")
-	hd.Set("API-Version", version)
 	hd.Set("Content-Length", strconv.Itoa(len(body)))
 	w.WriteHeader(http.StatusOK)
 	w.Write(body)

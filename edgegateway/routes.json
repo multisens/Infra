@@ -49,6 +49,7 @@
     {
       "path": "/manifest",
       "method": "GET",
+      "edge": "manifest",
       "auth": "none",
       "headers": [
         "Accept-Version"

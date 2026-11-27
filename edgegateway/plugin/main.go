@@ -47,6 +47,9 @@ func (r registerer) registerHandlers(_ context.Context, extra map[string]interfa
 	logf("registrado surface=%s modo=%s rotas=%d respondidas_pela_borda=%d apis=%d redis=%s issuer=%s",
 		cfg.Surface, cfg.Mode, len(cfg.Routes.routes), edge, len(cfg.APIs.list), cfg.RedisAddr, cfg.Issuer)
 
+	for _, warning := range manifestWarnings(cfg.Manifest) {
+		logf("AVISO surface=%s %s", cfg.Surface, warning)
+	}
 	store := &redisStore{c: newRedisClient(cfg.RedisAddr, cfg.RedisTimeout)}
 	return newHandler(cfg, store, next), nil
 }
